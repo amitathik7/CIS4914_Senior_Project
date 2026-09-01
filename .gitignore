@@ -4,19 +4,25 @@
 !.env.example
 !.env.*.example
 
-# Local Claude and MCP settings
-.claude/settings.local.json
-.mcp.json
+# Personal Claude Code configuration
+/.claude/
+/CLAUDE.md
 
-# Ruflo local runtime data
-.claude-flow/data/
-.claude-flow/logs/
-.claude-flow/sessions/
-.swarm/
-.hive-mind/
-.ruv-swarm/
-coordination/
-memory/
+# Personal AI agent configuration
+/.agents/
+/AGENTS.md
+
+# Personal MCP configuration
+/.mcp.json
+
+# Ruflo / Claude Flow configuration and runtime data
+/.claude-flow/
+/.ruflo/
+/.swarm/
+/.hive-mind/
+/.ruv-swarm/
+/coordination/
+/memory/
 
 # Runtime databases and logs
 *.db
