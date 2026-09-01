@@ -137,5 +137,4 @@ python -m py_compile python/visualization/plot_performance.py
 ## License
 
 No license has been chosen yet — see
-[`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) (#14). Do not assume the code
-is open source until a `LICENSE` file exists.
+[`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) (#14).
