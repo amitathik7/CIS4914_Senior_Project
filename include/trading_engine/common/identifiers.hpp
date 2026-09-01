@@ -9,6 +9,8 @@
 //  Thread-safety: SequentialIdGenerator is NOT thread-safe yet (see TODO).
 // -----------------------------------------------------------------------------
 
+#include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 

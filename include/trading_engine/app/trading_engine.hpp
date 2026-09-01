@@ -45,7 +45,8 @@ public:
     void run_backtest();
 
     // Async, signal-safe-ish request to stop; run_*() returns soon after.
-    // NOT IMPLEMENTED.
+    // Records the request (sets an atomic flag); the run loops that will
+    // observe it and unwind are not written yet.
     void request_shutdown() noexcept;
 
     [[nodiscard]] const config::EngineConfig& config() const noexcept { return config_; }
