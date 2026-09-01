@@ -1,0 +1,157 @@
+# PREREQUISITE — the labels this template applies (bug, needs-triage) are NOT
+# created automatically. GitHub silently drops labels that do not already exist
+# in the repo. Create the full set first (feature, bug, adr, discussion,
+# performance, experiment, needs-triage) — see .github/ISSUE_TEMPLATE/README.md
+# and implementation-plan item M1.21.
+name: "Defect report"
+description: "A bug: wrong result, crash, hang, flaky test, build break, or a stub reached on a path that should be real."
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For behaviour that is wrong, not behaviour that is missing (use
+        **Feature implementation** for stubs that are simply not built yet).
+        A `common::NotImplemented` thrown on a path the current milestone says
+        should work **is** a defect — report it here.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence.
+      placeholder: "HistoricalReplay emits events out of order when two symbols share a timestamp."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "blocker — main is red / a milestone demo cannot run"
+        - "major — wrong results, crash, hang, data loss, non-determinism"
+        - "minor — incorrect edge case, misleading message, small leak"
+        - "trivial — cosmetic, typo, log noise"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - "Wrong result / incorrect calculation"
+        - "Crash / assertion / unhandled exception"
+        - "Hang / deadlock / never drains"
+        - "Non-deterministic (run-twice diff not empty)"
+        - "Data race / sanitizer failure"
+        - "Build / CMake / dependency failure"
+        - "Flaky test"
+        - "Stub reached on a path that should be implemented"
+        - "Other"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component (best guess)
+      options:
+        - "common"
+        - "configuration"
+        - "events"
+        - "app"
+        - "market_data"
+        - "backtesting"
+        - "strategy"
+        - "risk"
+        - "execution"
+        - "portfolio"
+        - "persistence"
+        - "analytics"
+        - "python/visualization"
+        - "domain value types"
+        - "build / CMake / CI / benchmarks"
+        - "unknown"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Fill every line you can.
+      value: |
+        - Commit SHA:
+        - OS:
+        - Compiler + version (e.g. MSVC 19.39 / GCC 13 / Clang 17):
+        - CMake version:
+        - Build type (Debug/Release) and options (e.g. -DTRADING_ENGINE_BUILD_INTEGRATION_TESTS=ON):
+        - Generator (Visual Studio 17 2022 / Ninja / …):
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands. Include the config file and fixture/dataset used.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Paste the full error — assertion text, `NotImplemented` message, stack trace, sanitizer report, `ctest` output.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: failing-test
+    attributes:
+      label: Minimal failing test
+      description: >
+        A GoogleTest case (or a description of one) that fails today and should
+        pass once fixed. A defect is not closed without a regression test.
+      placeholder: "TEST(HistoricalReplay, TieBreaksOnSequenceWhenTimestampsEqual) { ... }"
+    validations:
+      required: false
+
+  - type: input
+    id: regression
+    attributes:
+      label: Regression?
+      description: Last commit/day it worked, if known. "Never worked" is a valid answer.
+    validations:
+      required: false
+
+  - type: textarea
+    id: suspected-cause
+    attributes:
+      label: Suspected cause / area
+      description: Any hypothesis, suspicious file/function, or recent change.
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Anything that avoids the problem for now.
+    validations:
+      required: false

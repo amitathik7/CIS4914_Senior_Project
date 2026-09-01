@@ -1,0 +1,146 @@
+# PREREQUISITE — the labels this template applies (adr, discussion, needs-triage)
+# are NOT created automatically. GitHub silently drops labels that do not
+# already exist in the repo. Create the full set first (feature, bug, adr,
+# discussion, performance, experiment, needs-triage) — see
+# .github/ISSUE_TEMPLATE/README.md and implementation-plan item M1.21.
+name: "Architecture decision"
+description: "Resolve an open technical question and produce an ADR."
+title: "[ADR]: "
+labels: ["adr", "discussion", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this to drive an item in
+        [`docs/OPEN_QUESTIONS.md`](https://github.com/amitathik7/CIS4914_Senior_Project/blob/main/docs/OPEN_QUESTIONS.md)
+        to a decision. The outcome is a Markdown file under `docs/adr/` (MADR
+        format, see `docs/adr/0001-provisional-architecture.md`) plus an edit
+        linking it from `OPEN_QUESTIONS.md`.
+
+        Cross-cutting decisions (threading model, money type, supported
+        platforms, logging, config format, export schema, adapter
+        dependencies) require **all four members** to sign off.
+
+  - type: input
+    id: decision
+    attributes:
+      label: Decision to be made
+      description: State it as a question with a scope.
+      placeholder: "What queue and threading model does the event bus use for v1?"
+    validations:
+      required: true
+
+  - type: input
+    id: open-question
+    attributes:
+      label: OPEN_QUESTIONS.md item
+      description: Which numbered item (or "smaller item") does this resolve?
+      placeholder: "OQ#2 — Queue and threading model"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: due
+    attributes:
+      label: Needed by (blocking milestone)
+      options:
+        - "M1 — Weeks 1-2 (must land before M2 kickoff)"
+        - "M2 — Weeks 3-4"
+        - "M3 — Weeks 5-6"
+        - "M4 — Weeks 7-8"
+        - "M5 — Weeks 9-10"
+        - "M6 — Week 11"
+        - "M7 — Week 12"
+        - "M8 — Week 13"
+        - "Not on the critical path"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reversibility
+    attributes:
+      label: Reversibility
+      description: How costly is it to change this later?
+      options:
+        - "Easy — local, behind an interface, low blast radius"
+        - "Moderate — touches a few components, a day or two to redo"
+        - "Hard — ripples through domain / DB / many components"
+        - "One-way door — practically permanent once built on"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What forces are in play — requirements, constraints, the current scaffold state, prior decisions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options considered
+      description: At least two. Pros/cons each, with an eye on the NFR targets and build cost.
+      value: |
+        ### Option A —
+        - Pros:
+        - Cons:
+
+        ### Option B —
+        - Pros:
+        - Cons:
+    validations:
+      required: true
+
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation
+      description: Which option, and the one-line reason. "Good enough for v1" is a legitimate reason.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impacted components / headers
+      description: What code, docs, and TODOs change when this is accepted?
+      placeholder: |
+        - include/trading_engine/events/event_bus.hpp — queue type, comments
+        - docs/ARCHITECTURE.md §5, docs/DATA_FLOW.md diagram
+        - tests/support/RecordingEventBus
+    validations:
+      required: true
+
+  - type: input
+    id: adr-file
+    attributes:
+      label: ADR file to be created
+      description: Next number in docs/adr/.
+      placeholder: "docs/adr/0002-event-bus-threading-model.md"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: signoff
+    attributes:
+      label: Sign-off required
+      description: Tick who must approve before the ADR is marked Accepted.
+      options:
+        - label: "Member A"
+        - label: "Member B"
+        - label: "Member C"
+        - label: "Member D"
+        - label: "Course advisor (for scope / timeline / license impact)"
+
+  - type: checkboxes
+    id: done
+    attributes:
+      label: Closing checklist
+      options:
+        - label: "ADR file added under docs/adr/ with status Accepted (or Rejected/Superseded)"
+        - label: "docs/adr/README.md index updated"
+        - label: "OPEN_QUESTIONS.md item links this ADR"
+        - label: "Affected header comments / TODOs updated"
+        - label: "IMPLEMENTATION_PLAN.md adjusted if scope/among milestones changed"

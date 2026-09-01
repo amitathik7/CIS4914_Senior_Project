@@ -1,0 +1,200 @@
+# PREREQUISITE — the labels this template applies (feature, needs-triage) are
+# NOT created automatically. GitHub silently drops labels that do not already
+# exist in the repo. Create the full set first (feature, bug, adr, discussion,
+# performance, experiment, needs-triage) — see .github/ISSUE_TEMPLATE/README.md
+# and implementation-plan item M1.21.
+name: "Feature implementation"
+description: "Implement a scaffold stub or add a planned capability from the implementation plan."
+title: "[Feature]: "
+labels: ["feature", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For turning a `NotImplemented` stub into real behaviour, or adding a
+        capability named in
+        [`docs/IMPLEMENTATION_PLAN.md`](https://github.com/amitathik7/CIS4914_Senior_Project/blob/main/docs/IMPLEMENTATION_PLAN.md).
+        Keep one issue to one reviewable idea — if it needs several PRs, list
+        them under **PR breakdown** and open child issues.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence — what will exist after this is done that does not exist now.
+      placeholder: "Implement InProcessEventBus publish/subscribe with a bounded queue."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Milestone
+      description: Which milestone does this belong to?
+      options:
+        - "M1 — Weeks 1-2 — Architecture & technical requirements"
+        - "M2 — Weeks 3-4 — Event framework & market-data ingestion"
+        - "M3 — Weeks 5-6 — Historical replay"
+        - "M4 — Weeks 7-8 — Strategy framework"
+        - "M5 — Weeks 9-10 — Execution simulator & portfolio manager"
+        - "M6 — Week 11 — Risk management"
+        - "M7 — Week 12 — Analytics & reporting"
+        - "M8 — Week 13 — Performance optimization"
+        - "M9 — Week 14 — Testing & debugging"
+        - "M10 — Week 15 — Documentation & final presentation"
+        - "Cross-cutting track (persistence / logging / CI / config / benchmarks)"
+    validations:
+      required: true
+
+  - type: input
+    id: work-item
+    attributes:
+      label: Plan work-item ID
+      description: The M<n>.<k> id from the implementation plan, if this maps to one.
+      placeholder: "M2.1"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: components
+    attributes:
+      label: Primary component
+      description: Owner is the required reviewer (see COMPONENT_OWNERSHIP.md).
+      options:
+        - "common (types / identifiers / clock / errors / logging)"
+        - "configuration (EngineConfig / load_config)"
+        - "events (IEventBus / InProcessEventBus)"
+        - "app (TradingEngine composition root)"
+        - "market_data (sources / MarketDataService / Alpaca adapter)"
+        - "backtesting (HistoricalReplay)"
+        - "strategy (IStrategy / StrategyEngine / reference strategies)"
+        - "risk (IRiskPolicy / RiskManager / policies)"
+        - "execution (IFillModel / ExecutionSimulator)"
+        - "portfolio (Position / IPortfolioView / PortfolioManager)"
+        - "persistence (repository interfaces / PostgresRepository / migrations)"
+        - "analytics (PerformanceAnalyzer / SystemMetrics)"
+        - "python/visualization (plot_performance.py)"
+        - "domain value types (shared — needs 2 approvals)"
+        - "build / CMake / CI / benchmarks / tests-support"
+    validations:
+      required: true
+
+  - type: textarea
+    id: other-components
+    attributes:
+      label: Other components affected
+      description: List additional headers/dirs this will touch and why.
+      placeholder: |
+        - analytics/system_metrics.* — new drop/reject counters
+        - apps/trading_engine_main.cpp — wire the new subscriber
+    validations:
+      required: false
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / proposal link
+      description: Why now? Link the proposal capability, plan section, or upstream issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: design
+    attributes:
+      label: Design outline
+      description: >
+        The shape of the change: key types/functions, data structures,
+        threading/ownership notes, and what stays a stub. Not a full spec —
+        enough for a reviewer to sanity-check the approach.
+      value: |
+        Approach:
+
+        Threading / ownership:
+
+        Still stubbed after this issue:
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist of observable outcomes. Copy the relevant lines from the plan's milestone section.
+      value: |
+        - [ ]
+        - [ ] Builds green in CI with `-DTRADING_ENGINE_WARNINGS_AS_ERRORS=ON`
+        - [ ] `scaffold_contract_test.cpp` assertion for this stub removed/replaced
+        - [ ] Docs / TODO comments updated
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tests
+    attributes:
+      label: Required tests
+      description: Which test tiers must this issue add or extend? Describe them below.
+      options:
+        - label: "Unit tests (via `trading_engine_add_component_test`)"
+        - label: "Integration test (`tests/integration/`, opt-in)"
+        - label: "Performance benchmark + recorded baseline (`benchmarks/`)"
+        - label: "Determinism check (run-twice diff)"
+
+  - type: textarea
+    id: tests-detail
+    attributes:
+      label: Test details
+      description: Name the cases. What is the golden input/output? What fixture?
+      placeholder: |
+        Unit: publish/subscribe ordering; N-producer x M-event exactly-once; capacity + backpressure counter; drain-then-stop.
+        Perf: bench_event_bus SPSC + MPMC throughput; record baseline in docs/TECH_REQUIREMENTS.md.
+    validations:
+      required: true
+
+  - type: textarea
+    id: pr-breakdown
+    attributes:
+      label: PR breakdown
+      description: >
+        How does this split into PRs that are each ONE coherent, independently
+        reviewable change — one that can be understood, reviewed, and reverted
+        on its own, and whose description states the single thing it does?
+        Match the plan's PR boundaries; split further if a PR starts doing two
+        things.
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Blocked by / blocks (issue numbers or milestone items). ADRs that must land first.
+      placeholder: |
+        Blocked by: #<queue-model ADR issue>
+        Blocks: M2.6 (MarketDataService)
+    validations:
+      required: true
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions / ADR needed
+      description: Link the OPEN_QUESTIONS.md item(s). Does this issue resolve one? If so an ADR is required.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done (from IMPLEMENTATION_PLAN.md)
+      options:
+        - label: "CI green on all platforms; ctest passes; no new warnings"
+        - label: "New behaviour covered by tests"
+        - label: "Stub's scaffold-contract assertion removed/replaced"
+        - label: "Header doc-comments (responsibility / threading / TODO) kept current"
+        - label: "Vendor code stays inside the alpaca/postgres adapter target"
+        - label: "ADR added if an open question was resolved"
+        - label: "docs/ updated (plan checkbox, ARCHITECTURE/DATA_FLOW if boundaries changed)"
+        - label: "PR(s) within the size guidance; reviewed by component owner + 1"

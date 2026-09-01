@@ -1,0 +1,137 @@
+# PREREQUISITE — the labels this template applies (performance, experiment,
+# needs-triage) are NOT created automatically. GitHub silently drops labels that
+# do not already exist in the repo. Create the full set first (feature, bug,
+# adr, discussion, performance, experiment, needs-triage) — see
+# .github/ISSUE_TEMPLATE/README.md and implementation-plan item M1.21.
+name: "Performance experiment"
+description: "A measured attempt to hit a latency / throughput / memory target. Hypothesis in, data out."
+title: "[Perf]: "
+labels: ["performance", "experiment", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mostly for **M8 (Week 13)**, but open one any time a benchmark
+        regresses or a bottleneck is found. Rule: **no optimisation PR without
+        a profile pointing at the code and a benchmark proving the win.**
+        Results must be bound to exact commit SHAs (before/after).
+
+  - type: input
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: One sentence — what change, expected to move what metric, by roughly how much.
+      placeholder: "Replacing the mutex+condvar bus queue with a lock-free MPMC ring will cut p99 enqueue→dequeue latency by >2x."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: metric
+    attributes:
+      label: Target metric
+      options:
+        - "End-to-end event latency (market-event-in → portfolio-updated)"
+        - "End-to-end signal latency (signal-in → fill-out)"
+        - "Event-bus enqueue→dequeue latency"
+        - "Sustained pipeline throughput (events/sec)"
+        - "Backtest replay throughput (events/sec, --speed 0)"
+        - "Per-stage cost (strategy dispatch / risk check / portfolio apply / analyze)"
+        - "Peak memory (RSS) for a fixed run"
+        - "Other (describe below)"
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Target value
+      description: From docs/TECH_REQUIREMENTS.md. Include units and percentile.
+      placeholder: "p99 < 50 µs; sustained > 500k events/sec"
+    validations:
+      required: true
+
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline
+      description: Current numbers, the commit SHA they were measured at, and which benchmark produced them.
+      value: |
+        - Baseline commit SHA:
+        - Benchmark:
+        - Numbers (p50 / p99 / throughput / RSS, N samples, variance):
+    validations:
+      required: true
+
+  - type: textarea
+    id: method
+    attributes:
+      label: Method
+      description: Make it reproducible by another member.
+      value: |
+        - Machine (CPU, cores, RAM, OS):
+        - Build flags / config (Release, LTO?, arch flags?):
+        - Dataset / fixture:
+        - Warm-up + sample count:
+        - Benchmark command:
+        - Profiler used (perf / VTune / Instruments / Tracy):
+    validations:
+      required: true
+
+  - type: textarea
+    id: variable
+    attributes:
+      label: Variable under test
+      description: The single thing that changes between baseline and candidate. Keep it to one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Expected trade-offs
+      description: Complexity, readability, memory, portability, determinism, correctness risk. Anything given up for speed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Fill in after running. Keep the raw benchmark JSON as an attachment or CI artefact link.
+      value: |
+        | metric | baseline (SHA …) | candidate (SHA …) | delta | samples |
+        |--------|------------------|-------------------|-------|---------|
+        |        |                  |                   |       |         |
+
+        Correctness after change:
+        - [ ] All unit + integration tests pass
+        - [ ] Determinism run-twice diff still empty
+        - [ ] ASan/UBSan/TSan jobs green
+    validations:
+      required: false
+
+  - type: dropdown
+    id: decision
+    attributes:
+      label: Decision
+      description: Fill in after results.
+      options:
+        - "Pending — not yet run"
+        - "Adopt — merge the change (+ ADR if it changes a design)"
+        - "Revert — keep baseline, record the negative result"
+        - "Iterate — promising, needs another round"
+    validations:
+      required: true
+
+  - type: textarea
+    id: followup
+    attributes:
+      label: Follow-up
+      description: ADR needed? Reference impl kept behind a flag? New issue for the next idea? Write-up added to docs/PERFORMANCE.md?
+      value: |
+        - [ ] docs/PERFORMANCE.md updated (methodology + result, adopt or revert)
+        - [ ] ADR added if a design changed
+        - [ ] Reference/simple implementation kept behind a build flag
+        - [ ] Result bound to exact commit SHAs
+    validations:
+      required: false

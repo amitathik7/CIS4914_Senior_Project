@@ -41,7 +41,10 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - JSON: `nlohmann/json`, `RapidJSON`, `simdjson` (parse-only), or Boost.JSON?
 - TLS: OpenSSL vs schannel/native.
 - All of the above must stay **private** to `trading_engine_alpaca_adapter`.
-- **Owner:** market-data lead · **By:** M2 (REST), M7 (WebSocket)
+- **Owner:** market-data lead · **By:** M1 — pick the libraries for the
+  historical REST source **and** the required live WebSocket source together.
+  Advanced live resiliency (reconnect/backoff/heartbeat/gap-recovery) is
+  stretch (M8), but the WebSocket library is chosen now.
 
 ## 5. PostgreSQL client library
 - `libpqxx` (C++ wrapper) vs raw `libpq` vs an ORM-ish layer?
@@ -49,7 +52,8 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - Bulk market-data insert: multi-row `INSERT`, `COPY`, or batched prepared
   statements?
 - Must stay **private** to `trading_engine_postgres_adapter`.
-- **Owner:** persistence lead · **By:** M5
+- **Owner:** persistence lead · **By:** M1 (decided with `OQ#6`); implemented
+  across persistence stages P1–P4.
 
 ## 6. Database schema and migration tool
 - Migration runner: plain `psql` scripts, Flyway, Liquibase, sqitch, dbmate,
@@ -59,7 +63,8 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - Numeric representation: `NUMERIC(18,6)` vs integer minor units (see Q11).
 - `positions` as a child table vs `JSONB` on `portfolio_snapshots`.
 - Retention / archival policy for high-volume market data.
-- **Owner:** persistence lead · **By:** M5
+- **Owner:** persistence lead · **By:** M1 (schema shape + migration tool);
+  the retention policy can be recorded later, by persistence stage P4.
 
 ## 7. Configuration format
 - JSON (example provided), TOML, YAML, or an env-var-only scheme?
@@ -93,14 +98,21 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - **Owner:** risk lead · **By:** M3
 
 ## 11. Execution assumptions
-- Money/price type: keep `double` or move to fixed-point / integer minor units
-  (affects domain, DB, analytics)?
+
+**Split.** The money / numeric-representation question is decided in **Weeks
+1–2** (the M1 numeric-representation ADR), because it touches `domain/` value
+types, the PostgreSQL schema, portfolio accounting, execution, risk and
+analytics. The rest is drafted in Weeks 1–2 and ratified at **M5**.
+
+- **Money / price type — DECIDE WEEK 1–2:** keep `double` or move to
+  fixed-point / integer minor units? Cross-cutting; all four members sign off.
 - Fill model v1: full instant fill? spread crossing? volume participation cap?
 - Slippage model: fixed bps (current field) vs function of size/volatility.
 - Latency: fixed `signal_to_order` / `order_to_fill` (current) vs distribution.
 - Short selling: allowed? borrow availability modelled?
 - Partial fills: enabled in v1, and how are remainders handled?
-- **Owner:** execution lead · **By:** M4
+- **Owner:** execution lead (money type: + all four sign off) ·
+  **By:** money type **Weeks 1–2**; the behaviour half **M5**
 
 ## 12. Analytics output format
 - Export as one JSON file, several files, CSV, or Parquet?
@@ -118,13 +130,20 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - Container image for running backtests / integration tests?
 - **Owner:** whole team · **By:** M1 (affects CI), revisit at M8
 
-## 14. License
-- No `LICENSE` file has been added, per the team's instruction to wait.
-- Choose before any public release or external contribution: MIT / BSD-3 /
-  Apache-2.0 / proprietary / university-owned?
-- Check the university's IP policy for senior projects.
-- Confirm dependency licenses are compatible (GoogleTest = BSD-3; others TBD).
-- **Owner:** whole team + advisor · **By:** before any public push
+## 14. Repository visibility & license
+- The repository is **already public** at
+  `github.com/amitathik7/CIS4914_Senior_Project`, with **no `LICENSE`** file
+  (GitHub default: all rights reserved). The earlier "wait to add a license"
+  note is superseded — the repo is already exposed.
+- **Visibility:** confirm with the advisor whether public is intended, or the
+  repo should be **private until submission** (course policies vary). Set it to
+  match.
+- **License:** choose an approach — MIT / BSD-3 / Apache-2.0 / proprietary /
+  university-owned / an explicit "no licence — coursework, all rights reserved"
+  note. Check the university's senior-project IP policy first.
+- Confirm dependency licences are compatible (GoogleTest = BSD-3; others TBD).
+- **Owner:** whole team + advisor · **By:** **Week 1** (the repo is already
+  visible), revisit at M10.
 
 ---
 

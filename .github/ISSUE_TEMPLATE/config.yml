@@ -1,0 +1,22 @@
+# Blank issues stay enabled for quick notes; use a template for anything a
+# teammate will need to act on or review.
+#
+# PREREQUISITE: the templates in this directory apply labels (feature, bug, adr,
+# discussion, performance, experiment, needs-triage). These are NOT created by
+# the templates — GitHub silently drops any label that does not already exist in
+# the repo. Create them under the repo's Labels page first. See README.md in
+# this directory and implementation-plan item M1.21.
+blank_issues_enabled: true
+contact_links:
+  - name: Implementation plan (milestones, acceptance criteria, PR boundaries)
+    url: https://github.com/amitathik7/CIS4914_Senior_Project/blob/main/docs/IMPLEMENTATION_PLAN.md
+    about: Read the milestone this work belongs to before opening a feature issue.
+  - name: Open technical questions
+    url: https://github.com/amitathik7/CIS4914_Senior_Project/blob/main/docs/OPEN_QUESTIONS.md
+    about: Comment here first; open an "Architecture decision" issue when it is ready to resolve.
+  - name: Component ownership (who reviews what)
+    url: https://github.com/amitathik7/CIS4914_Senior_Project/blob/main/docs/COMPONENT_OWNERSHIP.md
+    about: Find the owner to assign as reviewer.
+  - name: Architecture & data flow
+    url: https://github.com/amitathik7/CIS4914_Senior_Project/blob/main/docs/ARCHITECTURE.md
+    about: Component responsibilities and boundaries.
