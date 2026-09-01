@@ -1,0 +1,73 @@
+# Credentials and local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local Claude and MCP settings
+.claude/settings.local.json
+.mcp.json
+
+# Ruflo local runtime data
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+.swarm/
+.hive-mind/
+.ruv-swarm/
+coordination/
+memory/
+
+# Runtime databases and logs
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.log
+*.pid
+
+# C++ and CMake build output
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+Testing/
+
+# Compiled C++ files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.pdb
+
+# Node dependencies
+node_modules/
+
+# Python environments and generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+
+# Operating-system files
+Thumbs.db
+Desktop.ini
+.DS_Store
