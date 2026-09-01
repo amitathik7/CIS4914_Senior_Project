@@ -1,0 +1,115 @@
+-- =============================================================================
+--  001_initial_schema  --  DRAFT / OUTLINE ONLY
+--
+--  This migration intentionally performs NO changes. The schema below is a
+--  commented outline for discussion, not a final design. Column names, types,
+--  keys, indexes, partitioning, and even the migration tool itself are open
+--  questions -- see docs/OPEN_QUESTIONS.md.
+--
+--  When the design is agreed:
+--    * uncomment / rewrite the statements,
+--    * wrap them in BEGIN; ... COMMIT; ,
+--    * add the matching down-migration (or a tool that generates it),
+--    * decide time-series strategy (native partitioning? TimescaleDB?).
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- runs
+--   One row per backtest or live session. Everything else references it.
+--     run_id        BIGINT / UUID   PRIMARY KEY
+--     mode          TEXT            'backtest' | 'live'
+--     started_at    TIMESTAMPTZ     NOT NULL
+--     ended_at      TIMESTAMPTZ     NULL
+--     config_hash   TEXT            hash of the effective EngineConfig
+--     git_commit    TEXT            source revision that produced the run
+--     notes         TEXT
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- market_events
+--   Normalised market data as produced by MarketDataService. High volume ->
+--   expect partitioning by (symbol, day) or a time-series extension.
+--     event_id       BIGSERIAL      PRIMARY KEY  (or composite natural key)
+--     run_id         BIGINT         NULL  (NULL = shared/reference data)
+--     symbol         TEXT           NOT NULL
+--     exchange_time  TIMESTAMPTZ    NOT NULL      -- venue timestamp (UTC)
+--     ingest_time    TIMESTAMPTZ    NOT NULL      -- engine receipt (UTC)
+--     event_type     SMALLINT/TEXT  NOT NULL      -- trade | quote | bar | status
+--     price          NUMERIC(18,6)  NULL
+--     bid            NUMERIC(18,6)  NULL
+--     ask            NUMERIC(18,6)  NULL
+--     open           NUMERIC(18,6)  NULL
+--     high           NUMERIC(18,6)  NULL
+--     low            NUMERIC(18,6)  NULL
+--     size           NUMERIC(18,6)  NULL
+--     volume         NUMERIC(18,6)  NULL
+--     sequence       BIGINT         NOT NULL      -- per-symbol, gap-detectable
+--   Indexes (candidate): (symbol, exchange_time), (run_id, exchange_time).
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- orders
+--   Lifecycle of every simulated order.
+--     order_id       BIGINT         PRIMARY KEY
+--     run_id         BIGINT         NOT NULL REFERENCES runs(run_id)
+--     origin_signal  BIGINT         NULL
+--     strategy_id    TEXT           NOT NULL
+--     symbol         TEXT           NOT NULL
+--     side           SMALLINT/TEXT  NOT NULL      -- buy | sell
+--     order_type     SMALLINT/TEXT  NOT NULL      -- market | limit
+--     quantity       NUMERIC(18,6)  NOT NULL
+--     limit_price    NUMERIC(18,6)  NULL
+--     status         SMALLINT/TEXT  NOT NULL
+--     created_at     TIMESTAMPTZ    NOT NULL
+--     updated_at     TIMESTAMPTZ    NOT NULL
+--   Index: (run_id, created_at), (run_id, symbol).
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- fills
+--   Simulated executions. Many-to-one with orders (partial fills).
+--     fill_id        BIGINT         PRIMARY KEY
+--     order_id       BIGINT         NOT NULL REFERENCES orders(order_id)
+--     run_id         BIGINT         NOT NULL REFERENCES runs(run_id)
+--     symbol         TEXT           NOT NULL
+--     filled_qty     NUMERIC(18,6)  NOT NULL      -- signed
+--     fill_price     NUMERIC(18,6)  NOT NULL
+--     fees           NUMERIC(18,6)  NOT NULL DEFAULT 0
+--     slippage       NUMERIC(18,6)  NOT NULL DEFAULT 0
+--     filled_at      TIMESTAMPTZ    NOT NULL
+--   Index: (run_id, filled_at), (order_id).
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- portfolio_snapshots
+--   Periodic account state for the equity curve and analytics.
+--     snapshot_id    BIGSERIAL      PRIMARY KEY
+--     run_id         BIGINT         NOT NULL REFERENCES runs(run_id)
+--     as_of          TIMESTAMPTZ    NOT NULL
+--     cash           NUMERIC(18,6)  NOT NULL
+--     total_equity   NUMERIC(18,6)  NOT NULL
+--     gross_exposure NUMERIC(18,6)  NOT NULL
+--     net_exposure   NUMERIC(18,6)  NOT NULL
+--     positions      JSONB          NOT NULL      -- or a child positions table
+--   Index: (run_id, as_of).
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- performance_runs
+--   One computed PerformanceReport per run (or per analysis pass).
+--     report_id      BIGSERIAL      PRIMARY KEY
+--     run_id         BIGINT         NOT NULL REFERENCES runs(run_id)
+--     generated_at   TIMESTAMPTZ    NOT NULL
+--     period_start   TIMESTAMPTZ    NOT NULL
+--     period_end     TIMESTAMPTZ    NOT NULL
+--     total_return   DOUBLE PRECISION
+--     volatility     DOUBLE PRECISION
+--     max_drawdown   DOUBLE PRECISION
+--     profit_factor  DOUBLE PRECISION
+--     trade_count    BIGINT
+--     extra_metrics  JSONB                        -- Sharpe, Sortino, win rate...
+--   Index: (run_id, generated_at).
+-- ---------------------------------------------------------------------------
+
+-- No operative DDL yet. Intentionally a no-op:
+SELECT 'migration 001 is an outline only -- see docs/OPEN_QUESTIONS.md' AS status;

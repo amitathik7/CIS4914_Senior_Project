@@ -1,0 +1,50 @@
+{
+  "$comment": "Example configuration. Copy to config/config.json (gitignored) and edit. NO secrets live in this file: credential fields name the environment variable that carries the value. The parser is not implemented yet (see docs/OPEN_QUESTIONS.md).",
+
+  "mode": "backtest",
+
+  "alpaca": {
+    "environment": "paper",
+    "data_feed": "iex",
+    "market_data_base_url": "https://data.alpaca.markets",
+    "stream_url": "wss://stream.data.alpaca.markets/v2/iex",
+    "api_key_env": "ALPACA_API_KEY",
+    "api_secret_env": "ALPACA_API_SECRET",
+    "symbols": ["AAPL", "MSFT", "SPY"]
+  },
+
+  "database": {
+    "url_env": "DATABASE_URL",
+    "host": "localhost",
+    "port": 5432,
+    "database": "trading_engine",
+    "user": "trading_engine",
+    "password_env": "PGPASSWORD",
+    "schema": "public",
+    "pool_size": 4
+  },
+
+  "risk": {
+    "max_gross_exposure": 100000.0,
+    "max_position_notional": 25000.0,
+    "max_order_quantity": 1000.0,
+    "max_daily_loss": 5000.0,
+    "max_open_orders": 50
+  },
+
+  "simulation": {
+    "starting_cash": 100000.0,
+    "replay_speed": 0.0,
+    "deterministic": true,
+    "fees": { "per_share": 0.0, "per_trade": 0.0, "bps": 0.0 },
+    "slippage_bps": 1.0,
+    "latency_ms": { "signal_to_order": 1, "order_to_fill": 5 }
+  },
+
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "sink": "stderr",
+    "file_path": "logs/trading_engine.log"
+  }
+}

@@ -1,0 +1,21 @@
+// Generated from cmake/version.hpp.in by CMake -- do not edit by hand.
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+namespace trading_engine {
+
+inline constexpr std::string_view kProjectName = "@PROJECT_NAME@";
+inline constexpr std::string_view kVersion     = "@PROJECT_VERSION@";
+inline constexpr std::string_view kDescription = "@PROJECT_DESCRIPTION@";
+
+inline constexpr std::uint32_t kVersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr std::uint32_t kVersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr std::uint32_t kVersionPatch = @PROJECT_VERSION_PATCH@;
+
+// True while the project is a non-functional scaffold. Flip to false (in
+// cmake/version.hpp.in) once an end-to-end path actually runs.
+inline constexpr bool kIsScaffold = true;
+
+}  // namespace trading_engine

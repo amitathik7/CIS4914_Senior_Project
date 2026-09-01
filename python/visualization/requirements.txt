@@ -1,0 +1,10 @@
+# Visualization dependencies. Install into a local virtual environment:
+#   python -m venv .venv && . .venv/Scripts/activate   (Windows)
+#   python -m venv .venv && source .venv/bin/activate  (POSIX)
+#   pip install -r requirements.txt
+
+matplotlib>=3.8
+
+# Optional, likely useful once the export format is chosen (CSV/JSON -> frames):
+# pandas>=2.2
+# numpy>=1.26

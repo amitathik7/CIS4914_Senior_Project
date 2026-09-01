@@ -72,8 +72,54 @@ venv/
 .vs/
 .vscode/
 .idea/
+*.swp
+*~
+*.user
 
 # Operating-system files
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# --- Trading-engine scaffold additions -------------------------------------
+
+# Local (non-example) configuration -- keep config.example.json tracked
+/config/config.json
+/config/*.local.json
+/config/local/
+
+# Local runtime output
+/logs/
+/charts/
+/exports/
+
+# CMake local presets and fetched dependencies
+CMakeUserPresets.json
+_deps/
+
+# GoogleTest / CTest artefacts
+Testing/
+*.gtest.xml
+test_detail.xml
+last_failed.log
+
+# Coverage output
+*.gcda
+*.gcno
+*.gcov
+coverage/
+*.profraw
+*.profdata
+
+# Python tooling caches / build
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+build-python/
+
+# Profiling captures
+perf.data
+perf.data.old
+*.prof

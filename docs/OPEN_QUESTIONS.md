@@ -1,0 +1,140 @@
+# Open Questions
+
+Decisions the project proposal does **not** settle. Each needs a team call
+before or during the milestone that depends on it
+([`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)). Record the outcome as an
+ADR under [`adr/`](adr/) and update the affected headers.
+
+Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
+
+---
+
+## 1. Exact market event types
+`domain::MarketEventType` is currently `{ Unknown, Trade, Quote, Bar, Status }`.
+- Do strategies need L2 order-book deltas? imbalance? corporate actions?
+- Are bars produced by the feed, or aggregated by us from trades?
+- One `MarketEvent` with optional fields (current) vs a `std::variant` of
+  distinct trade/quote/bar structs?
+- **Owner:** strategy + market-data leads · **By:** M1
+
+## 2. Queue and threading model
+- One bus with a single MPMC queue, or per-`EventType` queues (SPSC/MPSC)?
+- `std::variant` payload (current) vs type-erased `Event`?
+- Thread count: one consumer thread per stage, a pool, or pinned threads?
+- Ring buffer (e.g. capacity = power of two) vs `moodycamel`-style queue vs
+  `std::deque` + mutex/condvar for v1?
+- **Owner:** systems/perf lead · **By:** M1
+
+## 3. Shutdown and backpressure semantics
+- Bus full → **block producer**, **drop oldest**, or **reject (publish returns
+  false)**? Possibly per-`EventType`.
+- Live feed cannot be paused — what happens to dropped market data (count?
+  gap-mark? widen queue?)?
+- Shutdown: stop accepting → drain in-flight → stop consumers, with a timeout?
+  What is the hard-kill fallback?
+- Does `wait_until_drained()` have a deadline?
+- **Owner:** systems/perf lead · **By:** M1
+
+## 4. Alpaca client libraries
+- WebSocket: Boost.Beast, `websocketpp`, `libwebsockets`, or IXWebSocket?
+- HTTP (historical REST): `libcurl`, `cpr`, Boost.Beast, or `httplib`?
+- JSON: `nlohmann/json`, `RapidJSON`, `simdjson` (parse-only), or Boost.JSON?
+- TLS: OpenSSL vs schannel/native.
+- All of the above must stay **private** to `trading_engine_alpaca_adapter`.
+- **Owner:** market-data lead · **By:** M2 (REST), M7 (WebSocket)
+
+## 5. PostgreSQL client library
+- `libpqxx` (C++ wrapper) vs raw `libpq` vs an ORM-ish layer?
+- Connection pooling: in-process pool we write, or PgBouncer?
+- Bulk market-data insert: multi-row `INSERT`, `COPY`, or batched prepared
+  statements?
+- Must stay **private** to `trading_engine_postgres_adapter`.
+- **Owner:** persistence lead · **By:** M5
+
+## 6. Database schema and migration tool
+- Migration runner: plain `psql` scripts, Flyway, Liquibase, sqitch, dbmate,
+  Alembic-style, or a small C++ runner?
+- Time-series handling for `market_events`: native declarative partitioning vs
+  TimescaleDB hypertables.
+- Numeric representation: `NUMERIC(18,6)` vs integer minor units (see Q11).
+- `positions` as a child table vs `JSONB` on `portfolio_snapshots`.
+- Retention / archival policy for high-volume market data.
+- **Owner:** persistence lead · **By:** M5
+
+## 7. Configuration format
+- JSON (example provided), TOML, YAML, or an env-var-only scheme?
+- Layering: file → environment overrides → CLI flags; precedence order?
+- Schema validation approach (hand-rolled vs JSON Schema vs a library).
+- Where does the config file live and how is it discovered?
+- **Owner:** whoever implements `load_config` · **By:** M2
+
+## 8. Logging library
+- `spdlog`, `glog`, Boost.Log, or a thin wrapper over `std::format` + sinks?
+- Structured (JSON) logs vs text; per-module log levels.
+- Correlation id per `Event` threaded through the pipeline?
+- Performance: is logging on the hot path allowed, or async-only?
+- **Owner:** systems lead · **By:** M1–M2
+
+## 9. Initial strategies
+- Which reference strategies ship first? Candidates: SMA/EMA crossover,
+  price-threshold, momentum/breakout, mean-reversion (z-score).
+- Signal semantics: target exposure (fraction of equity) vs explicit quantity
+  vs delta? (`TradeSignal` currently allows either.)
+- Warm-up handling: how does a strategy request history before it can act?
+- **Owner:** strategy lead · **By:** M3
+
+## 10. Risk limits
+- Which limits are in the v1 set, and what are the default numbers?
+  (`config::RiskLimits` has placeholders.)
+- On breach: hard reject vs auto-resize to the max allowed?
+- Are limits per-symbol / per-strategy / per-portfolio, or global only?
+- Daily-loss stop: session boundary definition and reset time (exchange TZ?).
+- Kill-switch: manual only, or automatic on N consecutive rejects / drawdown?
+- **Owner:** risk lead · **By:** M3
+
+## 11. Execution assumptions
+- Money/price type: keep `double` or move to fixed-point / integer minor units
+  (affects domain, DB, analytics)?
+- Fill model v1: full instant fill? spread crossing? volume participation cap?
+- Slippage model: fixed bps (current field) vs function of size/volatility.
+- Latency: fixed `signal_to_order` / `order_to_fill` (current) vs distribution.
+- Short selling: allowed? borrow availability modelled?
+- Partial fills: enabled in v1, and how are remainders handled?
+- **Owner:** execution lead · **By:** M4
+
+## 12. Analytics output format
+- Export as one JSON file, several files, CSV, or Parquet?
+- Does it include the full equity-curve / per-trade series, or only summary
+  metrics (charts then re-query the DB)?
+- Metric definitions: drawdown (return- vs equity-based), annualisation factor,
+  profit factor edge cases (no losing trades).
+- Is there a live metrics endpoint, or file-only?
+- **Owner:** analytics lead · **By:** M6
+
+## 13. Supported platforms
+- Windows is a dev machine today (MSVC). Is Linux (GCC/Clang) a first-class
+  target for CI and deployment? macOS?
+- Minimum compiler versions.
+- Container image for running backtests / integration tests?
+- **Owner:** whole team · **By:** M1 (affects CI), revisit at M8
+
+## 14. License
+- No `LICENSE` file has been added, per the team's instruction to wait.
+- Choose before any public release or external contribution: MIT / BSD-3 /
+  Apache-2.0 / proprietary / university-owned?
+- Check the university's IP policy for senior projects.
+- Confirm dependency licenses are compatible (GoogleTest = BSD-3; others TBD).
+- **Owner:** whole team + advisor · **By:** before any public push
+
+---
+
+## Smaller items
+
+- `#pragma once` (current) vs include guards.
+- Error handling: exceptions (current) vs `std::expected` / status codes on hot
+  paths.
+- ID type: 64-bit counter (current) vs UUID vs DB sequence; uniqueness across
+  process restarts when persisted.
+- `std::span` in interfaces vs `const std::vector&` (toolchain floor).
+- clang-format / clang-tidy rule set.
+- Namespace style: nested `trading_engine::<component>` (current) — keep?
