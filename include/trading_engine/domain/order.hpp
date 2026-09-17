@@ -65,8 +65,17 @@ struct Order {
     common::Quantity filled_quantity{0};
     std::optional<common::Price> average_fill_price{};
 
+    // PROPOSED by docs/adr/0004-execution-portfolio-fill-contract.md (status:
+    // Proposed, not Accepted). Set iff status is a terminal non-fill outcome
+    // (Rejected / Cancelled / Expired); enforced later, not here. Free-form
+    // text rather than a closed enum, because risk rejections (RiskManager,
+    // pre-Order) and execution rejections (ExecutionSimulator, post-Order)
+    // have different vocabularies and only the latter reaches this struct.
+    // See the ADR's "three kinds of failure" section.
+    std::optional<std::string> reject_reason{};
+
     // TODO: client_order_id for idempotency, time_in_force, venue/route,
-    //       parent_id for child slices, cancel/replace history, reject reason.
+    //       parent_id for child slices, cancel/replace history.
 };
 
 }  // namespace trading_engine::domain

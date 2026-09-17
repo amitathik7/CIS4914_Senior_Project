@@ -13,8 +13,9 @@ PortfolioManager::PortfolioManager(common::RunId run_id,
 
 PortfolioManager::~PortfolioManager() = default;
 
-void PortfolioManager::apply(const domain::Fill& /*fill*/) {
-    // TODO: adjust cash by -(qty * price) - fees, update position quantity and
+bool PortfolioManager::apply(const domain::Fill& /*fill*/) {
+    // TODO: reject already-seen Fill::id (idempotency, see ADR 0004), then
+    //       adjust cash by -(qty * price) - fees, update position quantity and
     //       average cost, realise P&L on reducing trades, refresh exposure.
     throw common::NotImplemented("PortfolioManager::apply");
 }

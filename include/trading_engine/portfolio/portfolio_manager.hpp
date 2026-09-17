@@ -53,7 +53,19 @@ public:
 
     // --- write side (mutating) ---------------------------------------
     // Apply a simulated execution. NOT IMPLEMENTED (throws).
-    void apply(const domain::Fill& fill);
+    //
+    // PROPOSED by docs/adr/0004-execution-portfolio-fill-contract.md (status:
+    // Proposed, not Accepted): this is the ONLY entry point for execution
+    // results. Rejected / cancelled / expired orders are NOT delivered here --
+    // they change no cash and no position. See the ADR.
+    //
+    // Idempotent on domain::Fill::id. Returns true if the fill was applied,
+    // false if it was recognised as an already-applied duplicate and ignored.
+    // A duplicate is an EXPECTED condition under an at-least-once transport,
+    // not an error, which is why this returns bool rather than throwing.
+    // Applying the same FillId twice would silently corrupt cash and cost
+    // basis, so the check is part of the contract, not an optimisation.
+    bool apply(const domain::Fill& fill);
     // Re-mark open positions from a market event. NOT IMPLEMENTED.
     void mark(const domain::MarketEvent& event);
 
