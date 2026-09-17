@@ -6,6 +6,7 @@ and its consequences. Format: lightweight [MADR](https://adr.github.io/madr/).
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-provisional-architecture.md) | Provisional architecture for the simulated trading engine | Proposed / Provisional |
+| [0002](0002-strategy-risk-signal-contract.md) | Strategy Engine → Risk Manager signal contract (draft JSON shape) | Proposed |
 
 ## Adding one
 

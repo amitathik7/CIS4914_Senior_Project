@@ -9,6 +9,12 @@ trading_engine_add_component_test(common
     common_identifiers_test.cpp
     common_clock_test.cpp)
 
+# Shape-only checks for the ADR 0002 (Proposed, not Accepted) TradeSignal
+# additions and the new SignalCancelRequest type. Not validation -- neither
+# enforces invariants yet; see docs/adr/0002-strategy-risk-signal-contract.md.
+trading_engine_add_component_test(domain
+    domain_trade_signal_test.cpp)
+
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.
 trading_engine_add_component_test(scaffold_contract
