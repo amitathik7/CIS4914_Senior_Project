@@ -31,6 +31,12 @@ trading_engine_add_component_test(common
 trading_engine_add_component_test(domain
     domain_fill_test.cpp)
 
+# Contract checks for the IPortfolioView read seam proposed by ADR 0005
+# (Proposed, not Accepted). Tests the interface via a FakePortfolioView, not
+# PortfolioManager -- whose methods all still throw.
+trading_engine_add_component_test(portfolio
+    portfolio_view_contract_test.cpp)
+
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.
 trading_engine_add_component_test(scaffold_contract

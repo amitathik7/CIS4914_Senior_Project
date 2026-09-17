@@ -106,6 +106,14 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - Are limits per-symbol / per-strategy / per-portfolio, or global only?
 - Daily-loss stop: session boundary definition and reset time (exchange TZ?).
 - Kill-switch: manual only, or automatic on N consecutive rejects / drawdown?
+- The **Portfolio → Risk** query interface (what state the Risk Manager can
+  read, and whether it reads it synchronously) is drafted in
+  [`adr/0005-portfolio-risk-query-contract.md`](adr/0005-portfolio-risk-query-contract.md)
+  (**Proposed**, not Accepted; tracks GitHub issue #5). It settles no limits or
+  thresholds - those remain this question - and it does **not** settle whether
+  pending orders are portfolio state either; its §4 writes that up as an open
+  proposal for the team. How a `max_open_orders` policy gets its input depends
+  on that outcome.
 - **Owner:** risk lead · **By:** M3
 
 ## 11. Execution assumptions
@@ -184,8 +192,12 @@ analytics. The rest is drafted in Weeks 1–2 and ratified at **M5**.
 - **Who owns open-order state?** `ExecutionSimulator::open_order_count()` and
   `RiskContext::open_order_count` place it in execution and risk;
   `PortfolioSnapshot` has no such field; GitHub issue #5 proposes moving it to
-  the Portfolio Manager. ADR 0004 §8 argues for leaving it where the code
-  already puts it. Issues #4 and #5 must agree - see that section.
+  the Portfolio Manager. ADR 0004 §8 and ADR 0005 §4 write this up as an open
+  proposal, in deliberately identical wording so the two cannot drift: Option A
+  leaves it where the code already puts it, Option B moves it to the Portfolio
+  Manager. **Neither ADR settles it, and whichever the team picks, both flip
+  together** - under Option B the Portfolio Manager would own open orders *and*
+  need every rejection reported to it.
 - **`DATA_FLOW.md` line 35 contradicts `portfolio_manager.hpp`.** The diagram
   routes `Order / Fill` to the PortfolioManager, which has no entry point for
   an Order. ADR 0004 §7 resolves this in favour of the header (fills only);
