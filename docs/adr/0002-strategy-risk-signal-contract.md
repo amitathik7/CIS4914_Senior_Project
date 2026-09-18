@@ -1,7 +1,7 @@
 # 2. Strategy Engine → Risk Manager signal contract (draft JSON shape)
 
 - Status: **Proposed** (not Accepted — draft prepared for review)
-- Date: 2026-09-16
+- Date: 2026-09-16 (revised 2026-09-17 — see "Related" and §0/§8 below)
 - Deciders: per [`../COMPONENT_OWNERSHIP.md`](../COMPONENT_OWNERSHIP.md), `domain/`
   value-type changes need two approvals including the top dependent
   component's owner. `TradeSignal` is depended on by strategy, risk, and
@@ -14,9 +14,20 @@
   of the team FYI.
 - Related: GitHub issue #3 ("[Architecture] Strategy Engine -> Risk Manager
   Interface Contract"); [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.md) OQ#9
+  and OQ#11 (numeric representation — cross-cutting, all four members sign
+  off); [PR #7](https://github.com/amitathik7/CIS4914_Senior_Project/pull/7)
+  (ADR 0004, "Execution Simulator → Portfolio Manager fill contract,"
+  **Proposed**, on an unmerged branch — not linked locally since the file
+  doesn't exist on this branch), whose §0.3 and §12 raise the two points
+  this revision responds to: the transport reading in §0, and the
+  fractional-vs-whole-share quantity policy in §8.
 
 > Drafted as a review starting point. See "Sign-off" at the bottom — nothing
 > there is checked yet, and nothing in this file should be read as approved.
+> **Revised 2026-09-17** in response to PR #7 / ADR 0004 (§0.3, §12): §0 now
+> separates the logical contract from transport/encoding, and §8 aligns the
+> quantity policy with ADR 0004's proposed direction instead of leaving two
+> Proposed drafts disagreeing. Still nothing here is accepted.
 
 ## Context
 
@@ -62,6 +73,15 @@ The scaffold already answers part of this and leaves real gaps for the rest:
   `trading_engine_core` is architecturally barred from linking one
   (`docs/ARCHITECTURE.md` §3, §6) — a rule about which *target* such a
   library may live in, not a ban on JSON existing anywhere in the project.
+- **This process-topology picture is now itself in flux.**
+  [PR #7](https://github.com/amitathik7/CIS4914_Senior_Project/pull/7)
+  (ADR 0004, Proposed, on an unmerged branch) reports that the team has
+  indicated an intent to move the pipeline onto Kafka, which would supersede
+  ADR 0001 item 12 and make every component boundary — including this one —
+  cross-process. That intent **is not recorded in any accepted ADR**: the
+  ADR index on that branch reserves the number (ADR 0003, "Transport: Kafka,
+  superseding ADR 0001 item 12") but marks it "Not yet written," and this
+  document does not treat it as settled either. See §0.
 - Everything downstream of signal creation is still `common::NotImplemented`
   (`RiskManager::check`, `ExecutionSimulator::submit`,
   `StrategyEngine::on_market_event`) — this is pre-M4 scaffold, not a running
@@ -73,34 +93,66 @@ already true today from what's newly proposed.
 
 ## Decision
 
-### 0. What "JSON" means here — needs reviewer confirmation
+### 0. What "JSON" means here — needs reviewer confirmation, and now has a live alternative
 
-**This is a proposed interpretation, not a settled fact — and not something
-the architecture forces.** Issue #3 says "Format: JSON to start" but doesn't
-say JSON travels over a wire. As the Context section lays out, ADR 0001's
-in-process/no-IPC decision does not prohibit JSON; the actual constraints
-are narrower: no JSON library is chosen yet (OQ#4/#7, still open), and
-adding one plus writing (de)serialization code is itself a runtime feature
-this draft is scoped to avoid. `trading_engine_core` specifically could
-never link such a library, but a library need not live there.
+**This remains a proposed interpretation, not a settled fact.** The previous
+version of this section proposed reading "JSON" in issue #3 as documentation
+and persistence only, with the Strategy→Risk handoff carried as a native C++
+call / event-bus payload — not as a wire format — and asked reviewers to
+confirm that. [PR #7](https://github.com/amitathik7/CIS4914_Senior_Project/pull/7)
+(ADR 0004 §0.3) reports that the team has since indicated an intent to move
+the pipeline onto Kafka, which would make this boundary cross-process, and
+flags that this contradicts the reading above. The flag is fair; this
+revision addresses it directly rather than leaving two Proposed ADRs
+disagreeing.
 
-Given that, this ADR **proposes** treating JSON as:
+**Nothing about that intent is decided yet.** No ADR records it — the ADR
+index on the branch that reserves the number marks it "**ADR 0003**,
+Transport: Kafka, superseding ADR 0001 item 12 — Not yet written" — so ADR
+0001 item 12 (in-process, no IPC) is still the only thing on record, and
+that item is itself only **Proposed/Provisional**, never Accepted. Process
+topology is honestly *unsettled between two proposals* right now, not
+settled in either direction, and this ADR does not get to resolve that by
+itself.
 
-- the language used to **document and give examples of** the contract (this
-  file, and `tests/fixtures/signals/*.json`), and
-- a candidate format for **persisted/logged** signals later, in the spirit of
-  the M7 analytics export (whose JSON writer is explicitly required to live
-  outside `trading_engine_core`),
+**What this section commits to, instead of picking a transport:**
 
-**not** as the mechanism by which `StrategyEngine` hands a signal to
-`RiskManager` at runtime — that handoff is designed, today, as a native C++
-call / event-bus payload instead (see Context; that path isn't functionally
-exercised yet either). If the team later wants a serialized runtime boundary
-here, that's new work to design — pick a library, decide where it lives,
-write conversion code, with its own review — not something ADR 0001 already
-forbids, and not something this ADR is proposing. **Reviewers: please
-confirm or correct this reading before treating anything else in this file
-as settled.**
+- **The logical contract is not "JSON."** §1's fields, what each one means,
+  and the invariants in §2–§8 describe what a `new_order` or `cancel`
+  message *is* — true whether Strategy hands Risk a native `TradeSignal` /
+  `SignalCancelRequest` in-process, or a serialized message crosses a Kafka
+  topic. None of that changes with the transport.
+- **Transport and encoding are a separate, still-open question.**
+  In-process, the handoff stays a native C++ value through a function call
+  or the existing `event_bus.hpp` closed `std::variant` — no serialization,
+  no JSON, at all; that is what ADR 0001's current (Provisional) item 12
+  describes and what the scaffold's types are shaped for today.
+  Cross-process, if ADR 0003 is written and accepted, the message needs a
+  wire encoding — and **JSON would be a candidate for that encoding, not a
+  requirement of it**: Kafka carries Avro, Protobuf, or JSON equally well
+  (ADR 0004 §11.4 leaves the same choice open for the fill contract, for the
+  same reason). If the team's eventual choice is JSON, §1's shapes are
+  positioned to become that encoding directly; if not, §1 still documents
+  the logical shape whatever encoding is chosen must carry.
+
+**Until ADR 0003 exists, this ADR's JSON is exactly what it was:
+documentation and worked examples of the logical contract** (this file, and
+`tests/fixtures/signals/*.json`), and a candidate format for
+**persisted/logged** signals later, in the spirit of the M7 analytics
+export. It is still **not asserted here** to be the runtime wire format —
+that question now waits on ADR 0003 rather than on a claim this ADR could
+settle alone. Native C++ domain types stay useful either way: the adapter
+pattern already used for Alpaca and PostgreSQL (a vendor/transport-specific
+target behind a stable interface, kept out of `trading_engine_core` per
+`docs/ARCHITECTURE.md` §3, §6) applies just as well to a future Kafka
+adapter converting between wire bytes and `domain::TradeSignal` —
+serialization code living in an adapter, not in the core, the same way
+Alpaca's and Postgres's client libraries already do.
+
+Serialization and Kafka implementation stay out of scope for this change —
+see §9. **Reviewers: please confirm or correct this reading, and in
+particular confirm whether ADR 0003 needs drafting before or alongside this
+ADR's acceptance.**
 
 ### 1. Message envelope
 
@@ -117,7 +169,7 @@ a real alternative — see "Alternatives considered.")
 | `symbol` | string | yes | non-empty, e.g. `"AAPL"` | `TradeSignal::symbol` (existing) |
 | `side` | string | yes | `"buy"` \| `"sell"` | `TradeSignal::side` (existing `SignalSide`, restricted to two of its three values here — §6) |
 | `order_type` | string | yes | `"market"` \| `"limit"` | `TradeSignal::order_type` (**new**, reuses existing `domain::OrderType`) |
-| `quantity` | number | yes | finite, `> 0` | `TradeSignal::requested_quantity` (existing — **not** a new field) |
+| `quantity` | number | yes | finite, `> 0`; whole numbers proposed for v1, pending approval (§8) | `TradeSignal::requested_quantity` (existing — **not** a new field) |
 | `price` | number | required **iff** `order_type == "limit"`; omit entirely for `"market"` | finite, `> 0` | `TradeSignal::limit_price` (**new** — named after `Order::limit_price`, not the JSON key) |
 | `created_at` | string, RFC 3339 UTC | yes | e.g. `"2026-09-16T14:32:01.123456789Z"` | `TradeSignal::created_at` (existing) |
 
@@ -162,6 +214,11 @@ here for review. **These are proposed examples tied to this draft, not
 golden files** — no JSON (de)serialization code exists in this repository
 yet (§0, §9). They were checked for JSON syntax only, not against this
 table.
+
+**Prices below are plain decimal dollars (e.g. `152.75`), not scaled
+integers — see §8.** That is a separate, independent question from ADR
+0004's illustrative scaled-integer fixtures; neither is a ratified answer
+to OQ#11.
 
 **Market buy** (quantity example from the issue: 100 units):
 ```json
@@ -342,17 +399,93 @@ they're listed so the decision isn't silently made by omission later.
   those values are representable — nothing in `TradeSignal` currently
   rejects them.) Direction comes from `side`, matching `Order::quantity`'s
   existing "> 0, direction via side" convention, not from the sign of
-  `quantity` itself.
-- **Whether fractional quantities are allowed is a policy choice this ADR
-  proposes, not a fact the `double` alias proves.** `common::Quantity` being
-  `double` makes fractional values *representable*; it says nothing about
-  whether the engine should *accept* them. This ADR proposes allowing them
-  (consistent with Alpaca's fractional-share support), but that's a
-  recommendation for reviewers to confirm or override.
+  `quantity` itself — deliberately unlike `Fill::filled_quantity` and
+  `Position::quantity`, which are signed further downstream (also noted from
+  the execution side in ADR 0004 §4). That is an existing inconsistency
+  across the domain model, not something this ADR introduces or resolves.
+
+- **Whole shares are the proposed v1 policy — a change from this draft's
+  earlier position, and still pending team approval.** The previous version
+  of this section proposed *allowing* fractional quantities (citing Alpaca's
+  fractional-share support) and asked reviewers to confirm or override that.
+  [ADR 0004](https://github.com/amitathik7/CIS4914_Senior_Project/pull/7)
+  §12 reports that the team's informal, in-chat direction leans
+  whole-shares-only instead, and lists amending this section as the cheaper
+  fix if that holds. **No ADR has ratified either answer** — ADR 0004 is
+  explicit that it does not decide this — so rather than leave two Proposed
+  drafts disagreeing, this section now aligns with that informal direction
+  as the **proposed v1 policy, explicitly pending team approval**.
+
+  - **Policy and representation are different questions.** `common::Quantity`
+    stays `double` regardless of this policy — moving it is OQ#11's call
+    (cross-cutting, all four members sign off), not this ADR's, and nothing
+    here proposes it. A `double` can represent `100.5` whether or not the
+    contract permits a signal to carry one; "whole shares" restricts which
+    *values* are valid, not the field's type — and nothing in this codebase
+    enforces that restriction today.
+  - **This does not license silently rounding an explicit fractional
+    request.** Under whole-shares-only, a caller asking for a fractional
+    quantity is sending invalid input, not a value to floor without telling
+    anyone. This ADR still proposes no runtime validation (§9), so nothing
+    actually rejects it today either — but the *intended* handling, once
+    something does, is an explicit rejection, not a silent truncation.
+  - **Where a share count is computed rather than supplied directly**
+    (sizing an exposure-based intent against a price — see §6), the proposed
+    default for the resulting non-negative order magnitude is **rounding
+    toward zero**, not half-away-from-zero or ceiling: rounding up can push
+    an order past a risk limit the Risk Manager would otherwise have
+    approved against. This mirrors the rounding direction ADR 0004 §12
+    proposes on the execution side, so both ends round the same way. (Per
+    that section, this sizing step happens in `ExecutionSimulator`, not in
+    `StrategyEngine` or `RiskManager` — this ADR records the convention for
+    consistency; it does not relocate where sizing happens.)
+  - **A sizing result of zero shares must be an explicit, visible outcome,
+    never a silent drop.** A small `target_exposure` against a high-priced
+    symbol can floor to zero under whole-shares-only. This ADR does not
+    implement that check, but proposes that whoever performs sizing must
+    surface a zero result rather than quietly emitting nothing — consistent
+    with ADR 0004 §14, which requires the equivalent order-sizing outcome to
+    surface as an explicit `OrderStatus::Rejected` rather than vanish. Which
+    component owns that check is not decided here.
+  - This ADR still does **not** migrate `common::Quantity`, `Price`, or
+    `Money` — see the OQ#11 note at the end of this section.
+
 - **Price** (`new_order.price`): must be finite and `> 0` when present.
   Present **only** when `order_type == "limit"`; for `"market"` the key is
   **omitted entirely** (not `null`) — matching `Order::limit_price` being
   `std::optional`, "set iff type == Limit."
+
+- **The units in §3's price examples are plain decimal, and that is still
+  provisional — not a second scale competing with anyone else's.**
+  `"price": 152.75` is an ordinary decimal number of dollars, no fixed-point
+  scaling applied. ADR 0004's `fills/` fixtures instead show integers scaled
+  by 10⁶ (`150020000` meaning `150.02`) as an illustration of one candidate
+  encoding — explicitly flagged there as "illustrative, not ratified."
+  Neither this ADR's decimal examples nor ADR 0004's scaled-integer examples
+  are an accepted answer to OQ#11 (numeric representation — cross-cutting,
+  all four members sign off); they simply show two different candidates in
+  two sibling drafts. **`NUMERIC(18,6)` in the draft schema doesn't settle
+  this either:** it is a column precision (up to six fractional decimal
+  digits, stored exactly), not a JSON wire encoding — it neither requires
+  nor implies a JSON number scaled by 10⁶, or an integer at all. Until
+  OQ#11 lands, this ADR's price fields stay decimal, and if the team
+  settles on a scale, this ADR's examples and
+  `tests/fixtures/signals/*.json` need updating together, by hand — nothing
+  makes that automatic.
+
+- **A future cross-process binding needs more than a scale — flagged here,
+  not added.** If Strategy→Risk ever crosses a Kafka topic (§0), at least
+  two more things need coordinating across every contract sharing that
+  topic space, not just this one: **run-scoped identity** (ADR 0004 §1 adds
+  a `run_id` to `Fill` so a consumer can tell which backtest/live session a
+  message belongs to; `TradeSignal` has no equivalent field) and **schema
+  versioning** (ADR 0004 §11.4 proposes a `schema_version` field plus an
+  additive-only change policy). Both are transport-binding concerns, not
+  part of this ADR's logical contract, and this ADR does **not** add either
+  field to `TradeSignal` or `SignalCancelRequest` now — doing so ahead of
+  ADR 0003 would guess at a shape for a decision no one has made yet.
+  Recorded so whoever writes ADR 0003 reconciles it with this contract too.
+
 - **Correction to a claim from earlier discussion of this issue:** JSON's
   grammar (RFC 8259) does not mandate IEEE-754 double storage — it only
   defines the textual grammar for a number. IEEE-754 double is simply what
@@ -384,8 +517,9 @@ they're listed so the decision isn't silently made by omission later.
 
 ### 9. Scope exclusions (explicitly not part of this change)
 
-- No JSON library added anywhere, no (de)serialization code, no runtime
-  transport. See §0.
+- No JSON library added anywhere, no (de)serialization code, no Kafka
+  client, and no transport decision made. See §0. ADR 0003, if and when
+  it's written, is a separate decision this ADR consumes, not one it makes.
 - No changes to `event_bus.hpp`, `EventPayload`, `EventType`, `ISignalSink`,
   or `IStrategy`. The `SignalCancelRequest` type this ADR proposes cannot
   currently be emitted by a strategy or carried by the bus — see §7's
@@ -399,6 +533,12 @@ they're listed so the decision isn't silently made by omission later.
   documented rules, mirroring how `requested_quantity`/`target_exposure`'s
   mutual exclusivity is already documented rather than enforced.
 - Does not touch `Money`/`Price`/`Quantity`, and does not resolve OQ#11.
+- Does not ratify whole-shares-only vs. fractional quantities, or the
+  price/quantity numeric scale — both stay proposed, pending OQ#11 and team
+  sign-off (§8).
+- Does not add `run_id`, `schema_version`, or any other transport-binding-
+  only field to `TradeSignal` or `SignalCancelRequest` ahead of ADR 0003
+  (§8).
 - Does not resolve OQ#9 (signal semantics) — this ADR is additive alongside
   it, not a replacement.
 
@@ -418,6 +558,9 @@ they're listed so the decision isn't silently made by omission later.
 - Documents, in one place, a real integration gap (strategies can't learn
   their own assigned `SignalId`) that would otherwise surface later,
   mid-implementation, in M4 or M6.
+- Reconciles §0's transport reading and §8's quantity policy with ADR
+  0004's independently-drafted proposals (§0.3, §12) instead of leaving two
+  Proposed ADRs quietly disagreeing.
 
 **Negative / risks**
 
@@ -463,6 +606,15 @@ decision.
 
 - [ ] Strategy/risk area owner (Member C)
 - [ ] Execution area owner (Member D)
+- [ ] Transport/encoding split (§0) confirmed as the right approach —
+      logical contract here vs. a transport-binding section added once
+      ADR 0003 exists
+- [ ] Whole-shares-only v1 policy (§8) confirmed or rejected, consistently
+      with ADR 0004 §12 and issues #4/#5
+- [ ] Rounding-toward-zero default for sizing (§8) confirmed, and its
+      owning component named
+- [ ] Price/quantity scale (§8, OQ#11) resolved and this ADR's examples plus
+      `tests/fixtures/signals/*.json` updated together, by hand
 - [ ] `docs/adr/README.md` index updated (done as part of this draft;
       re-confirm on acceptance)
 - [ ] `docs/OPEN_QUESTIONS.md` OQ#9 updated (done as part of this draft;

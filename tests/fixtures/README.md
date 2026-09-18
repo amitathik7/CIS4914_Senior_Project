@@ -25,3 +25,14 @@ code exists in this repository yet, so nothing reads or round-trips these.
 They were checked for JSON syntax only -- that is not the same as validating
 them against the contract, since there is no contract-checking code to
 validate against.
+
+**Prices shown are plain decimal dollars, not scaled integers** (e.g.
+`152.75`), and that is provisional -- see ADR 0002 §8 and
+`docs/OPEN_QUESTIONS.md` OQ#11. The quantities shown (100, 50) happen to be
+whole shares, but that is incidental to this draft, not a rule these
+fixtures were built to satisfy: whole-shares-only is a **proposed v1
+policy, pending team approval** (ADR 0002 §8), not yet a settled contract
+rule. These are also the *documentation* form of the contract -- under an
+in-process transport the same contract travels as a native
+`domain::TradeSignal` / `domain::SignalCancelRequest` with no JSON involved
+(ADR 0002 §0).
