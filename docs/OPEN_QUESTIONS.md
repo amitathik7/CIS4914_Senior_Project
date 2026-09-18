@@ -86,6 +86,12 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - Signal semantics: target exposure (fraction of equity) vs explicit quantity
   vs delta? (`TradeSignal` currently allows either.)
 - Warm-up handling: how does a strategy request history before it can act?
+- Order-shape fields (order type, limit price) and cancellation semantics for
+  explicit-quantity signals are drafted in
+  [`adr/0002-strategy-risk-signal-contract.md`](adr/0002-strategy-risk-signal-contract.md)
+  (**Proposed**, not Accepted; tracks GitHub issue #3). Not resolved by this
+  entry — ratify alongside or before M4, together with the rest of this
+  question.
 - **Owner:** strategy lead · **By:** M3
 
 ## 10. Risk limits

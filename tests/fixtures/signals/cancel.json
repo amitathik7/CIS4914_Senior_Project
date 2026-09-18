@@ -1,0 +1,8 @@
+{
+  "message_type": "cancel",
+  "signal_id": 1044,
+  "target_signal_id": 1042,
+  "strategy_id": "sma_crossover",
+  "symbol": "AAPL",
+  "created_at": "2026-09-16T14:34:00.000000000Z"
+}
