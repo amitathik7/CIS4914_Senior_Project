@@ -43,6 +43,7 @@ TEST(ScaffoldContract, PortfolioManagerNeverFabricatesState) {
     EXPECT_THROW((void)pm.cash(), tec::NotImplemented);
     EXPECT_THROW((void)pm.snapshot(), tec::NotImplemented);
     EXPECT_THROW((void)pm.position("AAPL"), tec::NotImplemented);
+    EXPECT_THROW((void)pm.buying_power(), tec::NotImplemented);
 }
 
 TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {

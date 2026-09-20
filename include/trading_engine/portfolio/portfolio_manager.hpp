@@ -48,7 +48,14 @@ public:
     [[nodiscard]] virtual domain::PortfolioSnapshot snapshot() const = 0;
     [[nodiscard]] virtual std::optional<Position> position(
         const common::Symbol& symbol) const = 0;
+
+    // Settled cash. Moves only when fills settle.
     [[nodiscard]] virtual common::Money cash() const = 0;
+
+    // cash() minus cash reserved against open buy orders: what is actually
+    // free to commit to a new buy. PROPOSED by
+    // docs/adr/0005-portfolio-risk-query-contract.md sections 4 and 6.
+    [[nodiscard]] virtual common::Money buying_power() const = 0;
 };
 
 class PortfolioManager final : public IPortfolioView {
@@ -97,6 +104,7 @@ public:
     [[nodiscard]] std::optional<Position> position(
         const common::Symbol& symbol) const override;                    // NOT IMPLEMENTED
     [[nodiscard]] common::Money cash() const override;                   // NOT IMPLEMENTED
+    [[nodiscard]] common::Money buying_power() const override;           // NOT IMPLEMENTED
 
 private:
     [[maybe_unused]] common::RunId         run_id_{};

@@ -4,8 +4,10 @@
 //
 // These are NOT tests of PortfolioManager -- its methods are all still
 // common::NotImplemented (pinned by scaffold_contract_test). They test the
-// *interface*: that a FakePortfolioView can satisfy it, and that the snapshot
-// semantics ADR 0005 section 7 describes actually hold for a consumer.
+// *interface*: that a FakePortfolioView can satisfy it, that the snapshot
+// semantics ADR 0005 section 7 describes actually hold for a consumer, and
+// that open orders and buying power are visible as section 4 decides (team
+// decision 2026-09-20: cash is reserved at order submission).
 //
 // The fake is the one IMPLEMENTATION_PLAN.md M1 calls for, so risk policies
 // can be tested later without a real portfolio.
@@ -27,6 +29,7 @@ public:
     explicit FakePortfolioView(common::Money cash) : cash_{cash} {
         snapshot_.cash = cash;
         snapshot_.total_equity = cash;
+        snapshot_.buying_power = cash;   // nothing reserved yet
     }
 
     void add_position(portfolio::Position position) {
@@ -34,6 +37,15 @@ public:
     }
 
     void set_as_of(common::Timestamp as_of) { snapshot_.as_of = as_of; }
+
+    // Mirrors what the real PortfolioManager does on a submission event:
+    // record the open order and hold its cash, so buying power falls while
+    // settled cash does not.
+    void add_pending_order(portfolio::PendingOrder order) {
+        snapshot_.reserved_cash += order.reserved_cash;
+        snapshot_.buying_power = cash_ - snapshot_.reserved_cash;
+        snapshot_.pending_orders.push_back(std::move(order));
+    }
 
     [[nodiscard]] domain::PortfolioSnapshot snapshot() const override {
         return snapshot_;   // a copy, per ADR 0005 section 7
@@ -49,6 +61,10 @@ public:
 
     [[nodiscard]] common::Money cash() const override { return cash_; }
 
+    [[nodiscard]] common::Money buying_power() const override {
+        return snapshot_.buying_power;
+    }
+
 private:
     common::Money             cash_{0};
     domain::PortfolioSnapshot snapshot_{};
@@ -62,6 +78,19 @@ portfolio::Position make_position(common::Symbol symbol,
     p.quantity = quantity;
     p.average_cost = average_cost;
     return p;
+}
+
+portfolio::PendingOrder make_pending(common::OrderId id,
+                                     trading_engine::domain::OrderSide side,
+                                     common::Quantity remaining,
+                                     common::Money reserved) {
+    portfolio::PendingOrder o{};
+    o.order_id = id;
+    o.symbol = "AAPL";
+    o.side = side;
+    o.remaining_quantity = remaining;
+    o.reserved_cash = reserved;
+    return o;
 }
 
 }  // namespace
@@ -136,18 +165,60 @@ TEST(PortfolioViewContract, ShortPositionIsCarriedBySignedQuantity) {
     EXPECT_FALSE(position->is_flat());
 }
 
-TEST(PortfolioViewContract, SnapshotCarriesNoOpenOrderState) {
-    // ADR 0005 section 4 / ADR 0004 section 8 propose (do not decide) that
-    // pending orders stay off the snapshot. This test documents today's
-    // absence -- if the team picks Option B and adds an open-orders field,
-    // this test should fail, which is the prompt to revisit BOTH ADRs rather
-    // than just deleting it.
+TEST(PortfolioViewContract, NoOpenOrdersMeansBuyingPowerEqualsCash) {
+    // ADR 0005 section 8: with nothing reserved, the two numbers agree.
     FakePortfolioView fake{10'000.0};
     const auto snap = fake.snapshot();
 
-    // The snapshot's entire surface: settled state and derived exposure.
-    EXPECT_DOUBLE_EQ(snap.cash, 10'000.0);
-    EXPECT_DOUBLE_EQ(snap.gross_exposure, 0.0);
-    EXPECT_DOUBLE_EQ(snap.net_exposure, 0.0);
-    EXPECT_TRUE(snap.positions.empty());
+    EXPECT_TRUE(snap.pending_orders.empty());
+    EXPECT_DOUBLE_EQ(snap.reserved_cash, 0.0);
+    EXPECT_DOUBLE_EQ(fake.buying_power(), fake.cash());
+}
+
+TEST(PortfolioViewContract, ReservationLowersBuyingPowerButNotCash) {
+    // Section 6: cash is settled money and does not move on submission; buying
+    // power is what is free to commit. A policy checking a new buy against
+    // cash() here would approve spending money that is already spoken for.
+    FakePortfolioView fake{20'000.0};
+    fake.add_pending_order(make_pending(common::OrderId{3305},
+                                        domain::OrderSide::Buy, 100.0, 15'050.0));
+
+    EXPECT_DOUBLE_EQ(fake.cash(), 20'000.0);
+    EXPECT_DOUBLE_EQ(fake.buying_power(), 4'950.0);
+    EXPECT_DOUBLE_EQ(fake.snapshot().reserved_cash, 15'050.0);
+}
+
+TEST(PortfolioViewContract, PendingOrdersCarryWhatIssue5AsksFor) {
+    // Issue #5: "Pending/Unfulfilled orders (symbols + quantity + side)".
+    FakePortfolioView fake{20'000.0};
+    fake.add_pending_order(make_pending(common::OrderId{3305},
+                                        domain::OrderSide::Buy, 100.0, 15'050.0));
+
+    const auto snap = fake.snapshot();
+    ASSERT_EQ(snap.pending_orders.size(), 1u);
+    const auto& o = snap.pending_orders.front();
+    EXPECT_EQ(o.symbol, "AAPL");
+    EXPECT_EQ(o.side, domain::OrderSide::Buy);
+    EXPECT_DOUBLE_EQ(o.remaining_quantity, 100.0);
+}
+
+TEST(PortfolioViewContract, PendingSellReservesNoCash) {
+    // Section 4: a sell commits shares against the position, not cash, so it
+    // leaves buying power alone.
+    FakePortfolioView fake{20'000.0};
+    fake.add_pending_order(make_pending(common::OrderId{3306},
+                                        domain::OrderSide::Sell, 50.0, 0.0));
+
+    EXPECT_DOUBLE_EQ(fake.buying_power(), fake.cash());
+    EXPECT_EQ(fake.snapshot().pending_orders.size(), 1u);
+}
+
+TEST(PortfolioViewContract, OpenOrderCountComesFromTheSnapshot) {
+    // Section 8: max_open_orders is checked against pending_orders.size(),
+    // rather than a separate Risk-side count that could drift from it.
+    FakePortfolioView fake{50'000.0};
+    fake.add_pending_order(make_pending(common::OrderId{1}, domain::OrderSide::Buy, 10.0, 1'500.0));
+    fake.add_pending_order(make_pending(common::OrderId{2}, domain::OrderSide::Sell, 5.0, 0.0));
+
+    EXPECT_EQ(fake.snapshot().pending_orders.size(), 2u);
 }

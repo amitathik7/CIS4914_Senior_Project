@@ -2,20 +2,24 @@
 
 - Status: **Proposed** (not Accepted - draft prepared for review)
 - Date: 2026-09-17
+- Updated: 2026-09-20. §4 flipped to Option B by team decision: the Portfolio
+  Manager reserves cash at order submission, so it exposes open orders and
+  buying power. §1, §2, §6 and §8 follow from that.
 - Deciders: Adam (Portfolio Manager, provider) and Amit (Execution Simulator,
   because §4 depends on where open-order state lives). The Risk Manager is
   shared ownership (Adam, Amit, Blake, Jordan), so the consumer side has no
   single owner to sign for it - this needs a team call rather than one
   approval. `COMPONENT_OWNERSHIP.md` is stale and does not reflect this.
 - Related: GitHub issue #5; **ADR 0004 (issue #4), whose §8 this document is
-  the other half of** - the two share one position on open-order ownership and
+  the other half of** - the two share one decision on open-order ownership and
   must be read together; [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.md) OQ#10
   (risk limits) and OQ#2/#3.
 - **Depends on an unwritten ADR.** The pending Kafka decision (expected ADR
   0003, superseding ADR 0001 item 12) determines whether this stays a direct
   call. Written to survive either outcome - see §5.
 
-> Drafted as a review starting point. See "Sign-off" - nothing is ticked.
+> Drafted as a review starting point. The open-order decision in §4 is settled
+> by the team; everything else is still a proposal. See "Sign-off".
 
 ## Context
 
@@ -42,26 +46,37 @@ must be available to the Risk Manager' link"*. ARCHITECTURE.md §2 calls it a
 required feedback path. So the access pattern the ticket asks for - a function
 call, not direct database access - is already what the scaffold does.
 
-This ADR therefore mostly **documents and confirms** an existing interface,
-proposes no new methods, and spends its effort on the one field that does not
-fit and the one question that is genuinely open.
+This ADR therefore mostly **documents and confirms** an existing interface.
+The team's decision on open-order ownership (§4) adds one method,
+`buying_power()`, and three snapshot fields. Everything else the ticket asks
+for was already there.
 
 ## Decision
 
-### 1. `IPortfolioView` is the contract, unchanged
+### 1. `IPortfolioView` is the contract, with one addition
 
-No new methods. No new types. The Risk Manager depends on exactly three calls,
-and that narrowness is the point: it cannot mutate the portfolio, and it
-cannot reach past it into persistence.
+```cpp
+class IPortfolioView {
+    virtual domain::PortfolioSnapshot snapshot() const = 0;
+    virtual std::optional<Position> position(const common::Symbol&) const = 0;
+    virtual common::Money cash() const = 0;          // settled cash
+    virtual common::Money buying_power() const = 0;  // NEW: cash - reserved_cash
+};
+```
+
+`buying_power()` is new with the §4 decision. The snapshot gains
+`reserved_cash`, `buying_power` and `pending_orders` to match. The interface
+stays read-only: the Risk Manager still cannot mutate the portfolio, and still
+cannot reach past it into persistence. That narrowness is the point.
 
 ### 2. The ticket's four fields, mapped
 
 | Ticket asks for | Provided by | Status |
 |---|---|---|
 | Current positions (symbol + quantity) | `PortfolioSnapshot::positions` → `Position::symbol`, `Position::quantity` | ✅ exists |
-| Cash on hand ("amount we can still use to buy") | `IPortfolioView::cash()`, `PortfolioSnapshot::cash` | ✅ exists - see §6 |
+| Cash on hand ("amount we can still use to buy") | `IPortfolioView::buying_power()`, `PortfolioSnapshot::buying_power` | ✅ **new** - see §6. Settled cash stays `cash()`. |
 | Total account valuation | `PortfolioSnapshot::total_equity` | ✅ exists |
-| Pending / unfulfilled orders | - | ⚠️ **open - §4 proposes not providing them; the team decides** |
+| Pending / unfulfilled orders | `PortfolioSnapshot::pending_orders` → `PendingOrder::symbol`, `side`, `remaining_quantity` | ✅ **new** - §4 |
 
 Two fields the ticket does not ask for are already on the snapshot and are
 directly useful to risk policies: `gross_exposure` and `net_exposure`.
@@ -82,67 +97,90 @@ this ADR does not settle it; it only says the field is part of the contract.
 
 ### 4. Open-order ownership - the shared position with issue #4
 
-> **This section is a proposal, not a decision. It is deliberately identical
-> to ADR 0004 §8 - the two must not drift.** The team decides; neither author
-> settles it alone. Whichever option is chosen, **both ADRs change together**:
-> they are two halves of one decision, not two independent calls.
+> **Decided by the team on 2026-09-20: Option B.** The Portfolio Manager
+> reserves cash at order submission and functions as a traditional portfolio
+> manager: it owns open-order state and exposes buying power. This section is
+> deliberately identical to ADR 0004 §8. The two must not drift, and they changed
+> together.
 
-**Proposed: the Portfolio Manager does not own open-order state.**
+**Decided: the Portfolio Manager owns open-order state.**
 
-**What decides it: does the Portfolio Manager reserve cash at order
-submission?** If it does not, a pending order does not affect any number the
-Portfolio Manager reports, so there is nothing to expose and nothing to
-report on rejection. If it does, the Portfolio Manager must track every order
-until it resolves - and must therefore be told about every rejection,
-cancellation and expiry, or the reservation leaks and available cash drifts
-down permanently. That is the same question ADR 0004 §7 answers, which is why
-the two sections stand or fall together.
+**Why the two tickets moved together.** Reserving cash at submission means the
+Portfolio Manager must track every order until it resolves. It must therefore
+be told when each order is submitted, so it can reserve, and when each order
+ends without filling (rejected, cancelled or expired), so it can release.
+Without those events the reservation leaks and buying power drifts down
+permanently. That is exactly the question ADR 0004 §7 answers, which is why the two
+sections were always one decision.
 
-**Option A - Portfolio exposes settled state only (proposed).** Cash,
-positions, cost basis, realised/unrealised P&L, total equity. The Risk Manager
-composes pending-order exposure from the order stream, which it consumes
-anyway to maintain `open_order_count` for `RiskLimits::max_open_orders`.
+**What the Portfolio Manager owns and exposes**
 
-- The existing code points this way in three places:
-  `ExecutionSimulator::open_order_count()` (it creates orders and drives their
-  status transitions, so it is the natural authority);
-  `RiskContext::open_order_count`, a field on the Risk Manager's own context
-  struct rather than on `PortfolioSnapshot`; and `risk_manager.hpp`'s TODO
-  naming "open-order accounting" as Risk's work. `PortfolioSnapshot` has no
-  such field.
-- Exactly one component owns each piece of state, so there is nothing to
-  diverge.
-- `PortfolioSnapshot` keeps meaning "settled reality at an instant" rather
-  than a mix of settled and speculative state.
-- No second state machine inside the Portfolio Manager, and `apply()` stays a
-  pure function of fills.
-- **Cost:** the Risk Manager must join two sources - cash and positions from
-  the Portfolio Manager, pending exposure from the order stream - rather than
-  asking one component one question. That cost lands on a component with no
-  single owner.
+- Cash, positions, cost basis, realised/unrealised P&L and total equity, as
+  before.
+- **Open orders:** one entry per unresolved order, carrying symbol, side and
+  remaining quantity. This is exactly what issue #5 asks for.
+- **Reserved cash:** the total held against open buy orders.
+- **Buying power:** `cash - reserved_cash`. This is the number a new buy is
+  checked against. `cash()` keeps meaning settled cash, so "can I afford
+  this?" is answered by buying power, not by cash.
 
-**Option B - Portfolio owns open orders and exposes buying power.**
-`buying_power = cash - reserved`, with pending orders on the snapshot.
+**Why Option B: the case the team accepted**
 
 - The Risk Manager asks one component one question and gets one answer.
-- It is the standard broker model, and how many production systems do it.
-- **Its strongest argument:** one component computing cash and pending
-  exposure together cannot have them disagree with each other. If Risk
-  assembles them from two sources, its view of pending orders can lag
-  differently from its view of cash.
-- It is also what issue #5 literally asks for.
-- **Cost:** duplicates state the Execution Simulator already holds, and two
-  components tracking the same order table will diverge - worse across a
-  network boundary. Requires a new Portfolio entry point for order lifecycle
-  events, splits `cash()` into cash and available-to-spend, and flips
-  ADR 0004 §7.
+- It is the standard broker model.
+- One component computing cash and pending exposure together cannot have them
+  disagree with each other. A Risk-side join from two sources could, because
+  its view of pending orders can lag differently from its view of cash.
+- It is what issue #5 literally asks for.
 
-**Why Option A is the one written up as proposed:** it is what the existing
-scaffold already encodes, and reservation is optional at this project's order
-rates - over-committing cash requires concurrent in-flight orders exceeding
-available cash, which is a narrow window with one strategy set and a simulated
-venue. That is a judgement about this project's scale, not a general claim
-that Option A is better.
+**Costs accepted with it**
+
+- **Two copies of the order table.** The Execution Simulator still owns the
+  authoritative table, because it has to in order to simulate fills. The
+  Portfolio Manager's copy is a projection built only from the Execution
+  Simulator's order events and fills. It stays consistent only if those arrive
+  complete and in order, and are applied idempotently (ADR 0004 §9, ADR 0004 §11.2).
+  Divergence is the main risk this option carries, and it is worse across a
+  network boundary.
+- A second state machine inside the Portfolio Manager, and a new write entry
+  point for order lifecycle events (ADR 0004 §13).
+- `PortfolioSnapshot` now mixes settled state with reserved state. Every
+  consumer must use buying power, not cash, to decide whether something is
+  affordable.
+- `RiskContext::open_order_count` and the "open-order accounting" TODO in
+  `risk_manager.hpp` should now be sourced from the Portfolio Manager's
+  open-order list, or the Risk Manager ends up holding a third copy. That is a
+  change to shared Risk code, so it is flagged here rather than made.
+
+**The option not taken (Option A), for the record.** The Portfolio Manager
+would have exposed settled state only, with the Risk Manager composing pending
+exposure from the order stream. It kept one owner per piece of state and a
+simpler Portfolio Manager, and it matched what the scaffold originally encoded
+(`ExecutionSimulator::open_order_count()`, `RiskContext::open_order_count`).
+It was not chosen because the team wants the Portfolio Manager to behave as a
+traditional one, with reservation and buying power in one place.
+
+**Still open under this decision**
+
+- **How much a market buy reserves.** A limit buy reserves
+  `quantity × limit_price` plus estimated fees. A market buy has no price.
+  Proposed: reserve at the Portfolio Manager's last mark price for the symbol
+  plus a buffer, since it already tracks marks for unrealised P&L. The buffer
+  size is undecided.
+- **What a sell reserves.** Proposed: no cash. Instead the open sell's
+  remaining quantity is committed against the position, so the same shares
+  cannot be sold twice. Whether short selling is allowed at all remains
+  OQ#11's behaviour half.
+- **The gap between approval and reservation.** Cash is reserved at order
+  submission, which happens after the Risk Manager approves the signal. If a
+  second signal is evaluated before the first signal's order has been
+  reserved, both can be approved against the same buying power, which is the
+  over-commit reservation exists to prevent. Synchronous reads narrow this
+  window but do not close it, because a queued second signal can be evaluated
+  before the first order's submission event is processed. Options: accept it
+  at this project's order rates; have the Risk Manager subtract approvals it
+  has issued but not yet seen reserved; or reserve at approval rather than at
+  submission, which would revisit this decision. Undecided.
 
 ### 5. Synchronous or push - the ticket's open question
 
@@ -162,18 +200,30 @@ Three options, in the order they would be reached for:
 | **Request/response over the bus** | Reply topics, correlation ids, blocking wait | A known anti-pattern. High latency, a lot of machinery, and it reintroduces synchronous coupling anyway |
 | **Local materialized view** | Risk consumes portfolio updates and keeps its own read model | Kafka-native and the right long-term shape, but **eventually consistent** - needs a staleness bound and a "snapshot too old → reject" policy, and M6's acceptance criteria would need restating |
 
+**The §4 decision raises the stakes.** Buying power is the number most
+sensitive to staleness, because the point of reserving is to stop two
+approvals spending the same cash. Synchronous reads stop the Risk Manager
+reading an old snapshot. On their own they do not close the gap between
+approval and reservation, which §4 lists as still open.
+
 **The interface is identical under all three.** `IPortfolioView` is a read
 seam; only its implementation moves. That is why this decision does not block
 the contract, and it is the strongest argument for the abstraction already in
 the code.
 
-### 6. Cash is buying power - because nothing is reserved
+### 6. Cash is not buying power - because cash is reserved
 
-The ticket glosses cash as *"amount we can still use to buy"*. Those are the
-same number **only under §4's Option A**, where nothing is reserved at order
-submission. Under Option B they diverge and this contract needs a separate
-accessor for available-to-spend. Recorded so the distinction is not lost
-whichever way §4 lands.
+The ticket glosses cash as *"amount we can still use to buy"*. Under the §4
+decision those are two different numbers:
+
+- **`cash()`**: settled cash. Moves only when fills settle.
+- **`buying_power()`**: `cash - reserved_cash`. What is actually free to
+  commit to a new buy. This is what the ticket means, and what a risk policy
+  should check a new buy against.
+
+A policy that checks a new buy against `cash()` would ignore every open order
+and approve spending money that is already spoken for. That is the mistake
+this split exists to prevent.
 
 ### 7. Snapshot semantics
 
@@ -188,8 +238,8 @@ whichever way §4 lands.
   already states writes arrive on the execution/bus thread and reads come from
   the risk thread, and that the implementation *must* make this safe. The
   scaffold does neither yet. This contract depends on that guarantee.
-- **`snapshot()` copies a vector of positions.** Cheap now, and the honest
-  answer for this project's scale. `position(symbol)` exists for the
+- **`snapshot()` copies a vector of positions and a vector of pending
+  orders.** Cheap now, and the honest answer for this project's scale. `position(symbol)` exists for the
   single-symbol case and should be preferred where a policy only needs one.
 
 ### 8. Edge cases worth agreeing now
@@ -203,16 +253,23 @@ whichever way §4 lands.
 | Position with no mark price yet | `unrealized_pnl` is meaningless until `mark()` runs. A policy relying on equity must tolerate an unmarked position. **Open:** whether equity excludes unmarked positions or values them at cost. |
 | Equity vs cash + positions | `total_equity == cash + Σ(position value)` is an M5 acceptance criterion; policies may assume it holds. |
 | Two policies, one decision | Same snapshot for both - §7. |
+| No open orders | `pending_orders` empty, `reserved_cash` 0, `buying_power == cash`. |
+| Negative buying power | Representable and reportable. It means reservations exceed cash, e.g. a market buy that filled above its reservation. A policy should reject new buys, not assume it cannot happen. |
+| A pending sell | Reserves no cash (§4), so it does not reduce buying power. It does commit its remaining quantity against the position. |
+| Counting open orders for `max_open_orders` | `pending_orders.size()`. `RiskContext::open_order_count` should be filled from it rather than kept separately (§4). |
 
 ### 9. Scope exclusions
 
-- No new methods on `IPortfolioView`, no new domain types.
+- One new method (`buying_power()`), one new type (`PendingOrder`) and three
+  new snapshot fields, all required by §4. Nothing beyond that.
+- Does not change `RiskContext` or `risk_manager.hpp`; §4 says their
+  open-order count should read from here, but that is shared Risk code.
 - No risk limits, policies, or thresholds - that is OQ#10.
 - No `PortfolioManager` internals, no threading implementation.
 - Does not decide the transport (§5), the cost-basis method (§3), or the
   numeric representation (OQ#11, see ADR 0004 §12).
-- Does not implement anything: `snapshot()`, `position()` and `cash()` all
-  remain `common::NotImplemented`.
+- Does not implement anything: `snapshot()`, `position()`, `cash()` and
+  `buying_power()` all remain `common::NotImplemented`.
 
 ## Consequences
 
@@ -223,27 +280,36 @@ whichever way §4 lands.
 - Answers all three open questions: call format (`IPortfolioView`), cost basis
   (yes, `average_cost`), sync vs push (sync for v1, with the interface
   unchanged under all three options).
-- Gives issues #4 and #5 **one** position on open-order ownership instead of
+- Gives issues #4 and #5 **one** decision on open-order ownership instead of
   two contradictory documents.
+- The Risk Manager gets cash, buying power and open orders from one
+  component, in one snapshot, so they cannot disagree with each other.
 - The narrow read seam means the Risk Manager cannot mutate portfolio state or
   reach into persistence - enforced by the type, not by convention.
 
 **Negative / risks**
 
-- Under §4's proposed Option A, the Risk Manager must join two sources for
-  buying power. Under Option B that cost disappears and others replace it.
+- The snapshot now mixes settled and reserved state. A policy that reads
+  `cash` where it should read `buying_power` gets the wrong answer silently
+  (§6).
+- Open orders now live in two places, the Execution Simulator and the
+  Portfolio Manager (§4). Whatever the Risk Manager reads here is only as
+  right as the order events it was built from.
 - Sync pull requires Risk and Portfolio to be co-located, which conflicts with
   cross-process-everywhere if that lands. §5 names the migration path.
-- This contract is only sound while `apply()` is fill-only (ADR 0004 §7). If
-  reservation is adopted, §4 and §6 both change.
+- The approval-to-reservation gap (§4) is open, so buying power can briefly
+  overstate what is really free.
 - `snapshot()` returning a copy is fine at this scale and will not stay fine
   forever. No change proposed now.
 
 ## Alternatives considered
 
-- **Portfolio owns open orders, exposes `buying_power`** - one query, one
-  consistent answer. Written up as Option B in §4 rather than rejected - it is
-  a live option the team has not yet chosen between.
+- **Option A: Portfolio exposes settled state only** (§4) - one owner per
+  piece of state and no new methods. It was the proposal in earlier drafts.
+  Not chosen: the team wants reservation and buying power held in one place.
+- **Folding buying power into `cash()`** - no new method. Rejected, because
+  it makes settled cash unreadable and hides the difference §6 exists to
+  make visible.
 - **Push-based updates to a Risk-side read model** - the right Kafka-native
   shape, but eventually consistent, and staleness in a risk gate is a
   correctness bug. Revisit if ADR 0003 makes co-location impossible.
@@ -256,12 +322,16 @@ whichever way §4 lands.
 
 ## Sign-off
 
-Unticked - draft prepared for review, not an accepted decision.
+Only the open-order decision is ticked. The rest is still a draft for review.
 
 - [ ] Adam - Portfolio Manager (provider side)
 - [ ] Amit - Execution Simulator (§4 depends on where open-order state lives)
 - [ ] Team call on the Risk Manager side (shared ownership - no single owner)
-- [ ] §4 confirmed against ADR 0004 §8, or **both** revised together
+- [x] Open-order ownership decided: Option B (team, 2026-09-20). §4 matches
+      ADR 0004 §8.
+- [ ] Approval-to-reservation gap handled or accepted (§4)
+- [ ] `RiskContext::open_order_count` filled from `pending_orders` (§4, §8).
+      Shared Risk code, so a team call.
 - [ ] §5 revisited once ADR 0003 (transport) exists
 - [ ] `docs/adr/README.md` index updated (done in this draft; re-confirm)
 - [ ] `COMPONENT_OWNERSHIP.md` real names PR landed

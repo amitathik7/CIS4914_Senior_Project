@@ -48,4 +48,10 @@ common::Money PortfolioManager::cash() const {
     throw common::NotImplemented("PortfolioManager::cash");
 }
 
+common::Money PortfolioManager::buying_power() const {
+    // Must not return cash() or starting cash as if nothing were reserved --
+    // that would be fabricated state (see scaffold_contract_test).
+    throw common::NotImplemented("PortfolioManager::buying_power");
+}
+
 }  // namespace trading_engine::portfolio

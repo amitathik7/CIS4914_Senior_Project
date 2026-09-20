@@ -110,10 +110,10 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
   read, and whether it reads it synchronously) is drafted in
   [`adr/0005-portfolio-risk-query-contract.md`](adr/0005-portfolio-risk-query-contract.md)
   (**Proposed**, not Accepted; tracks GitHub issue #5). It settles no limits or
-  thresholds - those remain this question - and it does **not** settle whether
-  pending orders are portfolio state either; its §4 writes that up as an open
-  proposal for the team. How a `max_open_orders` policy gets its input depends
-  on that outcome.
+  thresholds - those remain this question. Following the team decision of
+  2026-09-20 (its §4), the Portfolio Manager exposes open orders and buying
+  power, so a `max_open_orders` policy counts `pending_orders` and a buy is
+  checked against `buying_power()`, not `cash()`.
 - **Owner:** risk lead · **By:** M3
 
 ## 11. Execution assumptions
