@@ -2,6 +2,9 @@
 
 - Status: **Proposed** (not Accepted - draft prepared for review)
 - Date: 2026-09-17
+- Updated: 2026-09-20. §7 and §8 flipped to Option B by team decision: the
+  Portfolio Manager reserves cash at order submission, so it owns open-order
+  state and receives order lifecycle events as well as fills.
 - Deciders: Adam (Portfolio Manager) and Amit (Execution Simulator). This is a
   genuine two-party contract - the two components are owned by two different
   people. It changes `domain/` value types (`Fill`, `Order`), which per
@@ -13,7 +16,7 @@
   team is actually organised. Correcting it is out of scope here but should
   happen before this ADR is marked Accepted.
 - Related: GitHub issue #4 (this contract) and issue #5 (Portfolio Manager →
-  Risk Manager), which share one position on open-order ownership - see §8;
+  Risk Manager), which share one decision on open-order ownership - see §8;
   ADR 0002 (Strategy → Risk, **Proposed**) whose §0 this document partly
   contradicts - see §0.3; [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.md) OQ#11
   (numeric representation, **blocking** - see §12) and OQ#2/#3 (queue,
@@ -24,8 +27,8 @@
   anywhere** and is expected to become ADR 0003. This document is written to
   survive either outcome - see §0.
 
-> Drafted as a review starting point. See "Sign-off" at the bottom - nothing
-> there is checked yet, and nothing in this file should be read as approved.
+> Drafted as a review starting point. The open-order decision in §7 and §8 is
+> settled by the team; everything else is still a proposal. See "Sign-off".
 
 ## Context
 
@@ -54,14 +57,15 @@ The scaffold already answers some of this and contradicts itself on the rest:
   already routes Orders to the Portfolio Manager, i.e. already answers this
   ticket's open question "yes", while the header makes it impossible. **The
   docs and the code disagree today**, and issue #4 is sitting on that crack.
-  This ADR resolves it in favour of the header (§7).
+  The team's decision resolves it in favour of `DATA_FLOW.md` (§7).
 - `RiskContext` ([`risk_policy.hpp`](../../include/trading_engine/risk/risk_policy.hpp))
   carries `open_order_count` - deliberately **not** on `PortfolioSnapshot` -
   and `risk_manager.hpp`'s TODO lists "open-order accounting" as the Risk
   Manager's own future work. `ExecutionSimulator` has `open_order_count()`.
   `PortfolioSnapshot` has no open-order or buying-power field at all. So the
   existing code places open-order state in Execution and Risk, **not** in
-  Portfolio. Issue #5 proposes the opposite. See §8.
+  Portfolio. Issue #5 proposes the opposite, and the team has chosen #5's
+  direction. See §8.
 - Everything on this path is still `common::NotImplemented`
   (`ExecutionSimulator::submit`, `PortfolioManager::apply`,
   `NaiveFillModel::simulate`), so no fill has ever actually flowed. This is
@@ -110,11 +114,15 @@ unmerged and its author can amend it himself** - which is much cheaper than
 this ADR publicly overruling a sibling document. Flagged as a coordination
 item, not resolved here.
 
-### 1. The logical message: one shape, `Fill`
+### 1. The logical messages: `Fill` and order lifecycle events
 
-The Execution Simulator reports **fills only** to the Portfolio Manager. One
-message shape, not three. A fill is, by definition, quantity that executed;
-the ticket's "failed" is not a fill and is handled in §6–§7.
+The Execution Simulator sends the Portfolio Manager two kinds of message:
+**fills**, for quantity that actually executed, and **order lifecycle
+events**, so the Portfolio Manager can reserve and release cash (§7, §8). A
+fill is, by definition, quantity that executed; the ticket's "failed" is not
+a fill and travels as an order event (§6).
+
+#### 1.1 Fill
 
 | Field | Type | Required | Meaning | Maps to (C++) |
 |---|---|---|---|---|
@@ -132,6 +140,28 @@ the ticket's "failed" is not a fill and is handled in §6–§7.
 | `filled_at` | string, RFC 3339 UTC | yes | e.g. `"2026-09-16T14:32:06.000000000Z"`. | `Fill::filled_at` (existing) |
 | `schema_version` | integer | yes | Transport-only; see §11.4. | *(no field)* |
 | `message_type` | string | yes | `"fill"`. Transport-only; see §11.4. | *(no field)* |
+
+#### 1.2 Order lifecycle event
+
+The existing `domain::Order` struct, sent whenever its status changes. The
+Portfolio Manager acts on the fields below. The rest (`origin_signal`,
+`strategy_id`, `created_at`) travel for persistence and analytics.
+
+| Field | Type | Required | Meaning | Maps to (C++) |
+|---|---|---|---|---|
+| `order_id` | integer | yes | The key the Portfolio Manager tracks the reservation under. | `Order::id` (existing) |
+| `run_id` | integer | yes | As for fills (§1.1). | `Order::run_id` (**new**) |
+| `symbol` | string | yes | e.g. `"AAPL"`. | `Order::symbol` (existing) |
+| `side` | string | yes | `"buy"` \| `"sell"`. | `Order::side` (existing) |
+| `order_type` | string | yes | `"market"` \| `"limit"`. | `Order::type` (existing) |
+| `quantity` | integer | yes | Ordered amount, > 0. Whole shares, pending §12. | `Order::quantity` (existing) |
+| `limit_price` | scaled integer | iff `order_type` is `"limit"` | Sizes the reservation for a limit buy (§8). Scale per §12. | `Order::limit_price` (existing) |
+| `order_status` | string | yes | Acted on: `"working"`, `"rejected"`, `"cancelled"`, `"expired"`. Ignored: `"partially_filled"`, `"filled"` (§7). | `Order::status` (existing) |
+| `filled_quantity` | integer | yes | Cumulative quantity filled so far. The unfilled remainder is `quantity - filled_quantity`. | `Order::filled_quantity` (existing) |
+| `reject_reason` | string | iff status is `"rejected"`, `"cancelled"` or `"expired"` | Free text. | `Order::reject_reason` (**new**) |
+| `updated_at` | string, RFC 3339 UTC | yes | When this status change happened. | `Order::updated_at` (existing) |
+| `schema_version` | integer | yes | Transport-only; see §11.4. | *(no field)* |
+| `message_type` | string | yes | `"order_status"`. Transport-only; see §11.4. | *(no field)* |
 
 ### 2. What the ticket's field list got wrong
 
@@ -177,6 +207,13 @@ loudly - it produces a plausible number that is wrong by a factor of ten or a
 thousand. **Every money and price field in this contract carries the same
 scale**, and the scale is a property of the contract, not of each field.
 
+**With reservation (§8).** A buy fill also releases the cash that was reserved
+for the quantity it filled. Cash moves by the formula above; reserved cash
+falls by the released amount; buying power (`cash - reserved_cash`) moves by
+the difference. If the reservation was exact, a fill leaves buying power
+unchanged, because that money was already spoken for. Reservation never
+touches cash itself.
+
 The corollary is that the wire scale and the C++ numeric type are coupled: a
 scaled-integer wire format feeding `double` C++ fields reintroduces exactly
 the rounding the scaling was meant to remove. The two need to be decided
@@ -219,11 +256,14 @@ is `Order::filled_quantity`, held by the Execution Simulator. The two can
 disagree if a fill is replayed or applied out of order.
 
 **Tradeoff, stated rather than hidden.** Including it means each fill is
-self-describing: the Portfolio Manager can tell that an order is complete
-without tracking order state, which is what keeps §8's answer viable. Omitting
-it would be more normalised but would force every consumer to hold order
-state. Recommendation: include it, accept the denormalisation, and never treat
-it as authoritative for anything other than "is this order done."
+self-describing, and it tells the Portfolio Manager when to release whatever
+reservation is left on the order (§7). That remainder is non-zero whenever an
+order fills at a better price than it reserved at. The Portfolio Manager now
+tracks open orders itself (§8), so it can cross-check the status against its
+own remaining quantity, but the explicit status keeps other consumers from
+having to hold order state. Recommendation: include it, accept the
+denormalisation, and never treat it as authoritative for anything other than
+"is this order done."
 
 ### 6. Three kinds of failure, not one
 
@@ -232,9 +272,9 @@ things:
 
 | # | Kind | Where it happens | Does an `Order` exist? | Crosses this boundary? |
 |---|---|---|---|---|
-| 1 | **Risk rejection** | `RiskManager` denies the signal | No - never constructed | **No.** The Execution Simulator never sees it. |
-| 2 | **Execution rejection** | `ExecutionSimulator` cannot fill: no market context, limit never marketable, no modelled liquidity | Yes, `OrderStatus::Rejected` | It is on this boundary - but as an Order event, not a Fill (§7) |
-| 3 | **Terminal non-fill** | Order `Cancelled` or `Expired` | Yes | Same as #2 |
+| 1 | **Risk rejection** | `RiskManager` denies the signal | No - never constructed | **No.** The Execution Simulator never sees it, and nothing was reserved, so there is nothing to release. |
+| 2 | **Execution rejection** | `ExecutionSimulator` cannot fill: no market context, limit never marketable, no modelled liquidity | Yes, `OrderStatus::Rejected` | **Yes**, as an order event, not a fill (§1.2, §7). Releases the reservation. |
+| 3 | **Terminal non-fill** | Order `Cancelled` or `Expired` | Yes | **Yes**, same as #2. Releases the reservation on the unfilled remainder. |
 
 Only #2 and #3 originate from the Execution Simulator at all. #1 is a
 different contract with a different counterparty, and if Analytics wants
@@ -249,129 +289,158 @@ reported using the **existing `Order` struct** with its existing
 `OrderStatus`, plus the `reject_reason` its TODO already anticipated. No new
 type is needed.
 
-### 7. The open question: proposed answer is no, rejections do not go to the Portfolio Manager
+### 7. The open question: yes, rejections, cancellations and expiries reach the Portfolio Manager
 
-> **Proposed, not decided.** This section and §8 are one decision, and the
-> team settles both together. Everything below assumes Option A in §8; under
-> Option B the answer flips to "yes" and the rest of this section is void.
+> **Decided by the team on 2026-09-20**, together with §8. The Portfolio
+> Manager reserves cash at order submission, so it has to hear how every order
+> ends. Earlier drafts proposed the opposite; that proposal is withdrawn.
 
-**Proposed: the Execution → Portfolio boundary carries fills only.**
-Order lifecycle events - including all rejections, cancellations and expiries
-- go to persistence, analytics and the Risk Manager, not to the Portfolio
-Manager.
+**Decided: the Execution → Portfolio boundary carries fills *and* order
+lifecycle events.**
 
-**The case for (proposed).** A rejected order changes no cash and no
-position. The Portfolio Manager's stated responsibility is cash, positions and
-P&L; a rejection touches none of them. Keeping `apply()` a pure function of
-settled reality is what makes M5's "hand-computed P&L asserted to the cent"
-tractable. It matches the existing header, which has no way to receive an
-Order. It is also the smaller contract, and the one that stays correct if the
-transport changes.
+The Portfolio Manager acts on order events as follows:
 
-**The case against (Amit may well argue this).** If the Portfolio Manager
-*reserves* cash when an order is submitted, then it must be told when that
-order dies, or the reservation leaks and available cash drifts down forever
-with every rejected order. Under that design, the answer flips to "yes" and it
-is not a close call.
+| Order event | Portfolio Manager action |
+|---|---|
+| Submitted (the order's first event, status `working`) | Add to open orders. Reserve cash for a buy, or commit shares for a sell (§8). |
+| `rejected` | Release the whole reservation and remove the order. |
+| `cancelled` | Release the reservation on the unfilled remainder and remove the order. |
+| `expired` | Same as `cancelled`. |
+| `partially_filled`, `filled` | **Ignored as order events.** These transitions are driven by fills, and the fill already carries the quantity. Acting on both would release the same reservation twice. |
 
-**So the real question is not about rejections at all - it is whether the
-Portfolio Manager reserves cash**, which is §8's question. Proposed: **it does
-not.** Reservation only matters if concurrent in-flight orders can over-commit
-cash between submission and fill. At this project's order rates, with a single
-strategy set and a simulated venue, that window is negligible; checking cash at
-fill time is sufficient and removes an entire class of state from the
-component. Whatever the team decides, the constraint is fixed:
-**reservation and rejection reporting are adopted together, or not at all.**
-Adopting reservation without rejection reporting is the failure mode to watch
-for.
+Fills do the rest. Each fill releases the reservation for the quantity it
+filled and applies the actual cash delta (§3). A fill with
+`fill_status: "filled"` releases whatever reservation is left on that order,
+which is non-zero whenever an order fills at a better price than it reserved
+at.
 
-**If Option A is chosen**, this also resolves the DATA_FLOW.md / header
-contradiction noted in Context, in favour of the header: **line 35 should be
-corrected** from `Order / Fill ──▶ PortfolioManager` to
-`Fill ──▶ PortfolioManager`, with the Order edge redirected to
-persistence/analytics/risk. **If Option B is chosen**, line 35 was right all
-along and the header gains an order-lifecycle entry point instead.
+**Why rejections matter now.** A rejection still changes no cash and no
+position. It does change **buying power**, because the reservation made at
+submission has to come back. Without the rejection event, reserved cash is
+never released and buying power drifts down with every rejected order. Earlier
+drafts recorded the constraint that reservation and rejection reporting are
+adopted together or not at all. The team adopted both.
+
+**Rejected before it was ever working.** Some orders are rejected at creation
+(no market context for the symbol, for example) and never reach `working`. The
+Execution Simulator emits exactly one of `working` or `rejected` when it
+creates an order. A `rejected` event for an order the Portfolio Manager never
+reserved against is a no-op release, not an error. The order state machine is
+still provisional (`order.hpp`); what this contract needs is that exactly one
+submission event per order precedes that order's fills.
+
+**What this resolves.** `DATA_FLOW.md` line 35 already routes
+`Order / Fill ──▶ PortfolioManager`. Earlier drafts flagged that line as
+contradicting the header. Under this decision the line was right, and the
+header gains an order entry point instead (§13).
 
 ### 8. Open-order ownership - the shared position with issue #5
 
 Issue #5 asks the Portfolio Manager to expose *"Pending/Unfulfilled orders
-(symbols + quantity + side)"* to the Risk Manager. That directly contradicts
-§7 and contradicts the existing code. Both tickets need **one** answer.
+(symbols + quantity + side)"* to the Risk Manager. That contradicted the
+existing scaffold, and it could only be answered together with §7. Both
+tickets needed one answer, and the team gave it.
 
-> **This section is a proposal, not a decision. It is deliberately identical
-> to ADR 0005 §4 - the two must not drift.** The team decides; neither author
-> settles it alone. Whichever option is chosen, **both ADRs change together**:
-> they are two halves of one decision, not two independent calls.
+> **Decided by the team on 2026-09-20: Option B.** The Portfolio Manager
+> reserves cash at order submission and functions as a traditional portfolio
+> manager: it owns open-order state and exposes buying power. This section is
+> deliberately identical to ADR 0005 §4. The two must not drift, and they changed
+> together.
 
-**Proposed: the Portfolio Manager does not own open-order state.**
+**Decided: the Portfolio Manager owns open-order state.**
 
-**What decides it: does the Portfolio Manager reserve cash at order
-submission?** If it does not, a pending order does not affect any number the
-Portfolio Manager reports, so there is nothing to expose and nothing to
-report on rejection. If it does, the Portfolio Manager must track every order
-until it resolves - and must therefore be told about every rejection,
-cancellation and expiry, or the reservation leaks and available cash drifts
-down permanently. That is the same question §7 answers, which is why the two
-sections stand or fall together.
+**Why the two tickets moved together.** Reserving cash at submission means the
+Portfolio Manager must track every order until it resolves. It must therefore
+be told when each order is submitted, so it can reserve, and when each order
+ends without filling (rejected, cancelled or expired), so it can release.
+Without those events the reservation leaks and buying power drifts down
+permanently. That is exactly the question §7 answers, which is why the two
+sections were always one decision.
 
-**Option A - Portfolio exposes settled state only (proposed).** Cash,
-positions, cost basis, realised/unrealised P&L, total equity. The Risk Manager
-composes pending-order exposure from the order stream, which it consumes
-anyway to maintain `open_order_count` for `RiskLimits::max_open_orders`.
+**What the Portfolio Manager owns and exposes**
 
-- The existing code points this way in three places:
-  `ExecutionSimulator::open_order_count()` (it creates orders and drives their
-  status transitions, so it is the natural authority);
-  `RiskContext::open_order_count`, a field on the Risk Manager's own context
-  struct rather than on `PortfolioSnapshot`; and `risk_manager.hpp`'s TODO
-  naming "open-order accounting" as Risk's work. `PortfolioSnapshot` has no
-  such field.
-- Exactly one component owns each piece of state, so there is nothing to
-  diverge.
-- `PortfolioSnapshot` keeps meaning "settled reality at an instant" rather
-  than a mix of settled and speculative state.
-- No second state machine inside the Portfolio Manager, and `apply()` stays a
-  pure function of fills.
-- **Cost:** the Risk Manager must join two sources - cash and positions from
-  the Portfolio Manager, pending exposure from the order stream - rather than
-  asking one component one question. That cost lands on a component with no
-  single owner.
+- Cash, positions, cost basis, realised/unrealised P&L and total equity, as
+  before.
+- **Open orders:** one entry per unresolved order, carrying symbol, side and
+  remaining quantity. This is exactly what issue #5 asks for.
+- **Reserved cash:** the total held against open buy orders.
+- **Buying power:** `cash - reserved_cash`. This is the number a new buy is
+  checked against. `cash()` keeps meaning settled cash, so "can I afford
+  this?" is answered by buying power, not by cash.
 
-**Option B - Portfolio owns open orders and exposes buying power.**
-`buying_power = cash - reserved`, with pending orders on the snapshot.
+**Why Option B: the case the team accepted**
 
 - The Risk Manager asks one component one question and gets one answer.
-- It is the standard broker model, and how many production systems do it.
-- **Its strongest argument:** one component computing cash and pending
-  exposure together cannot have them disagree with each other. If Risk
-  assembles them from two sources, its view of pending orders can lag
-  differently from its view of cash.
-- It is also what issue #5 literally asks for.
-- **Cost:** duplicates state the Execution Simulator already holds, and two
-  components tracking the same order table will diverge - worse across a
-  network boundary. Requires a new Portfolio entry point for order lifecycle
-  events, splits `cash()` into cash and available-to-spend, and flips §7.
+- It is the standard broker model.
+- One component computing cash and pending exposure together cannot have them
+  disagree with each other. A Risk-side join from two sources could, because
+  its view of pending orders can lag differently from its view of cash.
+- It is what issue #5 literally asks for.
 
-**Why Option A is the one written up as proposed:** it is what the existing
-scaffold already encodes, and reservation is optional at this project's order
-rates - over-committing cash requires concurrent in-flight orders exceeding
-available cash, which is a narrow window with one strategy set and a simulated
-venue. That is a judgement about this project's scale, not a general claim
-that Option A is better.
+**Costs accepted with it**
+
+- **Two copies of the order table.** The Execution Simulator still owns the
+  authoritative table, because it has to in order to simulate fills. The
+  Portfolio Manager's copy is a projection built only from the Execution
+  Simulator's order events and fills. It stays consistent only if those arrive
+  complete and in order, and are applied idempotently (§9, §11.2).
+  Divergence is the main risk this option carries, and it is worse across a
+  network boundary.
+- A second state machine inside the Portfolio Manager, and a new write entry
+  point for order lifecycle events (§13).
+- `PortfolioSnapshot` now mixes settled state with reserved state. Every
+  consumer must use buying power, not cash, to decide whether something is
+  affordable.
+- `RiskContext::open_order_count` and the "open-order accounting" TODO in
+  `risk_manager.hpp` should now be sourced from the Portfolio Manager's
+  open-order list, or the Risk Manager ends up holding a third copy. That is a
+  change to shared Risk code, so it is flagged here rather than made.
+
+**The option not taken (Option A), for the record.** The Portfolio Manager
+would have exposed settled state only, with the Risk Manager composing pending
+exposure from the order stream. It kept one owner per piece of state and a
+simpler Portfolio Manager, and it matched what the scaffold originally encoded
+(`ExecutionSimulator::open_order_count()`, `RiskContext::open_order_count`).
+It was not chosen because the team wants the Portfolio Manager to behave as a
+traditional one, with reservation and buying power in one place.
+
+**Still open under this decision**
+
+- **How much a market buy reserves.** A limit buy reserves
+  `quantity × limit_price` plus estimated fees. A market buy has no price.
+  Proposed: reserve at the Portfolio Manager's last mark price for the symbol
+  plus a buffer, since it already tracks marks for unrealised P&L. The buffer
+  size is undecided.
+- **What a sell reserves.** Proposed: no cash. Instead the open sell's
+  remaining quantity is committed against the position, so the same shares
+  cannot be sold twice. Whether short selling is allowed at all remains
+  OQ#11's behaviour half.
+- **The gap between approval and reservation.** Cash is reserved at order
+  submission, which happens after the Risk Manager approves the signal. If a
+  second signal is evaluated before the first signal's order has been
+  reserved, both can be approved against the same buying power, which is the
+  over-commit reservation exists to prevent. Synchronous reads narrow this
+  window but do not close it, because a queued second signal can be evaluated
+  before the first order's submission event is processed. Options: accept it
+  at this project's order rates; have the Risk Manager subtract approvals it
+  has issued but not yet seen reserved; or reserve at approval rather than at
+  submission, which would revisit this decision. Undecided.
 
 ### 9. Partial fills
 
 #### 9.1 Completion
-An order is complete when a fill arrives with `fill_status: "filled"`. The
-Portfolio Manager does not compute completion by summing quantities against an
-order it does not track - that is what §5's status field is for.
+An order is complete when a fill arrives with `fill_status: "filled"`. Now
+that the Portfolio Manager tracks open orders (§8), it can also cross-check
+each fill's quantity against the open order's remaining quantity. A mismatch
+means its copy of the order table has diverged from the Execution
+Simulator's, and should be flagged rather than absorbed.
 
 #### 9.2 Ordering
 `sequence` is 1-based per order. Its purpose is **gap detection**: a consumer
 that sees `sequence` 1 then 3 knows a fill is missing and can refuse to
 proceed, rather than silently computing a wrong average cost. Average cost
-basis is order-dependent, so a missing or reordered fill corrupts it silently
-- which is precisely the kind of bug that surfaces in week 12.
+basis is order-dependent, so a missing or reordered fill corrupts it silently,
+which is precisely the kind of bug that surfaces in week 12.
 
 Cash, by contrast, is additive and therefore order-independent; only cost
 basis genuinely requires ordering.
@@ -398,6 +467,13 @@ The minimum viable implementation is a last-applied watermark persisted
 alongside portfolio state - not an unbounded in-memory set, which is empty
 after exactly the restart where it is needed. Implementation is out of scope
 for this ADR; the *contract* is that `apply()` is idempotent on `fill_id`.
+
+**Order lifecycle events are idempotent by state, keyed on `order_id`.** A
+second submission event for an order that is already open is ignored, and so
+is a release for an order that has already been released or completed. That
+last case matters: a late `working` event for an order that has already
+filled must not reserve again. `apply_order_update()` returns `bool` with the
+same meaning as `apply()` (§13).
 
 ### 10. Transport binding A - in-process
 
@@ -434,7 +510,13 @@ If every boundary is cross-process, the following apply **in addition to**
 - Average cost basis is per-symbol and order-dependent ⇒ if the fills topic is
   partitioned, **`symbol` is the correct key**. Keying by `order_id` or round
   robin breaks cost basis. Cash is additive and tolerates interleaving.
-- **Recommendation for this project: one partition on the fills topic.** Total
+- **Order events and fills must share a partition.** The Portfolio Manager has
+  to see an order's submission before its fills, and its fills before any
+  cancellation or expiry. Otherwise it releases a reservation it has not made
+  yet, or reserves for an order that is already gone. Kafka gives no ordering
+  between two topics, so order events and fills belong on **one topic**, keyed
+  by `symbol` (both messages carry it). This is new since the §8 decision.
+- **Recommendation for this project: one partition on that topic.** Total
   order for free, no key-design bugs, and the scaling path (symbol-keyed,
   N partitions) can be documented without being built. Parallelism across
   partitions is not a constraint at this project's volumes.
@@ -548,19 +630,23 @@ the bug class most likely to appear during the demo.
 
 ```cpp
 // portfolio/portfolio_manager.hpp
-bool apply(const domain::Fill& fill);   // idempotent on fill.id
+bool apply(const domain::Fill& fill);                  // idempotent on fill.id
+bool apply_order_update(const domain::Order& order);   // idempotent by order state
 ```
 
-- **`apply()` is the only entry point for execution results.** No
-  `on_order()`, no `on_rejection()` - that is §7's answer expressed in the
-  type system.
-- Returns `true` if applied, `false` if a recognised duplicate was ignored
-  (§9.3). Changed from `void` by this ADR.
+- **Two write entry points for execution results.** `apply_order_update()` is
+  new with the §8 decision. It reserves on submission and releases on
+  rejection, cancellation and expiry, and ignores fill-driven statuses (§7).
+- Both return `true` if they changed state and `false` if the event was a
+  recognised duplicate or a status the Portfolio Manager does not act on
+  (§9.3). `apply()` changed from `void` in this ADR.
+- A distinct name rather than an `apply(const Order&)` overload, so it is
+  obvious at every call site which kind of event is being applied.
 - `mark(const MarketEvent&)` is unaffected and remains how prices move
-  unrealised P&L.
-- `IPortfolioView` is **unchanged**. Worth noting for the demo: the read seam
-  survives all three transport options intact - only its implementation would
-  move - which is a point in favour of the existing abstraction.
+  unrealised P&L. Under §8 it also supplies the mark price a market buy is
+  reserved at.
+- The read side gains `buying_power()` and open orders on the snapshot. That
+  is ADR 0005's half of the same decision.
 
 ### 14. Edge cases worth agreeing now rather than in week 12
 
@@ -568,9 +654,16 @@ bool apply(const domain::Fill& fill);   // idempotent on fill.id
 |---|---|
 | Duplicate `fill_id` | Ignore, return `false`, count it in metrics. Expected, not an error. |
 | Gap in `sequence` | Refuse to apply, raise loudly. Silent acceptance corrupts cost basis. |
-| Fill for an unknown `order_id` | Apply it - the Portfolio Manager does not track orders (§8), so it cannot validate this. Log for reconciliation. |
+| Fill for an unknown `order_id` | Now anomalous, since the Portfolio Manager tracks open orders (§8): the submission event was lost or arrived late. Apply the fill anyway, because it happened. There is no reservation to release. Flag it, because the two order tables have diverged. |
+| Fill arrives before its order's submission event | An ordering violation (§11.2). Handle as above. When the late `working` event arrives, do not reserve for an order that is already complete (§9.3). |
+| `rejected` for an order never reserved against | No-op release (§7). Not an error. |
+| `cancelled` or `expired` after a partial fill | Release only the reservation on the unfilled remainder. The filled part was already released by its fills. |
+| Order fills at a better price than reserved | Each fill releases the reserved amount for its quantity; the final fill releases the residue (§7). |
+| Market buy fills above its reservation | Actual cost exceeds what was reserved, so buying power falls by the difference. Not an error. This is why market buys reserve with a buffer (§8). |
+| A new reservation exceeds buying power | Reserve anyway and flag: the Portfolio Manager records reality, it does not veto. Preventing it is the Risk Manager's job, and there is a window where it cannot, because approval happens before reservation. See the approval-to-reservation gap in §8, which is still open. |
+| Duplicate order event | Ignored by state (§9.3). |
 | Zero-quantity fill | Contract violation. Should never be produced; reject if seen. Distinct from the row below - a zero-quantity *order* is legitimate, a zero-quantity *fill* is not. |
-| A signal that rounds to zero shares | Reachable **if** quantities end up whole (§12): a small target exposure against a high-priced instrument floors to 0. That order can never fill, so it never reaches this boundary. It should surface as `OrderStatus::Rejected` with a reason (§6 category 2), **not** as a silently dropped signal - and per §7 it does not reach the Portfolio Manager. |
+| A signal that rounds to zero shares | Reachable **if** quantities end up whole (§12): a small target exposure against a high-priced instrument floors to 0. That order can never fill. It should surface as `OrderStatus::Rejected` with a reason (§6 category 2), **not** as a silently dropped signal. Per §7 the rejection reaches the Portfolio Manager, and since the order never reached `working` it is a no-op release. |
 | Fractional quantity on the wire | A violation under whole-shares-only, which is where this is heading but is not settled (§12). Nothing would enforce it anyway while `common::Quantity` is `double`. |
 | Negative `fees` | Contract violation (rebates are not modelled). Reject. |
 | Sell exceeding held quantity | Allowed - it opens a short. `Position::quantity` is explicitly signed. Whether shorting is *permitted* is OQ#11's behaviour half, not this contract's call. |
@@ -595,41 +688,47 @@ bool apply(const domain::Fill& fill);   // idempotent on fill.id
   exclusivity.
 - Does not resolve OQ#11 (§12), OQ#2 or OQ#3.
 - Does not fix the signed/unsigned quantity inconsistency (§4).
-- Does not update `DATA_FLOW.md` line 35, though §7 says it should be
-  corrected - left as a follow-up so this ADR's diff stays reviewable.
+- Does not change `RiskContext` or `risk_manager.hpp`. §8 says their
+  open-order count should now come from the Portfolio Manager, but that is
+  shared Risk code and needs a team call.
+- Does not decide how much a market buy reserves (§8).
 
 ## Consequences
 
 **Positive**
 
 - Answers issue #4's open question with a reason that generalises: the
-  rejection question reduces to the reservation question, and the two must be
-  decided together.
-- Gives issues #4 and #5 **one** position on open-order ownership instead of
+  rejection question reduces to the reservation question, and the team decided
+  both together.
+- Gives issues #4 and #5 **one** decision on open-order ownership instead of
   two contradictory documents.
-- Surfaces a live contradiction between `DATA_FLOW.md` and
-  `portfolio_manager.hpp` that would otherwise have been found during M5
-  implementation.
+- The Risk Manager gets buying power and open orders from one component, so
+  the two cannot disagree with each other.
+- Resolves the contradiction between `DATA_FLOW.md` and
+  `portfolio_manager.hpp` before M5 implementation, rather than during it.
 - The logical contract survives the unresolved transport decision, so review
   can proceed without waiting on ADR 0003.
-- `apply()` being idempotent on `fill_id` is correct under every delivery
-  guarantee, so it need not be revisited if the transport changes.
+- Both write entry points are idempotent, so they are correct under every
+  delivery guarantee and need not be revisited if the transport changes.
 
 **Negative / risks**
 
+- **Two copies of the order table** (§8). The Portfolio Manager's copy is only
+  as good as the order events and fills it is built from. Lost or reordered
+  events leave reserved cash wrong, and the error is silent unless the
+  cross-checks in §9.1 and §14 are actually implemented.
 - **Kafka costs deterministic backtesting**, which is a stated M5 acceptance
   criterion (*"identical on rerun"*) and a DATA_FLOW.md promise. Five
   independent consumer processes with independent clocks do not interleave
   identically. This ADR cannot fix that; it flags it for ADR 0003. The
   transport-adapter option in §10 preserves it.
+- Order events and fills now have an ordering requirement between them
+  (§11.2), which constrains the topic layout.
+- The Portfolio Manager is a bigger component: a second state machine, and a
+  snapshot that mixes settled and reserved state.
 - `Fill::status` and `Fill::sequence` are denormalised order state on a fill
   (§5), and can contradict `Order::filled_quantity`. Accepted deliberately;
   nothing enforces agreement.
-- §7 and §8 together mean the Risk Manager must join two sources for buying
-  power. That cost is real and lands on a component with shared ownership.
-- If the team later adopts cash reservation without revisiting §7, reserved
-  cash will leak on every rejected order. The trigger condition is stated, but
-  it is a decision someone must remember to revisit.
 - This ADR contradicts ADR 0002 §0 on what "JSON" means (§0.3). Two Proposed
   ADRs disagreeing is a coordination cost.
 
@@ -639,10 +738,14 @@ bool apply(const domain::Fill& fill);   // idempotent on fill.id
   diff, matches the issue text. Rejected because a rejection has no price, no
   quantity and no `FillId`, producing a message whose fields are mostly
   meaningless; §6's split keeps every field meaningful in every message.
-- **Portfolio Manager owns open orders and exposes buying power** (§8) - one
-  query, one consistent answer for Risk. Rejected because it duplicates state
-  Execution already owns and diverges across a network boundary. This is the
-  strongest alternative and the one most likely to come back in review.
+- **Option A: the Portfolio Manager exposes settled state only** (§8) - one
+  owner per piece of state, a simpler Portfolio Manager, and fills as the only
+  message on this boundary. It was the proposal in earlier drafts. Not chosen:
+  the team wants reservation and buying power held in one place, as a
+  traditional portfolio manager does.
+- **Reusing `apply()` as an overload for order events** (§13) - one name for
+  every execution event. Not chosen, so call sites say which kind of event
+  they are applying.
 - **Adding `side` to `Fill` in C++** (§4) - matches the ticket literally.
   Rejected: two mutable sources of truth for direction. The wire form carries
   it instead.
@@ -660,11 +763,17 @@ bool apply(const domain::Fill& fill);   // idempotent on fill.id
 
 ## Sign-off
 
-Unticked - this ADR is a draft prepared for review, not an accepted decision.
+Only the open-order decision is ticked. The rest is still a draft for review.
 
 - [ ] Adam - Portfolio Manager (consumer side)
 - [ ] Amit - Execution Simulator (producer side)
-- [ ] Issue #5 drafted consistently with §8, or §8 revised
+- [x] Open-order ownership decided: Option B, cash reserved at order
+      submission (team, 2026-09-20). ADR 0005 §4 matches §8.
+- [ ] Reservation amount for market buys decided (§8)
+- [ ] Approval-to-reservation gap handled or accepted (§8)
+- [ ] `RiskContext::open_order_count` sourced from the Portfolio Manager
+      (§8). Shared Risk code, so a team call.
+- [ ] Order events and fills placed on one topic (§11.2). Blake.
 - [ ] Jordan notified that §0.3 contradicts ADR 0002 §0
 - [ ] Whole-shares-only confirmed or rejected (§12); if confirmed, Jordan
       amends ADR 0002 §8, which currently proposes the opposite
@@ -676,6 +785,5 @@ Unticked - this ADR is a draft prepared for review, not an accepted decision.
 - [ ] `docs/OPEN_QUESTIONS.md` updated (done as part of this draft;
       re-confirm on acceptance)
 - [ ] `COMPONENT_OWNERSHIP.md` real names PR landed (blocks the Deciders line)
-- [ ] `DATA_FLOW.md` line 35 corrected per §7
 - [ ] Status line above changed from Proposed to Accepted (or
       Rejected / Superseded)

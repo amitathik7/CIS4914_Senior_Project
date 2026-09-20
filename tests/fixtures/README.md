@@ -15,17 +15,26 @@ Fixture schemas are not final -- see [`docs/OPEN_QUESTIONS.md`](../../docs/OPEN_
 
 ## `fills/` - proposed examples for ADR 0004 (draft)
 
-`fill_full.json`, `fill_partial_1.json`, `fill_partial_2_completing.json` and
-`order_rejected.json` illustrate the Execution Simulator -> Portfolio Manager
-contract proposed in
+`order_submitted.json`, `fill_full.json`, `fill_partial_1.json`,
+`fill_partial_2_completing.json` and `order_rejected.json` illustrate the
+Execution Simulator -> Portfolio Manager contract proposed in
 [`docs/adr/0004-execution-portfolio-fill-contract.md`](../../docs/adr/0004-execution-portfolio-fill-contract.md)
-(status: **Proposed**, not Accepted -- tracks GitHub issue #4).
+(status: **Proposed**, not Accepted -- tracks GitHub issue #4). Both kinds of
+message reach the Portfolio Manager: fills, and order lifecycle events, since
+the team decided on 2026-09-20 that it reserves cash at order submission (ADR
+0004 sections 7-8).
 
-The two `fill_partial_*` files are one series against a single order
-(`order_id` 3306): sequence 1 leaves quantity outstanding, sequence 2
-completes it. `order_rejected.json` is deliberately **not** a fill -- it shows
-an execution rejection reported as an Order lifecycle event, which per that
-ADR's section 7 does *not* go to the Portfolio Manager at all.
+- `order_submitted.json` then `fill_full.json` are one order (`order_id`
+  3305): a limit buy of 100 at 150.50 is submitted, so the Portfolio Manager
+  reserves against it; it then fills in full at 150.02, better than the limit,
+  so the fill releases the reservation including the residue.
+- The two `fill_partial_*` files are one series against a single order
+  (`order_id` 3306): sequence 1 leaves quantity outstanding, sequence 2
+  completes it.
+- `order_rejected.json` is an execution rejection reported as an order
+  lifecycle event, not a fill. It reaches the Portfolio Manager so any
+  reservation can be released; this one was rejected at creation, never
+  reached `working`, and so releases nothing.
 
 **Money and price fields are integers scaled by 10^6** (so `150020000` is
 150.02), matching `NUMERIC(18,6)` in the draft schema. That scale is a

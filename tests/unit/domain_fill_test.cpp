@@ -1,5 +1,6 @@
 // Shape/compatibility checks for the ADR 0004 (Proposed, not Accepted)
-// additions: Fill::status, Fill::sequence, and Order::reject_reason. These are
+// additions: Fill::status, Fill::sequence, Order::reject_reason and
+// Order::run_id. These are
 // NOT validation tests -- neither type enforces any invariant in code yet (see
 // the ADR's scope exclusions). They only prove the structs hold and return the
 // fields they're given, that default construction is unaffected by the new
@@ -104,4 +105,33 @@ TEST(OrderRejectionShape, CarriesAReasonAndNoFills) {
 TEST(OrderRejectionShape, DefaultOrderHasNoRejectReason) {
     const domain::Order order{};
     EXPECT_FALSE(order.reject_reason.has_value());
+}
+
+TEST(OrderSubmissionShape, CarriesWhatAReservationIsSizedFrom) {
+    // ADR 0004 sections 7-8: the submission event is where the Portfolio
+    // Manager reserves. For a limit buy it needs the order's identity, run,
+    // side, quantity and limit price -- all present on the existing struct plus
+    // the new run_id. Sizing the reservation is the Portfolio Manager's job;
+    // this only pins that the inputs exist.
+    domain::Order submitted{};
+    submitted.id = common::OrderId{3305};
+    submitted.run_id = common::RunId{12};
+    submitted.symbol = "AAPL";
+    submitted.side = domain::OrderSide::Buy;
+    submitted.type = domain::OrderType::Limit;
+    submitted.quantity = 100.0;
+    submitted.limit_price = 150.50;
+    submitted.status = domain::OrderStatus::Working;
+
+    EXPECT_EQ(submitted.run_id, common::RunId{12});
+    EXPECT_EQ(submitted.status, domain::OrderStatus::Working);
+    ASSERT_TRUE(submitted.limit_price.has_value());
+    EXPECT_DOUBLE_EQ(submitted.quantity * *submitted.limit_price, 15'050.0);
+    EXPECT_DOUBLE_EQ(submitted.filled_quantity, 0.0);
+}
+
+TEST(OrderSubmissionShape, SubmissionStatusSerializesAsWorking) {
+    // The serialized order_status the Portfolio Manager reserves on (section
+    // 1.2) is to_string(OrderStatus::Working).
+    EXPECT_EQ(domain::to_string(domain::OrderStatus::Working), "working");
 }
