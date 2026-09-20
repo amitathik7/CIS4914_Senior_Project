@@ -49,6 +49,13 @@ enum class OrderStatus : std::uint8_t {
 
 struct Order {
     common::OrderId  id{};
+
+    // PROPOSED by docs/adr/0004-execution-portfolio-fill-contract.md. Matches
+    // Fill::run_id: redundant in-process, but needed to tell concurrent runs
+    // apart on a shared topic now that order events reach the Portfolio
+    // Manager. Already required by the draft `orders` table.
+    common::RunId    run_id{};
+
     common::SignalId origin_signal{};   // signal this order was derived from
     std::string      strategy_id{};
     common::Symbol   symbol{};

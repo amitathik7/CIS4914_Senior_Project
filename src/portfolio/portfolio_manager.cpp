@@ -20,6 +20,13 @@ bool PortfolioManager::apply(const domain::Fill& /*fill*/) {
     throw common::NotImplemented("PortfolioManager::apply");
 }
 
+bool PortfolioManager::apply_order_update(const domain::Order& /*order*/) {
+    // TODO: per ADR 0004 section 7 -- reserve on Working, release on
+    //       Rejected / Cancelled / Expired, ignore fill-driven statuses, and
+    //       stay idempotent by state keyed on Order::id.
+    throw common::NotImplemented("PortfolioManager::apply_order_update");
+}
+
 void PortfolioManager::mark(const domain::MarketEvent& /*event*/) {
     // TODO: update last mark price for the symbol and recompute unrealised P&L
     //       and total equity.

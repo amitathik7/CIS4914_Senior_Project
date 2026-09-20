@@ -189,16 +189,14 @@ analytics. The rest is drafted in Weeks 1–2 and ratified at **M5**.
   `Fill::filled_quantity` and `Position::quantity` are signed. Noted while
   drafting ADR 0004 (§4), which deliberately did **not** fix it - harmonising
   touches every component and is too broad for a two-party interface ticket.
-- **Who owns open-order state?** `ExecutionSimulator::open_order_count()` and
-  `RiskContext::open_order_count` place it in execution and risk;
-  `PortfolioSnapshot` has no such field; GitHub issue #5 proposes moving it to
-  the Portfolio Manager. ADR 0004 §8 and ADR 0005 §4 write this up as an open
-  proposal, in deliberately identical wording so the two cannot drift: Option A
-  leaves it where the code already puts it, Option B moves it to the Portfolio
-  Manager. **Neither ADR settles it, and whichever the team picks, both flip
-  together** - under Option B the Portfolio Manager would own open orders *and*
-  need every rejection reported to it.
-- **`DATA_FLOW.md` line 35 contradicts `portfolio_manager.hpp`.** The diagram
-  routes `Order / Fill` to the PortfolioManager, which has no entry point for
-  an Order. ADR 0004 §7 resolves this in favour of the header (fills only);
-  the diagram still needs correcting.
+- **Who owns open-order state? DECIDED 2026-09-20: the Portfolio Manager.**
+  The team chose to reserve cash at order submission, so the Portfolio Manager
+  owns open orders and exposes buying power, as a traditional portfolio
+  manager does. Recorded in ADR 0004 §7-§8 and ADR 0005 §4, which carry
+  identical wording. Still open under it: how much a market buy reserves, and
+  moving `RiskContext::open_order_count` to read from the Portfolio Manager
+  (shared Risk code).
+- **`DATA_FLOW.md` line 35 vs `portfolio_manager.hpp` - RESOLVED.** The
+  diagram routes `Order / Fill` to the PortfolioManager, which had no entry
+  point for an Order. Under the decision above the diagram was right; the
+  header gains `apply_order_update()` (ADR 0004 §13).
