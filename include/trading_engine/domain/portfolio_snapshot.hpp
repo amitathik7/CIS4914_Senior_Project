@@ -36,7 +36,10 @@ struct PortfolioSnapshot {
     // "Can I afford this?" is answered by buying_power, NOT by cash -- a
     // policy that checks cash ignores every open order.
     std::vector<portfolio::PendingOrder> pending_orders{};
-    common::Money reserved_cash{0};   // sum of PendingOrder::reserved_cash
+    // Total held: the pending orders below PLUS holds placed at approval
+    // that are not yet attached to an order, so this is >= the sum over
+    // pending_orders.
+    common::Money reserved_cash{0};
     common::Money buying_power{0};    // cash - reserved_cash; may go negative
 
     // TODO: margin used, per-strategy sub-accounts, currency breakdown,

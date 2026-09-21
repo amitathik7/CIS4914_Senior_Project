@@ -44,6 +44,11 @@ TEST(ScaffoldContract, PortfolioManagerNeverFabricatesState) {
     EXPECT_THROW((void)pm.snapshot(), tec::NotImplemented);
     EXPECT_THROW((void)pm.position("AAPL"), tec::NotImplemented);
     EXPECT_THROW((void)pm.buying_power(), tec::NotImplemented);
+    // Granting a hold without real buying power would be fabricated state.
+    EXPECT_THROW((void)pm.hold_for_signal(tec::SignalId{1}, "AAPL",
+                                          trading_engine::domain::OrderSide::Buy,
+                                          10.0, std::nullopt),
+                 tec::NotImplemented);
 }
 
 TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {

@@ -65,9 +65,26 @@ class IPortfolioView {
 ```
 
 `buying_power()` is new with the §4 decision. The snapshot gains
-`reserved_cash`, `buying_power` and `pending_orders` to match. The interface
-stays read-only: the Risk Manager still cannot mutate the portfolio, and still
-cannot reach past it into persistence. That narrowness is the point.
+`reserved_cash`, `buying_power` and `pending_orders` to match.
+`IPortfolioView` itself stays **read-only**: the Risk Manager cannot mutate
+the portfolio through it, and cannot reach past it into persistence.
+
+§4's atomic check-and-hold is the one mutating call the Risk Manager gets,
+and it lives on a **separate** interface so that read-only property
+survives:
+
+```cpp
+class IReservationLedger {
+    virtual ReservationResult hold_for_signal(
+        common::SignalId, const common::Symbol&, domain::OrderSide,
+        common::Quantity, std::optional<common::Price>) = 0;
+    virtual void release_signal_hold(common::SignalId) = 0;
+};
+```
+
+The Risk Manager holds `const IPortfolioView&` for every read, plus
+`IReservationLedger&` for that single call. Both are implemented by
+`PortfolioManager`.
 
 ### 2. The ticket's four fields, mapped
 
@@ -160,6 +177,41 @@ simpler Portfolio Manager, and it matched what the scaffold originally encoded
 It was not chosen because the team wants the Portfolio Manager to behave as a
 traditional one, with reservation and buying power in one place.
 
+**When the hold is placed: atomically, at approval.**
+
+Checking buying power and then reserving as two steps leaves a window. An
+approved signal has to reach the Execution Simulator, become an order, and
+come back before the hold exists, so every signal already queued behind it is
+evaluated against buying power that does not yet reflect it. That window is
+measured in queue positions rather than in milliseconds, so a strategy that
+emits several signals from one market event can have all of them approved
+against the same cash. In a backtest at `replay_speed = 0` this is the normal
+case, not a rare race.
+
+- The Risk Manager **checks buying power and places the hold in one call**,
+  under one lock. This is possible precisely because §5 keeps the Risk
+  Manager and the Portfolio Manager in one process, and it is what a broker
+  does at order entry.
+- The hold is keyed by `SignalId` when placed, and attached to the order when
+  that order's submission event arrives. `Order::origin_signal` already
+  carries the correlation.
+- A rejected order still carries `origin_signal`, so the hold is released even
+  when the order never reached `working`.
+- **The read seam stays read-only.** The mutating call lives on a separate
+  narrow interface (`IReservationLedger`), so `IPortfolioView` still cannot be
+  used to change portfolio state.
+- The Portfolio Manager sizes the hold, not the Risk Manager, because pricing
+  knowledge (last mark, fee config) already lives there.
+- **Wording note:** this refines "reserved at order submission" to "held at
+  approval, attached to the order at submission". What the team decided is
+  unchanged, in that the Portfolio Manager owns open orders and buying power.
+  The hold simply starts one step earlier, because that is what closes the
+  window.
+- If the Risk Manager ever stops being co-located with the Portfolio Manager
+  (§5 reversed), this is not possible. The fallback is for the Portfolio
+  Manager to refuse a reservation that exceeds buying power and for the
+  Execution Simulator to turn that refusal into a rejected order.
+
 **Still open under this decision**
 
 - **How much a market buy reserves.** A limit buy reserves
@@ -171,16 +223,10 @@ traditional one, with reservation and buying power in one place.
   remaining quantity is committed against the position, so the same shares
   cannot be sold twice. Whether short selling is allowed at all remains
   OQ#11's behaviour half.
-- **The gap between approval and reservation.** Cash is reserved at order
-  submission, which happens after the Risk Manager approves the signal. If a
-  second signal is evaluated before the first signal's order has been
-  reserved, both can be approved against the same buying power, which is the
-  over-commit reservation exists to prevent. Synchronous reads narrow this
-  window but do not close it, because a queued second signal can be evaluated
-  before the first order's submission event is processed. Options: accept it
-  at this project's order rates; have the Risk Manager subtract approvals it
-  has issued but not yet seen reserved; or reserve at approval rather than at
-  submission, which would revisit this decision. Undecided.
+- **Orphaned holds.** An approved signal that never becomes an order at all,
+  because the Execution Simulator dropped it rather than rejecting it, leaves
+  a hold that nothing releases. Only a run-end sweep or a timeout would catch
+  it. Not designed here.
 
 ### 5. Synchronous or push - the ticket's open question
 
@@ -203,8 +249,11 @@ Three options, in the order they would be reached for:
 **The §4 decision raises the stakes.** Buying power is the number most
 sensitive to staleness, because the point of reserving is to stop two
 approvals spending the same cash. Synchronous reads stop the Risk Manager
-reading an old snapshot. On their own they do not close the gap between
-approval and reservation, which §4 lists as still open.
+reading an old snapshot, and §4's atomic check-and-hold closes the gap
+between approval and reservation. **The two decisions are now coupled:**
+the atomic hold is only possible because this section keeps the Risk
+Manager and the Portfolio Manager in one process. Reversing this section
+reopens that window, and the fallback in §4 applies.
 
 **The interface is identical under all three.** `IPortfolioView` is a read
 seam; only its implementation moves. That is why this decision does not block
@@ -256,12 +305,16 @@ this split exists to prevent.
 | No open orders | `pending_orders` empty, `reserved_cash` 0, `buying_power == cash`. |
 | Negative buying power | Representable and reportable. It means reservations exceed cash, e.g. a market buy that filled above its reservation. A policy should reject new buys, not assume it cannot happen. |
 | A pending sell | Reserves no cash (§4), so it does not reduce buying power. It does commit its remaining quantity against the position. |
+| A hold placed but not yet attached to an order | Counts towards `reserved_cash` and lowers `buying_power`, but does not appear in `pending_orders`, because no order exists yet. So `reserved_cash >= sum(pending_orders.reserved_cash)`. |
+| Hold refused | `ReservationResult::granted` is false and nothing is held. The Risk Manager rejects the signal with `buying_power_after` as the reason. |
+| Order rejected before reaching `working` | The rejected order still carries `origin_signal`, so the hold is released anyway (§4). |
 | Counting open orders for `max_open_orders` | `pending_orders.size()`. `RiskContext::open_order_count` should be filled from it rather than kept separately (§4). |
 
 ### 9. Scope exclusions
 
-- One new method (`buying_power()`), one new type (`PendingOrder`) and three
-  new snapshot fields, all required by §4. Nothing beyond that.
+- One new read method (`buying_power()`), one new interface
+  (`IReservationLedger`, two methods), one new type (`PendingOrder`) and
+  three new snapshot fields, all required by §4. Nothing beyond that.
 - Does not change `RiskContext` or `risk_manager.hpp`; §4 says their
   open-order count should read from here, but that is shared Risk code.
 - No risk limits, policies, or thresholds - that is OQ#10.
@@ -297,8 +350,11 @@ this split exists to prevent.
   right as the order events it was built from.
 - Sync pull requires Risk and Portfolio to be co-located, which conflicts with
   cross-process-everywhere if that lands. §5 names the migration path.
-- The approval-to-reservation gap (§4) is open, so buying power can briefly
-  overstate what is really free.
+- The atomic hold ties this contract to §5: if the Risk Manager ever stops
+  being co-located with the Portfolio Manager, the hold cannot be atomic
+  and §4's fallback is needed.
+- A hold whose signal never becomes an order at all leaks until a run-end
+  sweep (§4). Not designed here.
 - `snapshot()` returning a copy is fine at this scale and will not stay fine
   forever. No change proposed now.
 
@@ -329,7 +385,8 @@ Only the open-order decision is ticked. The rest is still a draft for review.
 - [ ] Team call on the Risk Manager side (shared ownership - no single owner)
 - [x] Open-order ownership decided: Option B (team, 2026-09-20). §4 matches
       ADR 0004 §8.
-- [ ] Approval-to-reservation gap handled or accepted (§4)
+- [x] Approval-to-reservation gap closed: the buying-power check and the
+      hold are one atomic call at approval (team, 2026-09-20, §4).
 - [ ] `RiskContext::open_order_count` filled from `pending_orders` (§4, §8).
       Shared Risk code, so a team call.
 - [ ] §5 revisited once ADR 0003 (transport) exists

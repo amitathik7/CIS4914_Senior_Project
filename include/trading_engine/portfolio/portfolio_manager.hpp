@@ -15,7 +15,9 @@
 //
 //  IPortfolioView is the read side, deliberately narrow, so consumers (notably
 //  RiskManager) depend only on "give me the current snapshot", not on the
-//  mutating API.
+//  mutating API. IReservationLedger is the one exception: the RiskManager's
+//  atomic check-and-hold, kept on its own interface so the read seam stays
+//  read-only.
 //
 //  Ownership / lifecycle: owned by TradingEngine; one of the first components
 //  created and the last destroyed, since others hold IPortfolioView& to it.
@@ -37,6 +39,7 @@
 #include "trading_engine/domain/order.hpp"
 #include "trading_engine/domain/portfolio_snapshot.hpp"
 #include "trading_engine/portfolio/position.hpp"
+#include "trading_engine/portfolio/reservation_ledger.hpp"
 
 namespace trading_engine::portfolio {
 
@@ -58,7 +61,8 @@ public:
     [[nodiscard]] virtual common::Money buying_power() const = 0;
 };
 
-class PortfolioManager final : public IPortfolioView {
+class PortfolioManager final : public IPortfolioView,
+                              public IReservationLedger {
 public:
     PortfolioManager(common::RunId run_id,
                      common::Money starting_cash,
@@ -106,6 +110,18 @@ public:
     [[nodiscard]] common::Money cash() const override;                   // NOT IMPLEMENTED
     [[nodiscard]] common::Money buying_power() const override;           // NOT IMPLEMENTED
 
+    // --- reservation side (IReservationLedger) ---------------------
+    // The RiskManager's one mutating call: check buying power and hold
+    // against it atomically. See reservation_ledger.hpp for why this is a
+    // separate interface and why the check and the hold cannot be split.
+    [[nodiscard]] ReservationResult hold_for_signal(
+        common::SignalId signal,
+        const common::Symbol& symbol,
+        domain::OrderSide side,
+        common::Quantity quantity,
+        std::optional<common::Price> limit_price) override;              // NOT IMPLEMENTED
+    void release_signal_hold(common::SignalId signal) override;          // NOT IMPLEMENTED
+
 private:
     [[maybe_unused]] common::RunId         run_id_{};
     [[maybe_unused]] common::Money         starting_cash_{0};
@@ -113,9 +129,11 @@ private:
 
     // TODO: symbol -> Position map, running cash balance, realised-P&L ledger,
     //       last mark price per symbol, exposure aggregates, open-order table
-    //       keyed by OrderId with its reserved cash, the set of completed
+    //       keyed by OrderId with its reserved cash, holds keyed by SignalId
+    //       that have not yet been attached to an order, the set of completed
     //       order ids (so late events cannot re-reserve), and the
-    //       synchronisation primitive that makes the read side thread-safe.
+    //       synchronisation primitive that makes the read side thread-safe
+    //       AND makes hold_for_signal atomic.
 };
 
 }  // namespace trading_engine::portfolio

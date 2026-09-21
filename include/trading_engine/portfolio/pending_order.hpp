@@ -29,6 +29,12 @@ namespace trading_engine::portfolio {
 
 struct PendingOrder {
     common::OrderId   order_id{};
+
+    // The signal whose hold this order inherited. The hold is placed at
+    // approval keyed by SignalId, then attached here when the submission
+    // event arrives (ADR 0005 section 4).
+    common::SignalId  origin_signal{};
+
     common::Symbol    symbol{};
     domain::OrderSide side{domain::OrderSide::Buy};
 

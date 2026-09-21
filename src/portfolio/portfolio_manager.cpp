@@ -5,6 +5,7 @@
 namespace trading_engine::portfolio {
 
 IPortfolioView::~IPortfolioView() = default;
+IReservationLedger::~IReservationLedger() = default;
 
 PortfolioManager::PortfolioManager(common::RunId run_id,
                                    common::Money starting_cash,
@@ -46,6 +47,23 @@ std::optional<Position> PortfolioManager::position(
 
 common::Money PortfolioManager::cash() const {
     throw common::NotImplemented("PortfolioManager::cash");
+}
+
+ReservationResult PortfolioManager::hold_for_signal(
+    common::SignalId /*signal*/,
+    const common::Symbol& /*symbol*/,
+    domain::OrderSide /*side*/,
+    common::Quantity /*quantity*/,
+    std::optional<common::Price> /*limit_price*/) {
+    // TODO: size the hold (limit: qty * limit_price + fees; market: last
+    //       mark * buffer), compare against buying power and hold in ONE
+    //       critical section. Granting without the check, or checking
+    //       without holding, reopens the window this exists to close.
+    throw common::NotImplemented("PortfolioManager::hold_for_signal");
+}
+
+void PortfolioManager::release_signal_hold(common::SignalId /*signal*/) {
+    throw common::NotImplemented("PortfolioManager::release_signal_hold");
 }
 
 common::Money PortfolioManager::buying_power() const {

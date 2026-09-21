@@ -93,6 +93,39 @@ portfolio::PendingOrder make_pending(common::OrderId id,
     return o;
 }
 
+// Stand-in for the atomic check-and-hold. The point of the real one is that
+// the check and the hold happen under one lock; this fake keeps them in one
+// function for the same reason, so a test cannot accidentally model the
+// split-step version the decision rejects.
+class FakeReservationLedger final : public portfolio::IReservationLedger {
+public:
+    explicit FakeReservationLedger(common::Money buying_power)
+        : buying_power_{buying_power} {}
+
+    [[nodiscard]] portfolio::ReservationResult hold_for_signal(
+        common::SignalId,
+        const common::Symbol&,
+        domain::OrderSide side,
+        common::Quantity quantity,
+        std::optional<common::Price> limit_price) override {
+        // A sell holds no cash (ADR 0005 section 4).
+        const common::Money want =
+            side == domain::OrderSide::Sell || !limit_price
+                ? 0.0
+                : quantity * *limit_price;
+        if (want > buying_power_) {
+            return {false, 0.0, buying_power_};
+        }
+        buying_power_ -= want;
+        return {true, want, buying_power_};
+    }
+
+    void release_signal_hold(common::SignalId) override {}
+
+private:
+    common::Money buying_power_{0};
+};
+
 }  // namespace
 
 TEST(PortfolioViewContract, RiskCanDependOnTheReadSeamAlone) {
@@ -221,4 +254,47 @@ TEST(PortfolioViewContract, OpenOrderCountComesFromTheSnapshot) {
     fake.add_pending_order(make_pending(common::OrderId{2}, domain::OrderSide::Sell, 5.0, 0.0));
 
     EXPECT_EQ(fake.snapshot().pending_orders.size(), 2u);
+}
+
+TEST(ReservationLedgerContract, SecondSignalCannotSpendTheFirstOnesCash) {
+    // The whole point of the atomic check-and-hold (ADR 0005 section 4): two
+    // signals evaluated back to back, before either has become an order, must
+    // not both be approved against the same buying power. Under the
+    // check-then-reserve-later design this test would fail, because the second
+    // check would still see the full amount.
+    FakeReservationLedger ledger{20'000.0};
+
+    const auto first = ledger.hold_for_signal(common::SignalId{1}, "AAPL",
+                                              domain::OrderSide::Buy, 100.0, 150.0);
+    ASSERT_TRUE(first.granted);
+    EXPECT_DOUBLE_EQ(first.held, 15'000.0);
+    EXPECT_DOUBLE_EQ(first.buying_power_after, 5'000.0);
+
+    // No order exists for signal 1 yet. The hold alone has to be enough.
+    const auto second = ledger.hold_for_signal(common::SignalId{2}, "AAPL",
+                                               domain::OrderSide::Buy, 100.0, 150.0);
+    EXPECT_FALSE(second.granted);
+    EXPECT_DOUBLE_EQ(second.held, 0.0);
+    EXPECT_DOUBLE_EQ(second.buying_power_after, 5'000.0);
+}
+
+TEST(ReservationLedgerContract, AffordableSecondSignalStillGetsThrough) {
+    FakeReservationLedger ledger{20'000.0};
+    ASSERT_TRUE(ledger.hold_for_signal(common::SignalId{1}, "AAPL",
+                                       domain::OrderSide::Buy, 100.0, 150.0).granted);
+
+    const auto small = ledger.hold_for_signal(common::SignalId{2}, "AAPL",
+                                              domain::OrderSide::Buy, 10.0, 150.0);
+    EXPECT_TRUE(small.granted);
+    EXPECT_DOUBLE_EQ(small.buying_power_after, 3'500.0);
+}
+
+TEST(ReservationLedgerContract, SellHoldsNoCash) {
+    // Section 4: a sell commits shares against the position, not cash.
+    FakeReservationLedger ledger{1'000.0};
+    const auto sell = ledger.hold_for_signal(common::SignalId{3}, "AAPL",
+                                             domain::OrderSide::Sell, 500.0, 150.0);
+    EXPECT_TRUE(sell.granted);
+    EXPECT_DOUBLE_EQ(sell.held, 0.0);
+    EXPECT_DOUBLE_EQ(sell.buying_power_after, 1'000.0);
 }
