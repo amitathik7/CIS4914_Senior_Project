@@ -106,6 +106,14 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - Are limits per-symbol / per-strategy / per-portfolio, or global only?
 - Daily-loss stop: session boundary definition and reset time (exchange TZ?).
 - Kill-switch: manual only, or automatic on N consecutive rejects / drawdown?
+- The **Portfolio → Risk** query interface (what state the Risk Manager can
+  read, and whether it reads it synchronously) is drafted in
+  [`adr/0005-portfolio-risk-query-contract.md`](adr/0005-portfolio-risk-query-contract.md)
+  (**Proposed**, not Accepted; tracks GitHub issue #5). It settles no limits or
+  thresholds - those remain this question. Following the team decision of
+  2026-09-20 (its §4), the Portfolio Manager exposes open orders and buying
+  power, so a `max_open_orders` policy counts `pending_orders` and a buy is
+  checked against `buying_power()`, not `cash()`.
 - **Owner:** risk lead · **By:** M3
 
 ## 11. Execution assumptions
