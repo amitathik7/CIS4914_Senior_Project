@@ -404,6 +404,41 @@ simpler Portfolio Manager, and it matched what the scaffold originally encoded
 It was not chosen because the team wants the Portfolio Manager to behave as a
 traditional one, with reservation and buying power in one place.
 
+**When the hold is placed: atomically, at approval.**
+
+Checking buying power and then reserving as two steps leaves a window. An
+approved signal has to reach the Execution Simulator, become an order, and
+come back before the hold exists, so every signal already queued behind it is
+evaluated against buying power that does not yet reflect it. That window is
+measured in queue positions rather than in milliseconds, so a strategy that
+emits several signals from one market event can have all of them approved
+against the same cash. In a backtest at `replay_speed = 0` this is the normal
+case, not a rare race.
+
+- The Risk Manager **checks buying power and places the hold in one call**,
+  under one lock. This is possible precisely because ADR 0005 §5 keeps the Risk
+  Manager and the Portfolio Manager in one process, and it is what a broker
+  does at order entry.
+- The hold is keyed by `SignalId` when placed, and attached to the order when
+  that order's submission event arrives. `Order::origin_signal` already
+  carries the correlation.
+- A rejected order still carries `origin_signal`, so the hold is released even
+  when the order never reached `working`.
+- **The read seam stays read-only.** The mutating call lives on a separate
+  narrow interface (`IReservationLedger`), so `IPortfolioView` still cannot be
+  used to change portfolio state.
+- The Portfolio Manager sizes the hold, not the Risk Manager, because pricing
+  knowledge (last mark, fee config) already lives there.
+- **Wording note:** this refines "reserved at order submission" to "held at
+  approval, attached to the order at submission". What the team decided is
+  unchanged, in that the Portfolio Manager owns open orders and buying power.
+  The hold simply starts one step earlier, because that is what closes the
+  window.
+- If the Risk Manager ever stops being co-located with the Portfolio Manager
+  (ADR 0005 §5 reversed), this is not possible. The fallback is for the Portfolio
+  Manager to refuse a reservation that exceeds buying power and for the
+  Execution Simulator to turn that refusal into a rejected order.
+
 **Still open under this decision**
 
 - **How much a market buy reserves.** A limit buy reserves
@@ -415,16 +450,10 @@ traditional one, with reservation and buying power in one place.
   remaining quantity is committed against the position, so the same shares
   cannot be sold twice. Whether short selling is allowed at all remains
   OQ#11's behaviour half.
-- **The gap between approval and reservation.** Cash is reserved at order
-  submission, which happens after the Risk Manager approves the signal. If a
-  second signal is evaluated before the first signal's order has been
-  reserved, both can be approved against the same buying power, which is the
-  over-commit reservation exists to prevent. Synchronous reads narrow this
-  window but do not close it, because a queued second signal can be evaluated
-  before the first order's submission event is processed. Options: accept it
-  at this project's order rates; have the Risk Manager subtract approvals it
-  has issued but not yet seen reserved; or reserve at approval rather than at
-  submission, which would revisit this decision. Undecided.
+- **Orphaned holds.** An approved signal that never becomes an order at all,
+  because the Execution Simulator dropped it rather than rejecting it, leaves
+  a hold that nothing releases. Only a run-end sweep or a timeout would catch
+  it. Not designed here.
 
 ### 9. Partial fills
 
@@ -660,7 +689,8 @@ bool apply_order_update(const domain::Order& order);   // idempotent by order st
 | `cancelled` or `expired` after a partial fill | Release only the reservation on the unfilled remainder. The filled part was already released by its fills. |
 | Order fills at a better price than reserved | Each fill releases the reserved amount for its quantity; the final fill releases the residue (§7). |
 | Market buy fills above its reservation | Actual cost exceeds what was reserved, so buying power falls by the difference. Not an error. This is why market buys reserve with a buffer (§8). |
-| A new reservation exceeds buying power | Reserve anyway and flag: the Portfolio Manager records reality, it does not veto. Preventing it is the Risk Manager's job, and there is a window where it cannot, because approval happens before reservation. See the approval-to-reservation gap in §8, which is still open. |
+| A new buy exceeds buying power | Cannot get through the approval path: the check and the hold are one atomic call (§8), so the second of two competing signals sees the first one's hold and is refused. |
+| Buying power goes negative anyway | Still possible after the fact, when a market buy fills above what it reserved. Record it and refuse new buys until it recovers. The Portfolio Manager never refuses a *fill*, which is reality; it refuses a *hold*, which is a request. |
 | Duplicate order event | Ignored by state (§9.3). |
 | Zero-quantity fill | Contract violation. Should never be produced; reject if seen. Distinct from the row below - a zero-quantity *order* is legitimate, a zero-quantity *fill* is not. |
 | A signal that rounds to zero shares | Reachable **if** quantities end up whole (§12): a small target exposure against a high-priced instrument floors to 0. That order can never fill. It should surface as `OrderStatus::Rejected` with a reason (§6 category 2), **not** as a silently dropped signal. Per §7 the rejection reaches the Portfolio Manager, and since the order never reached `working` it is a no-op release. |
@@ -770,7 +800,8 @@ Only the open-order decision is ticked. The rest is still a draft for review.
 - [x] Open-order ownership decided: Option B, cash reserved at order
       submission (team, 2026-09-20). ADR 0005 §4 matches §8.
 - [ ] Reservation amount for market buys decided (§8)
-- [ ] Approval-to-reservation gap handled or accepted (§8)
+- [x] Approval-to-reservation gap closed: the buying-power check and the hold
+      are one atomic call at approval (team, 2026-09-20, §8).
 - [ ] `RiskContext::open_order_count` sourced from the Portfolio Manager
       (§8). Shared Risk code, so a team call.
 - [ ] Order events and fills placed on one topic (§11.2). Blake.
