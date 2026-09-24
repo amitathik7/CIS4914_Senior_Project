@@ -18,6 +18,17 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - **Owner:** strategy + market-data leads · **By:** M1
 
 ## 2. Queue and threading model
+> **Superseded in part, pending an ADR.** The team has decided to move the
+> pipeline onto **Kafka**, making every component boundary cross-process. That
+> reverses ADR 0001 item 12 ("in-process, single-node engine. No distribution,
+> no IPC.") and is **not yet recorded in any ADR** - expected to be 0003. The
+> in-process options below only remain live under the alternative of keeping
+> `IEventBus` as the component-facing seam with Kafka behind it as an adapter
+> (the pattern already used for Alpaca and PostgreSQL). Note that the
+> cross-process option costs deterministic replay, which M5 lists as an
+> acceptance criterion - see `adr/0004-execution-portfolio-fill-contract.md`
+> §10–§11.
+
 - One bus with a single MPMC queue, or per-`EventType` queues (SPSC/MPSC)?
 - `std::variant` payload (current) vs type-erased `Event`?
 - Thread count: one consumer thread per stage, a pool, or pinned threads?
@@ -111,6 +122,14 @@ analytics. The rest is drafted in Weeks 1–2 and ratified at **M5**.
 - Latency: fixed `signal_to_order` / `order_to_fill` (current) vs distribution.
 - Short selling: allowed? borrow availability modelled?
 - Partial fills: enabled in v1, and how are remainders handled?
+- The **Execution → Portfolio** fill contract (message shape, gross-vs-net
+  pricing, partial-fill completion/ordering/idempotency) is drafted in
+  [`adr/0004-execution-portfolio-fill-contract.md`](adr/0004-execution-portfolio-fill-contract.md)
+  (**Proposed**, not Accepted; tracks GitHub issue #4). That ADR **does not**
+  decide the money type - it is written to survive either outcome, but flags
+  that the M5 acceptance criterion ("round-trip P&L asserted to the cent") is
+  at risk under `double`, and that changing the type is a **breaking** wire
+  change once the transport is cross-process.
 - **Owner:** execution lead (money type: + all four sign off) ·
   **By:** money type **Weeks 1–2**; the behaviour half **M5**
 
@@ -157,3 +176,19 @@ analytics. The rest is drafted in Weeks 1–2 and ratified at **M5**.
 - `std::span` in interfaces vs `const std::vector&` (toolchain floor).
 - clang-format / clang-tidy rule set.
 - Namespace style: nested `trading_engine::<component>` (current) — keep?
+- **Signed vs unsigned quantity is inconsistent across the domain model.**
+  `Order::quantity` is `> 0` with direction carried by `side`;
+  `Fill::filled_quantity` and `Position::quantity` are signed. Noted while
+  drafting ADR 0004 (§4), which deliberately did **not** fix it - harmonising
+  touches every component and is too broad for a two-party interface ticket.
+- **Who owns open-order state? DECIDED 2026-09-20: the Portfolio Manager.**
+  The team chose to reserve cash at order submission, so the Portfolio Manager
+  owns open orders and exposes buying power, as a traditional portfolio
+  manager does. Recorded in ADR 0004 §7-§8 and ADR 0005 §4, which carry
+  identical wording. Still open under it: how much a market buy reserves, and
+  moving `RiskContext::open_order_count` to read from the Portfolio Manager
+  (shared Risk code).
+- **`DATA_FLOW.md` line 35 vs `portfolio_manager.hpp` - RESOLVED.** The
+  diagram routes `Order / Fill` to the PortfolioManager, which had no entry
+  point for an Order. Under the decision above the diagram was right; the
+  header gains `apply_order_update()` (ADR 0004 §13).

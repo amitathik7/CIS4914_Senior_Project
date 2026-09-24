@@ -9,6 +9,12 @@ trading_engine_add_component_test(common
     common_identifiers_test.cpp
     common_clock_test.cpp)
 
+# Shape-only checks for the ADR 0004 (Proposed, not Accepted) Fill/Order
+# additions. Not validation -- neither type enforces invariants yet; see
+# docs/adr/0004-execution-portfolio-fill-contract.md.
+trading_engine_add_component_test(domain
+    domain_fill_test.cpp)
+
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.
 trading_engine_add_component_test(scaffold_contract

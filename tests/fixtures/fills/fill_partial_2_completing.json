@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "message_type": "fill",
+  "fill_id": 7003,
+  "order_id": 3306,
+  "run_id": 12,
+  "symbol": "AAPL",
+  "side": "sell",
+  "fill_status": "filled",
+  "sequence": 2,
+  "filled_quantity": 20,
+  "fill_price": 152700000,
+  "fees": 200000,
+  "slippage": -50000,
+  "filled_at": "2026-09-16T14:33:19.000000000Z"
+}
