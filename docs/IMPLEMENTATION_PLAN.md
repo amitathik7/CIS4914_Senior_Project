@@ -5,6 +5,11 @@ The scaffold is complete: every runtime path is a stub that throws
 trading engine over the 15-week term. It never trades real money and is not
 graded on predicting markets.
 
+> Progress note (2026-10-01, working branch `jordan`, not yet merged): the M4
+> `StrategyEngine` and two reference strategies exist and are tested against test
+> doubles; see [`STRATEGIES.md`](STRATEGIES.md). Nothing else here has started, and none
+> of it has run in a pipeline.
+
 ## How to use this document
 
 - It is **coordination guidance, not a contract.** Refine a milestone's detail
@@ -259,6 +264,15 @@ warm-up) ratified at the start of this milestone.
 **Owners.** Primary C. Supporting: B (market-event feed), A (bus wiring).
 
 **Stretch.** Second reference strategy; strategy-parameter config surface.
+
+**Status (2026-10-01, working branch, uncommitted).** Delivered against test doubles:
+the engine (registration, lifecycle, fan-out, stamping, publication, exception isolation
+with per-strategy counters), the SMA crossover and, from the stretch list, a rolling
+z-score mean-reversion strategy, with unit and engine-level tests and
+[documentation](STRATEGIES.md). Not delivered: the symbol-interest routing index,
+forwarding the counters to `SystemMetrics`, committed golden-signal files (the tests
+assert hand-derived signals directly), and any run against the production bus.
+`OQ#9` and ADR 0002 are still open, so the signal shape these strategies use is local.
 
 ---
 

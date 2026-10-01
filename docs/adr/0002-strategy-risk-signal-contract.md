@@ -29,6 +29,22 @@
 > quantity policy with ADR 0004's proposed direction instead of leaving two
 > Proposed drafts disagreeing. Still nothing here is accepted.
 
+> **Implementation status note (added 2026-10-01; this does not change the ADR's
+> status or any decision below).** This ADR is still **Proposed**; the work described
+> here ratified nothing. For readers comparing it with the code: on the `jordan`
+> working branch (uncommitted when this note was written), `StrategyEngine` is no longer
+> a stub. It registers strategies, stamps `id` / `created_at` / `strategy_id`, publishes
+> `EventType::Signal` and counts failures, and two reference strategies emit
+> quantity-based, `Market` signals using the *Proposed* `order_type` field (see
+> [`../STRATEGIES.md`](../STRATEGIES.md)). All of that runs only against test doubles.
+> Still true: the production event bus, `RiskManager` and `ExecutionSimulator` are
+> `common::NotImplemented` stubs, so no signal has flowed through a real pipeline, and
+> `ISignalSink::emit()` still returns nothing, so §7's gap is unchanged: a strategy
+> cannot learn its `SignalId` or the outcome, and an emission is neither a delivery, a
+> risk approval nor an execution. The passages below that call `StrategyEngine`
+> unimplemented, or cite a `TODO` in `strategy_engine.cpp`, describe the repository as of
+> 2026-09-16/17 and are kept unchanged as the historical record.
+
 ## Context
 
 Issue #3 asks for the shape of what a Strategy Engine hands to a Risk

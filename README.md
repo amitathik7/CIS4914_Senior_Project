@@ -9,11 +9,15 @@ concurrency, modularity, testing, latency, and throughput.
 
 ---
 
-## Status: scaffold (M0)
+## Status: scaffold (M0), strategy layer started
 
-This repository currently contains **structure, not behaviour**. It configures,
-builds, and tests cleanly, but every real operation is a stub that throws
-`NotImplemented`. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+This repository is mostly **structure, not behaviour**. It configures, builds, and
+tests cleanly. Apart from the strategy layer below, every real operation is a stub that
+throws `NotImplemented`. The strategy layer is implemented and tested **only against
+test doubles**: no production event bus, market-data service, risk manager, execution
+simulator or run loop exists yet, so nothing has run end to end. See
+[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), and
+[`docs/STRATEGIES.md`](docs/STRATEGIES.md) for the strategy documentation.
 
 | Area | State |
 |---|---|
@@ -22,7 +26,9 @@ builds, and tests cleanly, but every real operation is a stub that throws
 | Domain value types (`MarketEvent`, `TradeSignal`, `Order`, `Fill`, `Position`, `PortfolioSnapshot`, `PerformanceReport`) | ✅ defined |
 | GoogleTest wiring + smoke/contract/unit tests | ✅ passing |
 | `IClock`/`ManualClock`, strong ids + generator, enum `to_string`, `default_config()` | ✅ real + tested |
-| Market data, event bus, strategies, risk, execution, portfolio, persistence, analytics | ⛔ stubs (`NotImplemented`) |
+| `StrategyEngine` (registration, lifecycle, routing, signal stamping, failure isolation) | ✅ real + tested against a test bus and `ManualClock` ([docs](docs/STRATEGIES.md)) |
+| Reference strategies: moving-average crossover, rolling z-score mean reversion | ✅ real + tested ([crossover](docs/strategies/moving_average_crossover.md), [mean reversion](docs/strategies/mean_reversion.md)) |
+| Market data, event bus, risk, execution, portfolio, persistence, analytics | ⛔ stubs (`NotImplemented`) |
 | Alpaca connectivity, PostgreSQL, threading/queue, Python charts | ⛔ not started |
 
 No external network or database connectivity is implemented anywhere in this
@@ -55,11 +61,11 @@ CMakePresets.json         convenience configure/build/test presets
 cmake/                    CompilerWarnings, Dependencies (GoogleTest), version.hpp.in
 config/                   config.example.json (no secrets) + notes
 database/migrations/      001_initial_schema.sql  (commented OUTLINE, no-op)
-docs/                     ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, OPEN_QUESTIONS, adr/
+docs/                     ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, OPEN_QUESTIONS, STRATEGIES, strategies/, adr/
 include/trading_engine/   public headers, by component
-src/                      implementation stubs, by component
+src/                      implementation (strategy layer) and stubs (the rest), by component
 apps/trading_engine_main.cpp   thin executable (build confirmation only)
-tests/                    unit/ (default), integration/ (opt-in), fixtures/
+tests/                    unit/ (default), integration/ (opt-in), fixtures/, support/ (test doubles)
 python/visualization/     plot_performance.py outline + requirements.txt
 ```
 
@@ -112,10 +118,11 @@ ctest --test-dir build --output-on-failure
 # multi-config (VS): ctest --test-dir build -C Debug --output-on-failure
 ```
 
-Filter by component label:
+Filter by component label (`common`, `domain`, `strategy`, `reference_strategies`, ...):
 
 ```bash
 ctest --test-dir build -L common
+ctest --test-dir build -L reference_strategies   # both strategies, alone and in the engine
 ```
 
 ## Python visualization (syntax check only for now)

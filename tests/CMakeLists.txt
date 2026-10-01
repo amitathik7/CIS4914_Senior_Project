@@ -9,6 +9,7 @@
 #    integration/  -- real PostgreSQL / Alpaca; opt-in via
 #                     -DTRADING_ENGINE_BUILD_INTEGRATION_TESTS=ON
 #    fixtures/     -- recorded payloads / CSV data for the above
+#    support/      -- header-only test doubles (trading_engine::test_support)
 # =============================================================================
 
 include(Dependencies)   # cmake/Dependencies.cmake -> GoogleTest
@@ -32,6 +33,7 @@ function(trading_engine_add_component_test component)
         DISCOVERY_MODE PRE_TEST)
 endfunction()
 
+add_subdirectory(support)
 add_subdirectory(unit)
 
 if(TRADING_ENGINE_BUILD_INTEGRATION_TESTS)
