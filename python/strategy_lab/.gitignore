@@ -1,0 +1,8 @@
+# Strategy Lab UI: local-only files. Nothing here is source.
+.venv/
+__pycache__/
+*.pyc
+# Streamlit credentials/secrets (none are used) and any scratch output the UI may create.
+.streamlit/secrets.toml
+.runtime/
+uploads/

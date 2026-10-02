@@ -1,0 +1,38 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "warmup_sma_insufficient",
+  "title": "Insufficient warm-up: SMA 5/20 on 9 bars never leaves warm-up",
+  "purpose": "With fewer accepted bars than long_window nothing is computed and nothing is signalled; the tool warns instead of repairing.",
+  "covers": ["warmup", "insufficient_data"],
+  "dataset": {
+    "path": "datasets/sma_crossover.csv",
+    "sha256_lf": "70634f7ac4a2d233a7188108d6ba7ba9a3c93bf407c38e99d87daacaa75c5e8a"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_5_20", "short_window": "5", "long_window": "20", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": [
+      "docs/strategies/moving_average_crossover.md section 4 (nothing is emitted until long_window bars)",
+      "docs/STRATEGY_LAB.md section 8 (warning fewer_bars_than_warmup)"
+    ],
+    "derivation": [
+      "long_window 20 needs 20 accepted bars; the dataset has 9 bars, so every event is warming_up (window fill 1..9 of 20)",
+      "no averages exist, so none can be compared and no signal is possible; the documented warning fewer_bars_than_warmup applies"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayWarmup (the same rule at the boundary), explore test test_runner_warnings_are_shown"
+    ]
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": ["fewer_bars_than_warmup"],
+    "signals": [],
+    "events": [
+      {"strategy": "sma_5_20", "event_range": [0, 8], "verdict": "warming_up", "reason": "warming_up", "action": "none", "window_size": 20, "unavailable": {"short_sma": "warming_up", "long_sma": "warming_up"}},
+      {"strategy": "sma_5_20", "event_index": 0, "window_fill": 1},
+      {"strategy": "sma_5_20", "event_index": 8, "window_fill": 9}
+    ]
+  }
+}

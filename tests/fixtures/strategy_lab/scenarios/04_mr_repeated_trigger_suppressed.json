@@ -1,0 +1,51 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "mr_repeated_trigger_suppressed",
+  "title": "Mean reversion: a repeated excursion is suppressed until the latch re-arms",
+  "purpose": "Staying beyond the entry threshold, or between the bands, never repeats a request; a constant window re-arms the latch and z is then unavailable (not zero).",
+  "covers": ["mr_suppression", "constant_window", "unavailable_not_zero"],
+  "dataset": {
+    "path": "datasets/mr_suppression.csv",
+    "sha256_lf": "181e0bf9322381a02d838e66b15f2ad6e9314a5c812090ca7f30740b64777f38"
+  },
+  "strategies": [
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_4", "lookback": "4", "entry_threshold": "1.5", "rearm_threshold": "0.5", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": [
+      "docs/strategies/mean_reversion.md section 4 (the latch: no repeats, constant window)",
+      "docs/STRATEGY_LAB.md section 12 (reason codes)"
+    ],
+    "derivation": [
+      "closes 10 10 10 6 2 1 1 1 1 10; lookback 4, entry 1.5, re-arm 0.5",
+      "bar 4: z = -sqrt(3): Buy (event_index 3), latch lower",
+      "bar 5: window 10 10 6 2, mean 7, variance 11, z^2 = 25/11 = 2.27 >= 1.5^2 = 2.25 so z = -1.5076 is beyond the entry on the requested side: no repeat (excursion_already_requested)",
+      "bars 6-8: z = -1.0528, -0.7276, -0.5774, all strictly between the re-arm 0.5 and the entry 1.5: nothing, latch unchanged",
+      "bar 9: window 1 1 1 1 is constant: nothing, z unavailable, latch re-armed",
+      "bar 10: window 1 1 1 10, mean 13/4, variance 243/16, z = sqrt(3) = 1.732 >= 1.5 and latch neutral: Sell (event_index 9)"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayMeanReversion.ARepeatedExcursionIsSuppressedUntilTheLatchRearms",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case mr_suppression.csv)"
+    ]
+  },
+  "tolerances": {
+    "irrational_double": {"abs_tol": "1e-12", "why": "irrational value, rounded to 17 significant digits; the C++ computes it in IEEE double (about 1e-16 relative), so a few ulps of a value below 40 is about 1e-14. 1e-12 leaves two orders of margin and is far below any difference that could change a decision here"}
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "mr_4", "event_index": 3, "symbol": "AAPL", "side": "buy", "signal_id": 1},
+      {"strategy": "mr_4", "event_index": 9, "symbol": "AAPL", "side": "sell", "signal_id": 2}
+    ],
+    "events": [
+      {"strategy": "mr_4", "event_index": 3, "verdict": "evaluated", "reason": "entry_buy", "action": "buy"},
+      {"strategy": "mr_4", "event_index": 4, "verdict": "evaluated", "reason": "excursion_already_requested", "action": "none", "indicators": {"mean": {"exact": "7"}, "z_score": {"approx": "-1.5075567228888181", "tolerance": "irrational_double"}}},
+      {"strategy": "mr_4", "event_range": [5, 7], "verdict": "evaluated", "reason": "between_bands", "action": "none"},
+      {"strategy": "mr_4", "event_index": 8, "verdict": "evaluated", "reason": "constant_window", "action": "none", "indicators": {"mean": {"exact": "1"}}, "unavailable": {"z_score": "constant_window"}},
+      {"strategy": "mr_4", "event_index": 9, "verdict": "evaluated", "reason": "entry_sell", "action": "sell", "indicators": {"mean": {"exact": "13/4"}, "z_score": {"approx": "1.7320508075688773", "tolerance": "irrational_double"}}}
+    ]
+  }
+}

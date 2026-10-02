@@ -1,0 +1,40 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "warmup_mr_first_full_window_signals",
+  "title": "Warm-up boundary: the first full window may already signal (mean reversion)",
+  "purpose": "Unlike the crossover, mean reversion has no silent baseline: if the very first full window meets an entry threshold it signals.",
+  "covers": ["warmup", "mr_no_silent_baseline"],
+  "dataset": {
+    "path": "datasets/warmup_boundary.csv",
+    "sha256_lf": "9879fbaddf67a95d82dbe621586bfa322006a27d273bc9ce58e51d7f3d2b5624"
+  },
+  "strategies": [
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_6", "lookback": "6", "entry_threshold": "2", "rearm_threshold": "0.5", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/strategies/mean_reversion.md section 4 ('No silent baseline')"],
+    "derivation": [
+      "closes 10 10 10 10 10 100; lookback 6, entry 2: bars 1-5 warm up (fill 1..5)",
+      "bar 6: window 10 10 10 10 10 100, mean 25, variance (5*15^2 + 75^2)/6 = 1125, z = 75/sqrt(1125) = sqrt(5) = 2.236 >= 2: Sell on the first full window (event_index 5)"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayWarmup.TheFirstFullWindowMayAlreadySignalForMeanReversionButNeverBefore",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case warmup_boundary.csv)"
+    ]
+  },
+  "tolerances": {
+    "irrational_double": {"abs_tol": "1e-12", "why": "irrational value, rounded to 17 significant digits; the C++ computes it in IEEE double (about 1e-16 relative), so a few ulps of a value below 40 is about 1e-14. 1e-12 leaves two orders of margin and is far below any difference that could change a decision here"}
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "mr_6", "event_index": 5, "symbol": "AAPL", "side": "sell", "signal_id": 1}
+    ],
+    "events": [
+      {"strategy": "mr_6", "event_range": [0, 4], "verdict": "warming_up", "reason": "warming_up", "action": "none"},
+      {"strategy": "mr_6", "event_index": 5, "verdict": "evaluated", "reason": "entry_sell", "action": "sell", "window_fill": 6, "window_size": 6, "indicators": {"mean": {"exact": "25"}, "standard_deviation": {"approx": "33.541019662496845", "tolerance": "irrational_double"}, "z_score": {"approx": "2.2360679774997897", "tolerance": "irrational_double"}}}
+    ]
+  }
+}

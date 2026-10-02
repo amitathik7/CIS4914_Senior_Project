@@ -65,6 +65,7 @@ docs/                     ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, OPEN_QUE
 include/trading_engine/   public headers, by component
 src/                      implementation (strategy layer) and stubs (the rest), by component
 apps/trading_engine_main.cpp   thin executable (build confirmation only)
+apps/strategy_lab/        optional strategy replay + diagnostics tool (off by default)
 tests/                    unit/ (default), integration/ (opt-in), fixtures/, support/ (test doubles)
 python/visualization/     plot_performance.py outline + requirements.txt
 ```
@@ -103,7 +104,9 @@ cmake --build build --config Debug
 
 Useful options: `-DBUILD_TESTING=OFF`, `-DTRADING_ENGINE_BUILD_APPS=OFF`,
 `-DTRADING_ENGINE_WARNINGS_AS_ERRORS=ON`,
-`-DTRADING_ENGINE_BUILD_INTEGRATION_TESTS=ON`.
+`-DTRADING_ENGINE_BUILD_INTEGRATION_TESTS=ON`,
+`-DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON` (the optional strategy replay tool, off by default; needs no
+GoogleTest or Python itself -- see [`docs/STRATEGY_LAB.md`](docs/STRATEGY_LAB.md)).
 
 Run the placeholder executable (prints a build-confirmation banner and exits):
 

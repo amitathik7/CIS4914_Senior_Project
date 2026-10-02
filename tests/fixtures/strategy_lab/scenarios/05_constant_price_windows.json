@@ -1,0 +1,47 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "constant_price_windows",
+  "title": "A constant price: equal averages and a constant window, so no signal ever",
+  "purpose": "Thirty bars of 0.1 (not exact in binary): the long window fills on bar 20 and every full window is flat.",
+  "covers": ["constant_window", "sma_equal_averages", "unavailable_not_zero"],
+  "dataset": {
+    "path": "datasets/constant_price.csv",
+    "sha256_lf": "5d5f849d87b5e4ad43558da36583b130ab58936e407327cfa612e765e6b44cb7"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_5_20", "short_window": "5", "long_window": "20", "symbols": "AAPL"}},
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_20", "lookback": "20", "entry_threshold": "2", "rearm_threshold": "0.5", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": [
+      "docs/strategies/moving_average_crossover.md section 4 (equal averages emit nothing and set no baseline)",
+      "docs/strategies/mean_reversion.md section 4 and 5 (constant window)"
+    ],
+    "derivation": [
+      "30 bars of the same close; both strategies need 20 accepted bars, so event_index 0..18 warm up and 19..29 are full windows",
+      "crossover: short and long averages are equal on every full window (within the documented tolerance 1e-12): averages_equal, no baseline, no signal",
+      "reversion: the window has no deviation: constant_window, z unavailable, latch neutral, no signal"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayCrossover.ConstantPriceNeverEstablishesABaselineSoNothingEverSignals and LabReplayMeanReversion.ConstantPriceIsAConstantWindowAndNeverSignals",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case constant_price.csv)"
+    ]
+  },
+  "tolerances": {
+    "rounding_of_0_1": {"abs_tol": "1e-12", "why": "0.1 is not exact in binary; the mean of identical doubles may differ from it by rounding, far below 1e-12"}
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [],
+    "events": [
+      {"strategy": "sma_5_20", "event_range": [0, 18], "verdict": "warming_up", "reason": "warming_up", "action": "none"},
+      {"strategy": "sma_5_20", "event_range": [19, 29], "verdict": "evaluated", "reason": "averages_equal", "action": "none"},
+      {"strategy": "sma_5_20", "event_index": 19, "window_fill": 20, "indicators": {"short_sma": {"approx": "0.1", "tolerance": "rounding_of_0_1"}, "long_sma": {"approx": "0.1", "tolerance": "rounding_of_0_1"}}},
+      {"strategy": "mr_20", "event_range": [0, 18], "verdict": "warming_up", "reason": "warming_up", "action": "none"},
+      {"strategy": "mr_20", "event_range": [19, 29], "verdict": "evaluated", "reason": "constant_window", "action": "none", "unavailable": {"z_score": "constant_window"}},
+      {"strategy": "mr_20", "event_index": 19, "window_fill": 20, "indicators": {"mean": {"approx": "0.1", "tolerance": "rounding_of_0_1"}}}
+    ]
+  }
+}

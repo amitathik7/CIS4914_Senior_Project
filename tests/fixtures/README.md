@@ -6,6 +6,8 @@ or large binary dumps here.
 | File / dir            | Purpose                                                      |
 |-----------------------|-------------------------------------------------------------|
 | `signals/*.json`      | **Committed.** Proposed Strategy→Risk signal examples (draft) — see below. |
+| `strategy_lab/datasets/*.csv` | **Committed.** 13 small synthetic bar series for the optional Strategy Lab (a **lab-local** CSV schema, not the planned `market_data/` one); see [`docs/STRATEGY_LAB.md`](../../docs/STRATEGY_LAB.md). Expected results are hand-derived in `tests/unit/strategy_lab_*_test.cpp` and `tests/strategy_lab/`. |
+| `strategy_lab/scenarios/*.json`, `strategy_lab/invalid/*.csv` | **Committed.** 18 validation scenarios for the Strategy Lab's Validate view (hand-derived expectations with their derivation, sources and independent cross-checks; each pins its dataset by the SHA-256 of its LF-normalized bytes) and the 3 small invalid datasets they refuse; see [`docs/STRATEGY_LAB_COMPARE_VALIDATE.md`](../../docs/STRATEGY_LAB_COMPARE_VALIDATE.md). The scenarios are demo-scale checks, not the GoogleTest suite. |
 | `alpaca/*.json`       | Planned. Recorded Alpaca REST/WebSocket payloads for parser tests |
 | `market_data/*.csv`   | Planned. Small deterministic bar/trade series for replay tests |
 | `expected/*.json`     | Planned. Golden `PerformanceReport` / snapshot outputs       |

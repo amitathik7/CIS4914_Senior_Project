@@ -1,0 +1,47 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "sma_whipsaw_flips_every_bar",
+  "title": "SMA crossover: a whipsaw flips on every bar, but never before bar long_window + 1",
+  "purpose": "The earliest possible signal is accepted bar long_window + 1; an alternating series then changes side on every bar.",
+  "covers": ["sma_signal_timing", "sma_baseline"],
+  "dataset": {
+    "path": "datasets/sma_oscillation.csv",
+    "sha256_lf": "354acef8915747f4936d9dbd314273ac9ec8cae499ad871b40a7b11c88a18ff1"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "whipsaw", "short_window": "1", "long_window": "2", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/strategies/moving_average_crossover.md section 4"],
+    "derivation": [
+      "closes 1 2 1 2 ...; short 1 (the close), long 2 (mean of the last two)",
+      "bar 2 (event_index 1): window 1 2: short 2 > long 3/2: the baseline, silent",
+      "bar 3: window 2 1: short 1 < 3/2: Sell (event_index 2); bar 4: window 1 2: short 2 > 3/2: Buy; and so on",
+      "so event_index 2..9 each signal, alternating Sell, Buy, Sell, Buy, Sell, Buy, Sell, Buy; ids 1..8"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayCrossover.AnAlternatingSeriesSignalsOnEveryBarFromTheThirdAndNeverBefore",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case sma_oscillation.csv)"
+    ]
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "whipsaw", "event_index": 2, "symbol": "AAPL", "side": "sell", "signal_id": 1},
+      {"strategy": "whipsaw", "event_index": 3, "symbol": "AAPL", "side": "buy", "signal_id": 2},
+      {"strategy": "whipsaw", "event_index": 4, "symbol": "AAPL", "side": "sell", "signal_id": 3},
+      {"strategy": "whipsaw", "event_index": 5, "symbol": "AAPL", "side": "buy", "signal_id": 4},
+      {"strategy": "whipsaw", "event_index": 6, "symbol": "AAPL", "side": "sell", "signal_id": 5},
+      {"strategy": "whipsaw", "event_index": 7, "symbol": "AAPL", "side": "buy", "signal_id": 6},
+      {"strategy": "whipsaw", "event_index": 8, "symbol": "AAPL", "side": "sell", "signal_id": 7},
+      {"strategy": "whipsaw", "event_index": 9, "symbol": "AAPL", "side": "buy", "signal_id": 8}
+    ],
+    "events": [
+      {"strategy": "whipsaw", "event_index": 0, "verdict": "warming_up", "reason": "warming_up", "window_fill": 1, "window_size": 2},
+      {"strategy": "whipsaw", "event_index": 1, "verdict": "evaluated", "reason": "baseline_established", "action": "none", "indicators": {"short_sma": {"exact": "2"}, "long_sma": {"exact": "3/2"}}},
+      {"strategy": "whipsaw", "event_index": 2, "verdict": "evaluated", "reason": "crossover_sell", "action": "sell", "indicators": {"short_sma": {"exact": "1"}, "long_sma": {"exact": "3/2"}}}
+    ]
+  }
+}

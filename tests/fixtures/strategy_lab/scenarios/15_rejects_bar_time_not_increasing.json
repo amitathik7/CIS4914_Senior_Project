@@ -1,0 +1,36 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "rejects_bar_time_not_increasing",
+  "title": "A repeated bar time for one symbol rejects the dataset",
+  "purpose": "A symbol's bars must strictly increase in time; a duplicate or older bar is an error, never dropped or re-sorted.",
+  "covers": ["dataset_rejection"],
+  "dataset": {
+    "path": "invalid/bar_time_not_increasing.csv",
+    "sha256_lf": "353967f751b311d9de7ee479ffab8efc136f463cd295b345325766e1f57f9912"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_2_3", "short_window": "2", "long_window": "3", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/STRATEGY_LAB.md section 7 (dataset CSV rules) and section 6 (exit status 3)"],
+    "derivation": [
+      "line 2 AAPL 14:30, line 3 AAPL 14:31, line 4 AAPL 14:31 again",
+      "docs/STRATEGY_LAB.md section 7 (per-symbol order): a duplicate bar is an error",
+      "so one problem is expected: line 4, column exchange_time (exit status 3, dataset error)"
+    ],
+    "cross_checks": [
+      "tests/strategy_lab/test_cli_contract.py (invalid prices and row-specific errors name their lines)"
+    ]
+  },
+  "expect": {
+    "outcome": "rejected",
+    "exit_status": 3,
+    "error_code": "dataset_error",
+    "message_contains": [],
+    "problems": [
+      {"line": 4, "column": "exchange_time"}
+    ],
+    "total_problems": 1
+  }
+}

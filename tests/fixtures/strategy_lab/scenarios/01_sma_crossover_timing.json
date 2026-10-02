@@ -1,0 +1,51 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "sma_crossover_timing",
+  "title": "SMA crossover: Buy on bar 5 and Sell on bar 8, nothing else",
+  "purpose": "The documented worked example. The first full window only sets a baseline; a change of side signals once, on the bar where it happens; staying on one side never repeats.",
+  "covers": ["sma_signal_timing", "sma_baseline"],
+  "dataset": {
+    "path": "datasets/sma_crossover.csv",
+    "sha256_lf": "70634f7ac4a2d233a7188108d6ba7ba9a3c93bf407c38e99d87daacaa75c5e8a"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_2_3", "short_window": "2", "long_window": "3", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": [
+      "docs/strategies/moving_average_crossover.md section 4 (warm-up, baseline, crossover) and section 5 (worked example)"
+    ],
+    "derivation": [
+      "closes 3 2 1 2 3 4 3 2 1; short 2, long 3; long window fills on bar 3 (event_index 2)",
+      "bar 3: short (2+1)/2 = 3/2, long (3+2+1)/3 = 2, short below long: baseline, silent",
+      "bar 4: short 3/2, long 5/3, still below: nothing",
+      "bar 5: window 1 2 3 (bars 3-5): short (2+3)/2 = 5/2, long (1+2+3)/3 = 2, short above long: crossover Buy (event_index 4)",
+      "bars 6-7: short 7/2 vs long 3, then 7/2 vs 10/3: above, nothing",
+      "bar 8: window 4 3 2: short 5/2, long 3, below: crossover Sell (event_index 7); bar 9: below, nothing"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayCrossover.TheDocumentedFixtureBuysAtBarFiveAndSellsAtBarEight (an earlier, separate derivation)",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case sma_crossover.csv)"
+    ]
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "sma_2_3", "event_index": 4, "symbol": "AAPL", "side": "buy", "signal_id": 1},
+      {"strategy": "sma_2_3", "event_index": 7, "symbol": "AAPL", "side": "sell", "signal_id": 2}
+    ],
+    "events": [
+      {"strategy": "sma_2_3", "event_index": 0, "verdict": "warming_up", "reason": "warming_up", "action": "none", "window_fill": 1, "window_size": 3, "unavailable": {"short_sma": "warming_up", "long_sma": "warming_up"}},
+      {"strategy": "sma_2_3", "event_index": 1, "verdict": "warming_up", "reason": "warming_up", "action": "none", "window_fill": 2, "unavailable": {"short_sma": "warming_up", "long_sma": "warming_up"}},
+      {"strategy": "sma_2_3", "event_index": 2, "verdict": "evaluated", "reason": "baseline_established", "action": "none", "window_fill": 3, "indicators": {"short_sma": {"exact": "3/2"}, "long_sma": {"exact": "2"}, "short_minus_long": {"exact": "-1/2"}}},
+      {"strategy": "sma_2_3", "event_index": 3, "verdict": "evaluated", "reason": "same_side", "action": "none"},
+      {"strategy": "sma_2_3", "event_index": 4, "symbol": "AAPL", "exchange_time": "2026-01-05T14:34:00.000000000Z", "verdict": "evaluated", "reason": "crossover_buy", "action": "buy", "window_fill": 3, "indicators": {"short_sma": {"exact": "5/2"}, "long_sma": {"exact": "2"}, "short_minus_long": {"exact": "1/2"}}},
+      {"strategy": "sma_2_3", "event_index": 5, "verdict": "evaluated", "reason": "same_side", "action": "none", "indicators": {"short_sma": {"exact": "7/2"}, "long_sma": {"exact": "3"}}},
+      {"strategy": "sma_2_3", "event_index": 6, "verdict": "evaluated", "reason": "same_side", "action": "none"},
+      {"strategy": "sma_2_3", "event_index": 7, "symbol": "AAPL", "exchange_time": "2026-01-05T14:37:00.000000000Z", "verdict": "evaluated", "reason": "crossover_sell", "action": "sell", "indicators": {"short_sma": {"exact": "5/2"}, "long_sma": {"exact": "3"}, "short_minus_long": {"exact": "-1/2"}}},
+      {"strategy": "sma_2_3", "event_index": 8, "verdict": "evaluated", "reason": "same_side", "action": "none"}
+    ]
+  }
+}

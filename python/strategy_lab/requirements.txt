@@ -1,0 +1,5 @@
+# Strategy Lab UI: the two direct dependencies, pinned to the versions verified in docs/STRATEGY_LAB.md section 14.6.
+# setup.ps1 installs them into python/strategy_lab/.venv and checks the installed versions against these lines
+# (keep the 'name==version' form). Their own dependencies (pandas, numpy, pyarrow, ...) float within their ranges.
+streamlit==1.64.0
+plotly==7.1.0

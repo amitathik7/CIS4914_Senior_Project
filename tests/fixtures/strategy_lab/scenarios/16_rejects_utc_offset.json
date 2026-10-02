@@ -1,0 +1,36 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "rejects_utc_offset",
+  "title": "A time with an offset instead of Z rejects the dataset",
+  "purpose": "The lab accepts UTC only and does no time-zone conversion: '+00:00' is an error, not silently converted.",
+  "covers": ["dataset_rejection"],
+  "dataset": {
+    "path": "invalid/utc_offset_time.csv",
+    "sha256_lf": "0068f08b12d5621492c31db14d2ab19a94c5263a46ea1afdb24db547af657792"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_2_3", "short_window": "2", "long_window": "3", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/STRATEGY_LAB.md section 7 (dataset CSV rules) and section 6 (exit status 3)"],
+    "derivation": [
+      "line 3 gives 2026-01-05T14:31:00+00:00",
+      "docs/STRATEGY_LAB.md section 7 (time zone): no offsets, no conversion; '+00:00' is an error",
+      "so one problem is expected: line 3, column exchange_time (exit status 3, dataset error)"
+    ],
+    "cross_checks": [
+      "tests/strategy_lab/test_cli_contract.py (invalid prices and row-specific errors name their lines)"
+    ]
+  },
+  "expect": {
+    "outcome": "rejected",
+    "exit_status": 3,
+    "error_code": "dataset_error",
+    "message_contains": [],
+    "problems": [
+      {"line": 3, "column": "exchange_time"}
+    ],
+    "total_problems": 1
+  }
+}
