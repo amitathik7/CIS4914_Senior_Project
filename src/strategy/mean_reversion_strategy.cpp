@@ -148,45 +148,61 @@ MeanReversionStrategy::MeanReversionStrategy(MeanReversionConfig config)
 }
 
 void MeanReversionStrategy::on_start() {
+    diagnostics_.refuse_inside_callback("on_start");
     for (auto& entry : states_) {
         entry.second.reset();
     }
 }
 
 void MeanReversionStrategy::on_market_event(const domain::MarketEvent& event, ISignalSink& out) {
+    diagnostics_.refuse_inside_callback("on_market_event");
+
     // Every check below runs before any state is touched, so an ignored event
     // leaves the timestamps, histories and latches as they were.
     if (event.type != domain::MarketEventType::Bar) {
+        report_ignored(event, nullptr, BarReason::NotABar);
         return;
     }
     const auto found = states_.find(event.symbol);
     if (found == states_.end()) {
+        report_ignored(event, nullptr, BarReason::SymbolNotAllowlisted);
         return;
     }
+    SymbolState& state = found->second;
     if (!event.price.has_value()) {
+        report_ignored(event, &state, BarReason::PriceAbsent);
         return;
     }
     const double close = *event.price;
     if (!std::isfinite(close) || close <= 0.0) {
+        report_ignored(event, &state, BarReason::PriceInvalid);
         return;
     }
-    SymbolState& state = found->second;
     if (state.last_time.has_value() && event.exchange_time <= *state.last_time) {
-        return;   // duplicate, replay or out of order: strict increase is required
+        // duplicate, replay or out of order: strict increase is required
+        report_ignored(event, &state, BarReason::TimeNotAfterLastAccepted);
+        return;
     }
 
     accept_close(state, close, config_.lookback);
     state.last_time = event.exchange_time;
     if (state.closes.size() < config_.lookback) {
-        return;   // still warming up: the window must be full
+        report_warming_up(event, state);   // still warming up: the window must be full
+        return;
     }
 
+    const Latch before = state.latch;
     const std::optional<Measurement> measured = measure(state.closes, close);
     if (!measured.has_value()) {
-        return;   // numerical failure: not an observation, so the latch stays as it is
+        // numerical failure: not an observation, so the latch stays as it is
+        report_evaluated(event, state, BarReason::MeasurementFailed, BarAction::None, before,
+                         std::nullopt, std::nullopt, std::nullopt);
+        return;
     }
     if (measured->constant) {
         state.latch = Latch::Neutral;   // a window with no deviation is back at the mean
+        report_evaluated(event, state, BarReason::ConstantWindow, BarAction::None, before,
+                         measured->mean, measured->standard_deviation, std::nullopt);
         return;
     }
 
@@ -194,10 +210,17 @@ void MeanReversionStrategy::on_market_event(const domain::MarketEvent& event, IS
     const bool buy_due  = z <= -config_.entry_threshold && state.latch != Latch::LowerExtreme;
     const bool sell_due = z >= config_.entry_threshold && state.latch != Latch::UpperExtreme;
     if (!buy_due && !sell_due) {
+        BarReason reason = BarReason::BetweenBands;
         if (std::fabs(z) <= config_.rearm_threshold) {
             state.latch = Latch::Neutral;
+            reason      = BarReason::InsideRearmBand;
+        } else if (z <= -config_.entry_threshold || z >= config_.entry_threshold) {
+            reason = BarReason::ExcursionAlreadyRequested;
         }
-        return;   // otherwise inside neither band, or still in an excursion already requested
+        // otherwise inside neither band, or still in an excursion already requested
+        report_evaluated(event, state, reason, BarAction::None, before, measured->mean,
+                         measured->standard_deviation, z);
+        return;
     }
 
     // The signal is built before the latch moves (building may throw) and emitted
@@ -205,6 +228,9 @@ void MeanReversionStrategy::on_market_event(const domain::MarketEvent& event, IS
     const domain::TradeSignal signal =
         make_signal(event, buy_due, measured->mean, measured->standard_deviation, z);
     state.latch = buy_due ? Latch::LowerExtreme : Latch::UpperExtreme;
+    report_evaluated(event, state, buy_due ? BarReason::EntryBuy : BarReason::EntrySell,
+                     buy_due ? BarAction::Buy : BarAction::Sell, before, measured->mean,
+                     measured->standard_deviation, z);
     out.emit(signal);
 }
 
@@ -240,6 +266,80 @@ domain::TradeSignal MeanReversionStrategy::make_signal(const domain::MarketEvent
         {"rearm_threshold", format_number(config_.rearm_threshold)},
     };
     return signal;
+}
+
+// --- Diagnostics ----------------------------------------------------------------
+// Read-only: each builds a snapshot from values the decision already holds, and only
+// when an observer is attached. None changes strategy state.
+
+std::string_view MeanReversionStrategy::latch_label(Latch latch) noexcept {
+    switch (latch) {
+        case Latch::Neutral:      return "neutral";
+        case Latch::LowerExtreme: return "lower_extreme";
+        case Latch::UpperExtreme: return "upper_extreme";
+    }
+    return "invalid";
+}
+
+void MeanReversionStrategy::report_ignored(const domain::MarketEvent& event,
+                                           const SymbolState* state, BarReason reason) noexcept {
+    diagnostics_.notify(event, [&] {
+        BarSnapshot snapshot;
+        snapshot.strategy_id = config_.strategy_id;
+        snapshot.verdict     = BarVerdict::Ignored;
+        snapshot.reason      = reason;
+        snapshot.window_size = config_.lookback;
+        snapshot.add_indicator("mean", std::nullopt);
+        snapshot.add_indicator("standard_deviation", std::nullopt);
+        snapshot.add_indicator("z_score", std::nullopt);
+        if (state != nullptr) {
+            snapshot.window_fill = state->closes.size();
+            snapshot.add_state("latch_before", latch_label(state->latch));
+            snapshot.add_state("latch_after", latch_label(state->latch));
+        }
+        return snapshot;
+    });
+}
+
+void MeanReversionStrategy::report_warming_up(const domain::MarketEvent& event,
+                                              const SymbolState& state) noexcept {
+    diagnostics_.notify(event, [&] {
+        BarSnapshot snapshot;
+        snapshot.strategy_id = config_.strategy_id;
+        snapshot.verdict     = BarVerdict::WarmingUp;
+        snapshot.reason      = BarReason::WarmingUp;
+        snapshot.window_fill = state.closes.size();
+        snapshot.window_size = config_.lookback;
+        snapshot.add_indicator("mean", std::nullopt);
+        snapshot.add_indicator("standard_deviation", std::nullopt);
+        snapshot.add_indicator("z_score", std::nullopt);
+        snapshot.add_state("latch_before", latch_label(state.latch));
+        snapshot.add_state("latch_after", latch_label(state.latch));
+        return snapshot;
+    });
+}
+
+void MeanReversionStrategy::report_evaluated(const domain::MarketEvent& event,
+                                             const SymbolState& state, BarReason reason,
+                                             BarAction action, Latch before,
+                                             std::optional<double> mean,
+                                             std::optional<double> standard_deviation,
+                                             std::optional<double> z) noexcept {
+    diagnostics_.notify(event, [&] {
+        BarSnapshot snapshot;
+        snapshot.strategy_id = config_.strategy_id;
+        snapshot.verdict     = BarVerdict::Evaluated;
+        snapshot.reason      = reason;
+        snapshot.action      = action;
+        snapshot.window_fill = state.closes.size();
+        snapshot.window_size = config_.lookback;
+        snapshot.add_indicator("mean", mean);
+        snapshot.add_indicator("standard_deviation", standard_deviation);
+        snapshot.add_indicator("z_score", z);
+        snapshot.add_state("latch_before", latch_label(before));
+        snapshot.add_state("latch_after", latch_label(state.latch));
+        return snapshot;
+    });
 }
 
 }  // namespace trading_engine::strategy

@@ -291,3 +291,15 @@ and are not repeated.
 | A non-finite measurement leaves the latch untouched. | An unrelated failure is not a neutral reading. Not known to be reachable for finite input (section 5). | Local. |
 | `z` is compared **exactly** to the thresholds. | No fudge factor on a trading threshold. A tie is inclusive but can land an ulp either way for an inexact window. | Local. |
 | Metadata keys (section 7). | Informational; nothing consumes them yet. | Local. |
+
+## 11. Diagnostics (optional)
+
+`set_observer()` attaches a read-only observer ([contract](../STRATEGIES.md#7-diagnostics-optional-for-developer-tools)).
+Each `on_market_event()` call reports one snapshot. Reasons: the ignore reasons of section 3 in the order they are
+checked (`not_a_bar`, `symbol_not_allowlisted`, `price_absent`, `price_invalid`, `time_not_after_last_accepted`;
+there is no price ceiling, so `price_above_max_close` never occurs here), then `warming_up`, `measurement_failed`,
+`constant_window`, `entry_buy`, `entry_sell`, `excursion_already_requested`, `inside_rearm_band` and `between_bands`.
+Indicators: `mean`, `standard_deviation`, `z_score` (unavailable while warming up or ignored; `z_score` is also
+unavailable for a constant window, where the statistics exist but z means nothing, and all three for a failed
+measurement). States: `latch_before`, `latch_after` (`neutral`, `lower_extreme`, `upper_extreme`). The values are the
+ones the decision used: on a signalling bar they equal the signal's `mean`, `standard_deviation` and `z_score`.

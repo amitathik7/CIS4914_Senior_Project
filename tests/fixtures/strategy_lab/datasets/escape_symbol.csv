@@ -1,0 +1,4 @@
+symbol,exchange_time,type,price
+A\B,2026-01-05T14:30:00Z,bar,1
+A\B,2026-01-05T14:31:00Z,bar,2
+A\B,2026-01-05T14:32:00Z,bar,1

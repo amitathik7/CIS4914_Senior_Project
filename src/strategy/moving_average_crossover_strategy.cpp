@@ -85,6 +85,7 @@ MovingAverageCrossoverStrategy::MovingAverageCrossoverStrategy(MovingAverageCros
 }
 
 void MovingAverageCrossoverStrategy::on_start() {
+    diagnostics_.refuse_inside_callback("on_start");
     for (auto& entry : states_) {
         entry.second.reset();
     }
@@ -92,38 +93,52 @@ void MovingAverageCrossoverStrategy::on_start() {
 
 void MovingAverageCrossoverStrategy::on_market_event(const domain::MarketEvent& event,
                                                      ISignalSink& out) {
+    diagnostics_.refuse_inside_callback("on_market_event");
+
     // Every check below runs before any state is touched, so an ignored event
     // leaves the timestamps, histories, averages and crossover state as they were.
     if (event.type != domain::MarketEventType::Bar) {
+        report_ignored(event, nullptr, BarReason::NotABar);
         return;
     }
     const auto found = states_.find(event.symbol);
     if (found == states_.end()) {
+        report_ignored(event, nullptr, BarReason::SymbolNotAllowlisted);
         return;
     }
+    SymbolState& state = found->second;
     if (!event.price.has_value()) {
+        report_ignored(event, &state, BarReason::PriceAbsent);
         return;
     }
     const double close = *event.price;
     if (!std::isfinite(close) || close <= 0.0 || close > max_close_) {
+        const bool usable_but_too_large = std::isfinite(close) && close > 0.0;
+        report_ignored(event, &state,
+                       usable_but_too_large ? BarReason::PriceAboveMaxClose : BarReason::PriceInvalid);
         return;
     }
-    SymbolState& state = found->second;
     if (state.last_time.has_value() && event.exchange_time <= *state.last_time) {
-        return;   // duplicate, replay or out of order: strict increase is required
+        // duplicate, replay or out of order: strict increase is required
+        report_ignored(event, &state, BarReason::TimeNotAfterLastAccepted);
+        return;
     }
 
     accept_close(state, close);
     state.last_time = event.exchange_time;
     if (state.closes.size() < config_.long_window) {
-        return;   // still warming up: both windows must be full
+        report_warming_up(event, state);   // still warming up: both windows must be full
+        return;
     }
 
     const double short_average = state.short_sum.value() / static_cast<double>(config_.short_window);
     const double long_average  = state.long_sum.value() / static_cast<double>(config_.long_window);
     const std::optional<Relation> now = relate(short_average, long_average);
     if (!now.has_value()) {
-        return;   // equal: no signal, and the last nonzero relationship stands
+        // equal: no signal, and the last nonzero relationship stands
+        report_evaluated(event, state, BarReason::AveragesEqual, BarAction::None, state.relation,
+                         now, short_average, long_average);
+        return;
     }
 
     // The first nonzero relationship is only a baseline; after that, a change of
@@ -133,7 +148,19 @@ void MovingAverageCrossoverStrategy::on_market_event(const domain::MarketEvent& 
     if (state.relation.has_value() && *state.relation != *now) {
         signal = make_signal(event, *now, short_average, long_average);
     }
+    const std::optional<Relation> before = state.relation;
     state.relation = now;
+
+    BarReason reason = BarReason::SameSide;
+    BarAction action = BarAction::None;
+    if (!before.has_value()) {
+        reason = BarReason::BaselineEstablished;
+    } else if (signal.has_value()) {
+        const bool buy = *now == Relation::ShortAboveLong;
+        reason = buy ? BarReason::CrossoverBuy : BarReason::CrossoverSell;
+        action = buy ? BarAction::Buy : BarAction::Sell;
+    }
+    report_evaluated(event, state, reason, action, before, now, short_average, long_average);
     if (signal.has_value()) {
         out.emit(*signal);
     }
@@ -203,6 +230,81 @@ domain::TradeSignal MovingAverageCrossoverStrategy::make_signal(const domain::Ma
         {"long_sma", format_number(long_average)},
     };
     return signal;
+}
+
+// --- Diagnostics ----------------------------------------------------------------
+// Read-only: each builds a snapshot from values the decision already holds, and only
+// when an observer is attached. None changes strategy state.
+
+std::string_view MovingAverageCrossoverStrategy::relation_label(
+    std::optional<Relation> relation) noexcept {
+    if (!relation.has_value()) {
+        return "none";
+    }
+    return *relation == Relation::ShortAboveLong ? "short_above_long" : "short_below_long";
+}
+
+void MovingAverageCrossoverStrategy::report_ignored(const domain::MarketEvent& event,
+                                                    const SymbolState* state,
+                                                    BarReason reason) noexcept {
+    diagnostics_.notify(event, [&] {
+        BarSnapshot snapshot;
+        snapshot.strategy_id = config_.strategy_id;
+        snapshot.verdict     = BarVerdict::Ignored;
+        snapshot.reason      = reason;
+        snapshot.window_size = config_.long_window;
+        snapshot.add_indicator("short_sma", std::nullopt);
+        snapshot.add_indicator("long_sma", std::nullopt);
+        snapshot.add_indicator("short_minus_long", std::nullopt);
+        if (state != nullptr) {
+            snapshot.window_fill = state->closes.size();
+            snapshot.add_state("relation_before", relation_label(state->relation));
+            snapshot.add_state("relation_now", "not_evaluated");
+            snapshot.add_state("relation_after", relation_label(state->relation));
+        }
+        return snapshot;
+    });
+}
+
+void MovingAverageCrossoverStrategy::report_warming_up(const domain::MarketEvent& event,
+                                                       const SymbolState& state) noexcept {
+    diagnostics_.notify(event, [&] {
+        BarSnapshot snapshot;
+        snapshot.strategy_id = config_.strategy_id;
+        snapshot.verdict     = BarVerdict::WarmingUp;
+        snapshot.reason      = BarReason::WarmingUp;
+        snapshot.window_fill = state.closes.size();
+        snapshot.window_size = config_.long_window;
+        snapshot.add_indicator("short_sma", std::nullopt);
+        snapshot.add_indicator("long_sma", std::nullopt);
+        snapshot.add_indicator("short_minus_long", std::nullopt);
+        snapshot.add_state("relation_before", relation_label(state.relation));
+        snapshot.add_state("relation_now", "not_evaluated");
+        snapshot.add_state("relation_after", relation_label(state.relation));
+        return snapshot;
+    });
+}
+
+void MovingAverageCrossoverStrategy::report_evaluated(
+    const domain::MarketEvent& event, const SymbolState& state, BarReason reason,
+    BarAction action, std::optional<Relation> before, std::optional<Relation> now,
+    double short_average, double long_average) noexcept {
+    diagnostics_.notify(event, [&] {
+        BarSnapshot snapshot;
+        snapshot.strategy_id = config_.strategy_id;
+        snapshot.verdict     = BarVerdict::Evaluated;
+        snapshot.reason      = reason;
+        snapshot.action      = action;
+        snapshot.window_fill = state.closes.size();
+        snapshot.window_size = config_.long_window;
+        snapshot.add_indicator("short_sma", short_average);
+        snapshot.add_indicator("long_sma", long_average);
+        snapshot.add_indicator("short_minus_long", short_average - long_average);
+        snapshot.add_state("relation_before", relation_label(before));
+        snapshot.add_state("relation_now", now.has_value() ? relation_label(now) : "equal");
+        snapshot.add_state("relation_after", relation_label(state.relation));
+        return snapshot;
+    });
 }
 
 }  // namespace trading_engine::strategy

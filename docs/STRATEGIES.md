@@ -19,6 +19,7 @@
 | This page | The shared contract, what a signal does and does not guarantee, running several strategies, threading and bus assumptions, what is not integrated, and what the other component owners must provide. |
 | [Moving-average crossover](strategies/moving_average_crossover.md) | Configuration, input rules, baseline and equality rules, floating point, signals, worked example, local choices. |
 | [Mean reversion](strategies/mean_reversion.md) | Configuration, the z-score and its bounds, the latch, numerical policy, signals, worked example, local choices. |
+| [Strategy Lab](STRATEGY_LAB.md) | An optional developer tool that replays bars through the real engine and shows each bar's decision (see section 7). |
 
 ## 1. What every strategy gets, and owes
 
@@ -180,7 +181,9 @@ unsubscribe behaviour when that bus exists.
   on a logging facade (`OQ#8`) and the `SystemMetrics` wiring. The likeliest way
   to hit it is a producer that never sets `exchange_time`: every bar then carries
   the epoch, so only each symbol's first bar is accepted and the rest are dropped
-  as duplicates, with nothing to show for it.
+  as duplicates, with nothing to show for it. (An optional, read-only diagnostics
+  observer, section 7, can report the reason for each event to a developer tool; it
+  is not a counter, a log line or a metric.)
 - **The input contract is trusted, not checked.** Bars must be finalized, of one
   interval per symbol, with strictly increasing `exchange_time`; `MarketEvent` has no
   field to verify any of that (`OQ#1`).
@@ -238,7 +241,31 @@ unsubscribe behaviour when that bus exists.
   correlates signals across runs needs run scoping.
 - Report outcomes visibly. The strategies will never hear about a rejection or a fill.
 
-## 7. Planned
+## 7. Diagnostics (optional, for developer tools)
+
+Both reference strategies can report, to an optional read-only observer, what they
+decided on each event and from which numbers
+([`strategy_diagnostics.hpp`](../include/trading_engine/strategy/strategy_diagnostics.hpp)):
+the verdict (`ignored`, `warming_up`, `evaluated`), a stable reason code, the action taken
+(`none` is **not** a hold signal: no `TradeSignal` exists for it), the window fill, the
+indicator values (empty when unavailable, never zero) and the state before and after. It is
+attached with `set_observer()` on the concrete strategy; `IStrategy`, `ISignalSink`,
+`TradeSignal`, `MarketEvent` and the bus are unchanged.
+
+- **It changes nothing a strategy decides.** With an observer attached, the signals (every
+  field), the engine's counters and the strategy's later behaviour are identical to a run
+  without one. This is checked on seeded random streams of bad prices, repeated timestamps,
+  unlisted symbols and non-bar events, directly and through the real engine; it is not only argued.
+- **An observer that throws is swallowed and counted** in `observer_failures()`. The exception
+  never reaches the engine and is not a strategy error.
+- **An observer must not re-enter** the strategy, the engine or the bus. Calling
+  `on_market_event()`, `on_start()` or `set_observer()` on the same strategy from inside the
+  callback throws `std::logic_error` to the observer and touches no state.
+- With no observer attached the cost is one pointer test per event.
+
+The [Strategy Lab](STRATEGY_LAB.md) is its first user. It is not a logging facade (`OQ#8`).
+
+## 8. Planned
 
 The custom ML strategy is not implemented. It gets a page under `docs/strategies/`, and
 a test file in the `reference_strategies` component, when it lands.

@@ -112,6 +112,20 @@
 //  locking. No allocation per event except the warm-up growth of each history
 //  (bounded by lookback) and the emitted signal itself.
 //
+//  Diagnostics (optional). set_observer() attaches a read-only observer that is
+//  told, once per on_market_event() call, what the strategy decided and from which
+//  numbers (strategy_diagnostics.hpp has the full contract, including what an
+//  observer must not do and what happens if it throws). It never changes a
+//  decision, the latch or a signal. Reasons reported: the ignore reasons of "Input"
+//  above (not_a_bar, symbol_not_allowlisted, price_absent, price_invalid,
+//  time_not_after_last_accepted; price_above_max_close never occurs here), then
+//  warming_up, measurement_failed, constant_window, entry_buy, entry_sell,
+//  excursion_already_requested, inside_rearm_band and between_bands. Indicators:
+//  mean, standard_deviation, z_score (unavailable when warming up or ignored; z_score
+//  is also unavailable for a constant window, where the statistics exist but z does not
+//  mean anything, and all three for a failed measurement). States: latch_before,
+//  latch_after.
+//
 //  TODO: a symbol-interest declaration (see IStrategy); counters or logging for
 //        ignored events once a logging facade exists (OQ#8); a bar-interval /
 //        "final" flag on MarketEvent (OQ#1) so the input assumption can be
@@ -129,6 +143,7 @@
 
 #include "trading_engine/common/types.hpp"
 #include "trading_engine/strategy/strategy.hpp"
+#include "trading_engine/strategy/strategy_diagnostics.hpp"
 
 namespace trading_engine::strategy {
 
@@ -179,10 +194,19 @@ public:
 
     [[nodiscard]] std::string_view id() const override { return config_.strategy_id; }
 
-    // Clears every symbol's history, timestamp and latch.
+    // Clears every symbol's history, timestamp and latch. The observer, if any, stays
+    // attached.
     void on_start() override;
 
     void on_market_event(const domain::MarketEvent& event, ISignalSink& out) override;
+
+    // Optional read-only diagnostics; see strategy_diagnostics.hpp. Not owned: the
+    // observer must outlive this strategy or be detached with nullptr first. Call it
+    // between events, never from inside the observer.
+    void set_observer(IStrategyObserver* observer) { diagnostics_.attach(observer); }
+
+    // Exceptions the observer threw that were swallowed (never forwarded to the engine).
+    [[nodiscard]] std::uint64_t observer_failures() const noexcept { return diagnostics_.failures(); }
 
 private:
     // The indicator latch: which extreme, if any, has already been requested.
@@ -211,8 +235,21 @@ private:
                                                   double mean, double standard_deviation,
                                                   double z) const;
 
+    // Diagnostics reporting. Each only builds a snapshot when an observer is attached
+    // and never throws; none reads anything the decision did not already compute.
+    [[nodiscard]] static std::string_view latch_label(Latch latch) noexcept;
+    void report_ignored(const domain::MarketEvent& event, const SymbolState* state,
+                        BarReason reason) noexcept;
+    void report_warming_up(const domain::MarketEvent& event, const SymbolState& state) noexcept;
+    // Empty statistics were not available for this bar. `after` is the latch now.
+    void report_evaluated(const domain::MarketEvent& event, const SymbolState& state,
+                          BarReason reason, BarAction action, Latch before,
+                          std::optional<double> mean, std::optional<double> standard_deviation,
+                          std::optional<double> z) noexcept;
+
     MeanReversionConfig config_;
     std::unordered_map<common::Symbol, SymbolState> states_{};
+    ObserverSlot diagnostics_{};
 };
 
 }  // namespace trading_engine::strategy

@@ -229,3 +229,14 @@ exactly this. Registering it next to the mean-reversion strategy is shown in
 | Bad configuration throws **`common::ConfigError`**; a repeated symbol is an error. | The error type reserved for configuration; a repeat is almost certainly a mistake. | Local. |
 | Symbols match **exactly**. | Normalising symbols is `MarketDataService`'s job. | Local. |
 | Signal metadata keys (section 7). | Informational; nothing consumes them yet. | Local. |
+
+## 11. Diagnostics (optional)
+
+`set_observer()` attaches a read-only observer ([contract](../STRATEGIES.md#7-diagnostics-optional-for-developer-tools)).
+Each `on_market_event()` call reports one snapshot. Reasons: the ignore reasons of section 3 in the order
+they are checked (`not_a_bar`, `symbol_not_allowlisted`, `price_absent`, `price_invalid`, `price_above_max_close`,
+`time_not_after_last_accepted`), then `warming_up`, `averages_equal`, `baseline_established`, `same_side`,
+`crossover_buy` and `crossover_sell`. Indicators: `short_sma`, `long_sma`, `short_minus_long` (unavailable until
+the long window is full). States: `relation_before`, `relation_now`, `relation_after` (`none`, `short_above_long`,
+`short_below_long`, `equal`, `not_evaluated`). The values are the ones the decision used: on a signalling bar they
+equal the signal's `short_sma` and `long_sma`.

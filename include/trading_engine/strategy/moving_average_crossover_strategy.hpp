@@ -78,6 +78,18 @@
 //  warm-up growth of each history (bounded by long_window) and the emitted
 //  signal itself.
 //
+//  Diagnostics (optional). set_observer() attaches a read-only observer that is
+//  told, once per on_market_event() call, what the strategy decided and from which
+//  numbers (strategy_diagnostics.hpp has the full contract, including what an
+//  observer must not do and what happens if it throws). It never changes a
+//  decision, the state or a signal. Reasons reported, in the order checked: the
+//  ignore reasons of "Input" above (not_a_bar, symbol_not_allowlisted, price_absent,
+//  price_invalid, price_above_max_close, time_not_after_last_accepted), then
+//  warming_up, averages_equal, baseline_established, same_side, crossover_buy and
+//  crossover_sell. Indicators: short_sma, long_sma, short_minus_long (unavailable
+//  until the long window is full). States: relation_before, relation_now,
+//  relation_after.
+//
 //  TODO: a symbol-interest declaration (see IStrategy) so the engine can skip
 //        this strategy for symbols it ignores; counters or logging for ignored
 //        events once a logging facade exists (OQ#8); a bar-interval / "final"
@@ -95,6 +107,7 @@
 
 #include "trading_engine/common/types.hpp"
 #include "trading_engine/strategy/strategy.hpp"
+#include "trading_engine/strategy/strategy_diagnostics.hpp"
 
 namespace trading_engine::strategy {
 
@@ -136,10 +149,19 @@ public:
 
     [[nodiscard]] std::string_view id() const override { return config_.strategy_id; }
 
-    // Clears every symbol's history, timestamp and crossover state.
+    // Clears every symbol's history, timestamp and crossover state. The observer, if
+    // any, stays attached.
     void on_start() override;
 
     void on_market_event(const domain::MarketEvent& event, ISignalSink& out) override;
+
+    // Optional read-only diagnostics; see strategy_diagnostics.hpp. Not owned: the
+    // observer must outlive this strategy or be detached with nullptr first. Call it
+    // between events, never from inside the observer.
+    void set_observer(IStrategyObserver* observer) { diagnostics_.attach(observer); }
+
+    // Exceptions the observer threw that were swallowed (never forwarded to the engine).
+    [[nodiscard]] std::uint64_t observer_failures() const noexcept { return diagnostics_.failures(); }
 
 private:
     // The last established nonzero sign of (short - long).
@@ -185,9 +207,22 @@ private:
     [[nodiscard]] domain::TradeSignal make_signal(const domain::MarketEvent& event, Relation now,
                                                   double short_average, double long_average) const;
 
+    // Diagnostics reporting. Each only builds a snapshot when an observer is attached
+    // and never throws; none reads anything the decision did not already compute.
+    [[nodiscard]] static std::string_view relation_label(std::optional<Relation> relation) noexcept;
+    void report_ignored(const domain::MarketEvent& event, const SymbolState* state,
+                        BarReason reason) noexcept;
+    void report_warming_up(const domain::MarketEvent& event, const SymbolState& state) noexcept;
+    // `now` is empty for equal averages; `before` is the stored relation before this bar.
+    void report_evaluated(const domain::MarketEvent& event, const SymbolState& state,
+                          BarReason reason, BarAction action, std::optional<Relation> before,
+                          std::optional<Relation> now, double short_average,
+                          double long_average) noexcept;
+
     MovingAverageCrossoverConfig config_;
     double max_close_;   // largest close accepted; see "Floating point"
     std::unordered_map<common::Symbol, SymbolState> states_{};
+    ObserverSlot diagnostics_{};
 };
 
 }  // namespace trading_engine::strategy
