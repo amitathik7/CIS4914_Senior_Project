@@ -14,8 +14,9 @@ trading_engine_add_component_test(common
 trading_engine_add_component_test(scaffold_contract
     scaffold_contract_test.cpp)
 
+trading_engine_add_component_test(market_data market_data_service_test.cpp)
+
 # TODO(team): add one call per component as behaviour lands, e.g.
-#   trading_engine_add_component_test(market_data market_data_service_test.cpp)
 #   trading_engine_add_component_test(strategy    strategy_engine_test.cpp)
 #   trading_engine_add_component_test(risk        risk_manager_test.cpp)
 #   trading_engine_add_component_test(execution   execution_simulator_test.cpp)
