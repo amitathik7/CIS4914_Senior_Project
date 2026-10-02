@@ -7,7 +7,8 @@ trading_engine_add_component_test(smoke
 # Exercises the small pieces of real logic the scaffold does ship.
 trading_engine_add_component_test(common
     common_identifiers_test.cpp
-    common_clock_test.cpp)
+    common_clock_test.cpp
+    common_decimal_test.cpp)
 
 # Shape-only checks for the ADR 0004 (Proposed, not Accepted) Fill/Order
 # additions. Not validation -- neither type enforces invariants yet; see
@@ -15,11 +16,11 @@ trading_engine_add_component_test(common
 trading_engine_add_component_test(domain
     domain_fill_test.cpp)
 
-# Contract checks for the IPortfolioView read seam proposed by ADR 0005
-# (Proposed, not Accepted). Tests the interface via a FakePortfolioView, not
-# PortfolioManager -- whose methods all still throw.
+# The IPortfolioView read seam (ADR 0005) via a fake, and PortfolioManager
+# itself. The concurrency tests use threads.
 trading_engine_add_component_test(portfolio
-    portfolio_view_contract_test.cpp)
+    portfolio_view_contract_test.cpp
+    portfolio_manager_test.cpp)
 
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.

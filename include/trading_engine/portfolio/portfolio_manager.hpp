@@ -23,21 +23,26 @@
 //  created and the last destroyed, since others hold IPortfolioView& to it.
 //
 //  Thread-safety: writes (apply/apply_order_update/mark) arrive on the
-//  execution/bus thread;
-//  reads (snapshot/position) come from the RiskManager thread. The future
-//  implementation MUST make reads safe against concurrent writes -- e.g. a
-//  seqlock or a mutex-guarded copy. The scaffold does neither yet.
+//  execution/bus thread; reads come from the RiskManager thread. Every public
+//  method takes one mutex, so reads never see a half-applied write.
 // -----------------------------------------------------------------------------
 
+#include <cstdint>
+#include <map>
+#include <mutex>
 #include <optional>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/identifiers.hpp"
 #include "trading_engine/common/types.hpp"
+#include "trading_engine/configuration/engine_config.hpp"
 #include "trading_engine/domain/fill.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/order.hpp"
 #include "trading_engine/domain/portfolio_snapshot.hpp"
+#include "trading_engine/portfolio/pending_order.hpp"
 #include "trading_engine/portfolio/position.hpp"
 #include "trading_engine/portfolio/reservation_ledger.hpp"
 
@@ -64,76 +69,103 @@ public:
 class PortfolioManager final : public IPortfolioView,
                               public IReservationLedger {
 public:
+    // A market buy has no price, so it is held at the last mark plus
+    // market_buy_buffer (0.05 = 5%) to cover the price moving before it fills.
     PortfolioManager(common::RunId run_id,
                      common::Money starting_cash,
-                     const common::IClock& clock);
+                     const common::IClock& clock,
+                     config::FeeModelConfig fees = {},
+                     double market_buy_buffer = 0.05);
     ~PortfolioManager() override;
 
     // --- write side (mutating) ---------------------------------------
     // Two entry points for execution results, per
     // docs/adr/0004-execution-portfolio-fill-contract.md section 13.
 
-    // Apply a simulated execution. NOT IMPLEMENTED (throws).
+    // Apply a simulated execution: cash moves by -(qty * price) - fees, the
+    // position's quantity, average cost and realised P&L update, the symbol
+    // is marked at the fill price, and the order's reservation shrinks by the
+    // filled share. A fill with status Filled releases whatever is left.
     //
-    // Updates cash and positions, and releases the reservation held for the
-    // filled quantity. A fill whose status is Filled releases whatever
-    // reservation remains on its order.
-    //
-    // Idempotent on domain::Fill::id. Returns true if the fill was applied,
-    // false if it was recognised as an already-applied duplicate and ignored.
-    // A duplicate is an EXPECTED condition under an at-least-once transport,
-    // not an error, which is why this returns bool rather than throwing.
-    // Applying the same FillId twice would silently corrupt cash and cost
-    // basis, so the check is part of the contract, not an optimisation.
+    // Returns false, changing nothing, for an already-applied Fill::id or a
+    // fill from another run. Throws common::ValidationError for a fill that
+    // breaks the contract (zero quantity, non-positive price, negative fees,
+    // a gap in Fill::sequence, or a fill for an order already closed).
     bool apply(const domain::Fill& fill);
 
-    // Apply an order lifecycle event. NOT IMPLEMENTED (throws).
-    //
-    // Working (the submission event): add to open orders and reserve cash for
-    // a buy, or commit shares for a sell. Rejected: release the whole
-    // reservation. Cancelled / Expired: release the reservation on the
-    // unfilled remainder. PartiallyFilled / Filled: ignored, because fills
-    // drive those and acting on both would release the same cash twice.
-    //
-    // Idempotent by state, keyed on Order::id: a repeated submission, a
-    // release for an order already released, and a late submission for an
-    // order already complete are all ignored. Returns true if state changed,
-    // false otherwise.
+    // Apply an order lifecycle event. Working: open the order, taking over
+    // its signal's hold (or reserving now if there is none). Rejected,
+    // Cancelled, Expired: release what the order or its signal still holds.
+    // Other statuses are ignored, because fills drive them. Returns true if
+    // open orders or reservations changed.
     bool apply_order_update(const domain::Order& order);
-    // Re-mark open positions from a market event. NOT IMPLEMENTED.
+
+    // Record the latest price for a symbol: the last trade price, else the
+    // bid/ask midpoint. Events with no positive price are ignored.
     void mark(const domain::MarketEvent& event);
 
     // --- read side (IPortfolioView) --------------------------------
-    [[nodiscard]] domain::PortfolioSnapshot snapshot() const override;   // NOT IMPLEMENTED
+    [[nodiscard]] domain::PortfolioSnapshot snapshot() const override;
     [[nodiscard]] std::optional<Position> position(
-        const common::Symbol& symbol) const override;                    // NOT IMPLEMENTED
-    [[nodiscard]] common::Money cash() const override;                   // NOT IMPLEMENTED
-    [[nodiscard]] common::Money buying_power() const override;           // NOT IMPLEMENTED
+        const common::Symbol& symbol) const override;
+    [[nodiscard]] common::Money cash() const override;
+    [[nodiscard]] common::Money buying_power() const override;
 
     // --- reservation side (IReservationLedger) ---------------------
-    // The RiskManager's one mutating call: check buying power and hold
-    // against it atomically. See reservation_ledger.hpp for why this is a
-    // separate interface and why the check and the hold cannot be split.
     [[nodiscard]] ReservationResult hold_for_signal(
         common::SignalId signal,
         const common::Symbol& symbol,
         domain::OrderSide side,
         common::Quantity quantity,
-        std::optional<common::Price> limit_price) override;              // NOT IMPLEMENTED
-    void release_signal_hold(common::SignalId signal) override;          // NOT IMPLEMENTED
+        std::optional<common::Price> limit_price) override;
+    void release_signal_hold(common::SignalId signal) override;
 
 private:
-    [[maybe_unused]] common::RunId         run_id_{};
-    [[maybe_unused]] common::Money         starting_cash_{0};
-    [[maybe_unused]] const common::IClock& clock_;
+    struct Hold {
+        common::Symbol    symbol;
+        domain::OrderSide side;
+        common::Quantity  quantity;
+        common::Money     amount;
+    };
 
-    // TODO: symbol -> Position map, running cash balance, realised-P&L ledger,
-    //       last mark price per symbol, exposure aggregates, open-order table
-    //       keyed by OrderId with its reserved cash, holds keyed by SignalId
-    //       that have not yet been attached to an order, the set of completed
-    //       order ids (so late events cannot re-reserve), and the
-    //       synchronisation primitive that makes the read side thread-safe
-    //       AND makes hold_for_signal atomic.
+    // Callers of everything below must hold mutex_.
+
+    // A position is valued at its last mark, or at average cost if the
+    // symbol has never been marked.
+    [[nodiscard]] common::Price mark_price(const Position& position) const;
+    [[nodiscard]] Position valued(const Position& position) const;
+
+    // Cash to hold for a buy; nullopt for a market buy with no mark yet.
+    [[nodiscard]] std::optional<common::Money> buy_cost(
+        const common::Symbol& symbol, common::Quantity quantity,
+        std::optional<common::Price> limit_price) const;
+    [[nodiscard]] common::Money reserved_total() const;
+    // Shares already promised to sell holds and open sell orders.
+    [[nodiscard]] common::Quantity committed_to_sell(const common::Symbol& symbol) const;
+    void release_for_fill(const domain::Fill& fill);
+
+    const common::RunId          run_id_;
+    const common::IClock&        clock_;
+    const config::FeeModelConfig fees_;
+    const double                 market_buy_buffer_;
+
+    mutable std::mutex mutex_;
+
+    common::Money cash_;
+
+    // std::map so snapshots list entries in a stable order.
+    std::map<common::Symbol, Position>      positions_{};
+    std::map<common::Symbol, common::Price> marks_{};
+    std::map<common::OrderId, PendingOrder> open_orders_{};
+
+    std::unordered_map<common::SignalId, Hold> holds_{};
+    // Orders that were filled, rejected, cancelled or expired, so a late
+    // Working event cannot reserve for them again.
+    std::unordered_set<common::OrderId> closed_orders_{};
+
+    std::unordered_set<common::FillId> applied_fills_{};
+    // Last Fill::sequence seen per order still filling, for gap detection.
+    std::unordered_map<common::OrderId, std::uint32_t> last_sequence_{};
 };
 
 }  // namespace trading_engine::portfolio

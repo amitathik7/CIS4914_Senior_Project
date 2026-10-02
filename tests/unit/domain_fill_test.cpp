@@ -22,7 +22,7 @@ TEST(FillShape, DefaultConstructedIsCompleteAndUnsequenced) {
     EXPECT_EQ(fill.status, domain::FillStatus::Filled);
     EXPECT_EQ(fill.sequence, 0u);
     EXPECT_FALSE(fill.id.valid());
-    EXPECT_DOUBLE_EQ(fill.fees, 0.0);
+    EXPECT_EQ(fill.fees, common::Money{});
 }
 
 TEST(FillShape, DirectionIsCarriedBySignNotBySeparateField) {
@@ -31,9 +31,9 @@ TEST(FillShape, DirectionIsCarriedBySignNotBySeparateField) {
     // `side` member that could contradict it.
     domain::Fill sell{};
     sell.symbol = "AAPL";
-    sell.filled_quantity = -50.0;
+    sell.filled_quantity = -50;
 
-    EXPECT_LT(sell.filled_quantity, 0.0);
+    EXPECT_LT(sell.filled_quantity, 0);
 }
 
 TEST(FillShape, CanRepresentAPartialFillSeries) {
@@ -42,14 +42,14 @@ TEST(FillShape, CanRepresentAPartialFillSeries) {
     domain::Fill first{};
     first.id = common::FillId{7002};
     first.order_id = common::OrderId{3306};
-    first.filled_quantity = -30.0;
+    first.filled_quantity = -30;
     first.status = domain::FillStatus::PartiallyFilled;
     first.sequence = 1;
 
     domain::Fill second{};
     second.id = common::FillId{7003};
     second.order_id = common::OrderId{3306};
-    second.filled_quantity = -20.0;
+    second.filled_quantity = -20;
     second.status = domain::FillStatus::Filled;
     second.sequence = 2;
 
@@ -65,12 +65,12 @@ TEST(FillShape, GrossPriceAndFeesAreSeparateFields) {
     // documented formula against the struct's field layout; the Portfolio
     // Manager implements it, not this test.
     domain::Fill buy{};
-    buy.filled_quantity = 100.0;
-    buy.fill_price = 150.02;
-    buy.fees = 1.0;
+    buy.filled_quantity = 100;
+    buy.fill_price = common::Price::from_double(150.02);
+    buy.fees = common::Money::from_units(1);
 
     const auto cash_delta = -(buy.filled_quantity * buy.fill_price) - buy.fees;
-    EXPECT_DOUBLE_EQ(cash_delta, -15003.0);
+    EXPECT_EQ(cash_delta, common::Money::from_units(-15'003));
 }
 
 TEST(FillStatusStrings, MatchTheSerializedValuesInTheAdr) {
@@ -98,7 +98,7 @@ TEST(OrderRejectionShape, CarriesAReasonAndNoFills) {
 
     ASSERT_TRUE(rejected.reject_reason.has_value());
     EXPECT_EQ(*rejected.reject_reason, "no market context for symbol");
-    EXPECT_DOUBLE_EQ(rejected.filled_quantity, 0.0);
+    EXPECT_EQ(rejected.filled_quantity, 0);
     EXPECT_FALSE(rejected.average_fill_price.has_value());
 }
 
@@ -119,15 +119,15 @@ TEST(OrderSubmissionShape, CarriesWhatAReservationIsSizedFrom) {
     submitted.symbol = "AAPL";
     submitted.side = domain::OrderSide::Buy;
     submitted.type = domain::OrderType::Limit;
-    submitted.quantity = 100.0;
-    submitted.limit_price = 150.50;
+    submitted.quantity = 100;
+    submitted.limit_price = common::Price::from_double(150.50);
     submitted.status = domain::OrderStatus::Working;
 
     EXPECT_EQ(submitted.run_id, common::RunId{12});
     EXPECT_EQ(submitted.status, domain::OrderStatus::Working);
     ASSERT_TRUE(submitted.limit_price.has_value());
-    EXPECT_DOUBLE_EQ(submitted.quantity * *submitted.limit_price, 15'050.0);
-    EXPECT_DOUBLE_EQ(submitted.filled_quantity, 0.0);
+    EXPECT_EQ(submitted.quantity * *submitted.limit_price, common::Money::from_units(15'050));
+    EXPECT_EQ(submitted.filled_quantity, 0);
 }
 
 TEST(OrderSubmissionShape, SubmissionStatusSerializesAsWorking) {
