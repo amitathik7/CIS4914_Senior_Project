@@ -4,11 +4,13 @@ useful message; ids and timestamps survive exactly."""
 import copy
 import json
 import unittest
+from decimal import Decimal
 
-from support import ev, make_document, parse
+from support import dumps, ev, make_document, parse
 
 from strategy_lab_ui.errors import LabUiError
 from strategy_lab_ui.jsonio import strict_loads
+from strategy_lab_ui.schema import parse_replay
 
 
 class StrictJson(unittest.TestCase):
@@ -182,6 +184,47 @@ class IdsAndTimes(unittest.TestCase):
         self.assertEqual([s.signal_id for s in doc.signals], [a, b])
         self.assertEqual(doc.signals_by_event[0][0].signal_id, a)
         self.assertEqual(doc.signals_by_event[1][0].signal_id, b)
+
+    def test_prices_are_exact_decimals_and_quantities_exact_integers(self):
+        # A price is the decimal text of an int64 count of 1e-6: 9223372036854.775807 is INT64_MAX ticks, and a
+        # float cannot hold it (it rounds to 9223372036854.775). It is kept as a Decimal; a price written without a
+        # point is an int; derived statistics (indicators) are floats.
+        document = make_document([ev("A", 30, 5, indicators={"short_sma": 2.5}, signals=[(0, 1, "buy")])])
+        event = document["result"]["events"][0]
+        event.update({"open": 5, "high": 7, "low": 1, "volume": 9223372036854775807})
+        document["result"]["signals"][0]["requested_quantity"] = 2**62 + 1
+        raw = dumps(document).decode("utf-8")
+        raw = raw.replace('"price":5,', '"price":9223372036854.775807,', 1).replace('"low":1,', '"low":0.000001,', 1)
+        doc = parse_replay(strict_loads(raw.encode("utf-8")))
+        first = doc.events[0]
+        self.assertEqual(first.price, Decimal("9223372036854.775807"))
+        self.assertIsInstance(first.price, Decimal)
+        self.assertNotEqual(Decimal(float(first.price)), first.price, "a float would have lost digits")
+        self.assertEqual(first.low, Decimal("0.000001"))
+        self.assertIsInstance(first.open, int)
+        self.assertIsInstance(first.high, int)
+        self.assertEqual(first.volume, 9223372036854775807)
+        self.assertIsInstance(first.volume, int)
+        self.assertEqual(doc.signals[0].requested_quantity, 2**62 + 1)
+        self.assertIsInstance(doc.signals[0].requested_quantity, int)
+        indicator = first.results[0].indicators["short_sma"]
+        self.assertEqual(indicator, 2.5)
+        self.assertIsInstance(indicator, float)
+
+    def test_a_quantity_or_volume_that_is_not_a_whole_number_is_refused(self):
+        for field_path, value in ((("signals", 0, "requested_quantity"), 1.5), (("events", 0, "volume"), 10.5)):
+            document = make_document([ev("A", 30, signals=[(0, 1, "buy")])])
+            container = document["result"][field_path[0]][field_path[1]]
+            container[field_path[2]] = value
+            with self.assertRaises(LabUiError) as caught:
+                parse(document)
+            self.assertEqual(caught.exception.kind, "invalid_structure", field_path)
+            self.assertIn("expected an integer", str(caught.exception), field_path)
+
+    def test_a_non_decimal_price_is_refused(self):
+        document = make_document([ev("A", 30, "30")])
+        with self.assertRaises(LabUiError):
+            parse(document)
 
     def test_nanosecond_timestamps_are_kept_as_text(self):
         precise = "2026-01-05T14:30:00.123456789Z"

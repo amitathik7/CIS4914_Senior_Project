@@ -9,13 +9,24 @@ a real signal. Joins use those integers, never timestamps and never floats.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Mapping
 
 from . import jsonio as j
 from .catalog import REPLAY_SCHEMA, check_envelope
 from .errors import LabUiError
 
-Number = int | float
+Number = int | float          # a DERIVED statistic (an average, a z-score)
+Price = int | Decimal         # an exact price: the decimal text of an int64 count of 1e-6, never a float
+
+
+def exact_text(value: int | Decimal | None) -> str:
+    """A price or a whole-share quantity as its exact decimal text, for every place a person reads it (tables,
+    captions, hovers, exports). Never through a float, never scientific notation; None is the empty string. The
+    only float made from a price is the plotting coordinate in `replay.plot_float`."""
+    if value is None:
+        return ""
+    return format(value, "f") if isinstance(value, Decimal) else str(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,12 +53,12 @@ class Event:
     symbol: str
     exchange_time: str                 # RFC 3339 UTC, nine fractional digits: identity, never converted
     type: str
-    price: Number | None
-    price_status: str | None           # nan / inf / -inf when the value cannot be written in JSON
-    open: Number | None
-    high: Number | None
-    low: Number | None
-    volume: Number | None
+    price: Price | None
+    price_status: str | None           # always None now: an integer price is never non-finite (kept for older documents)
+    open: Price | None
+    high: Price | None
+    low: Price | None
+    volume: int | None                 # a whole number of shares
     bus_sequence: int
     results: tuple[StrategyEventResult, ...]
 
@@ -61,7 +72,8 @@ class Signal:
     symbol: str
     side: str
     order_type: str | None
-    requested_quantity: Number | None
+    requested_quantity: int | None     # a whole number of shares (an exact int64)
+    limit_price: Price | None
     created_at: str
     bus_sequence: int | None
     metadata: Mapping[str, str]
@@ -142,9 +154,11 @@ class ReplayDocument:
 _STATUS = ("nan", "inf", "-inf")
 
 
-def _optional_number(item: Mapping[str, Any], key: str, path: str) -> tuple[Number | None, str | None]:
-    """A number that may be omitted; if not finite it is omitted and `<key>_status` says why."""
-    value = j.opt(item, key, path, j.number)
+def _optional_number(item: Mapping[str, Any], key: str, path: str,
+                     check: Any = j.exact_number) -> tuple[Any, str | None]:
+    """A number that may be omitted; if not finite it is omitted and `<key>_status` says why. `check` is
+    j.exact_number for a price, j.integer for a quantity or volume, j.number for a derived statistic."""
+    value = j.opt(item, key, path, check)
     status = j.opt(item, f"{key}_status", path, j.string)
     if status is not None and status not in _STATUS:
         raise LabUiError("invalid_structure", f"{path}.{key}_status: unknown value '{status}'.")
@@ -197,7 +211,7 @@ def _event(raw: Any, path: str, strategy_count: int) -> Event:
         open=_optional_number(item, "open", path)[0],
         high=_optional_number(item, "high", path)[0],
         low=_optional_number(item, "low", path)[0],
-        volume=_optional_number(item, "volume", path)[0],
+        volume=_optional_number(item, "volume", path, j.integer)[0],
         bus_sequence=j.req(item, "bus_sequence", path, lambda v, p: j.integer(v, p, minimum=0)),
         results=results,
     )
@@ -217,7 +231,8 @@ def _signal(raw: Any, path: str, run_id: str, *, with_sequence: bool) -> Signal:
         symbol=j.req(item, "symbol", path, j.string),
         side=j.req(item, "side", path, j.string),
         order_type=j.opt(item, "order_type", path, j.string),
-        requested_quantity=_optional_number(item, "requested_quantity", path)[0],
+        requested_quantity=_optional_number(item, "requested_quantity", path, j.integer)[0],
+        limit_price=_optional_number(item, "limit_price", path)[0],
         created_at=j.req(item, "created_at", path, j.string),
         bus_sequence=(j.req(item, "bus_sequence", path, lambda v, p: j.integer(v, p, minimum=0))
                       if with_sequence else None),
@@ -248,6 +263,15 @@ def _dataset(body: Mapping[str, Any]) -> DatasetInfo:
         symbols=tuple(symbols))
 
 
+def _parameters(raw: Mapping[str, Any], path: str) -> dict[str, Any]:
+    """The parameters a strategy ran with. A whole-share quantity must be an exact integer (a Decimal or float there is a
+    contract violation and is refused, never converted); the other parameters are ratios, windows and text, where a decimal
+    number is a float."""
+    if "requested_quantity" in raw:
+        j.integer(raw["requested_quantity"], f"{path}.requested_quantity", minimum=1)
+    return j.plain(dict(raw))
+
+
 def _configuration(body: Mapping[str, Any]) -> tuple[int, str, tuple[StrategyConfig, ...]]:
     path = "$.result.configuration"
     item = j.req(body, "configuration", "$.result", j.obj)
@@ -258,7 +282,8 @@ def _configuration(body: Mapping[str, Any]) -> tuple[int, str, tuple[StrategyCon
         configs.append(StrategyConfig(
             kind=j.req(s, "kind", sp, j.string), strategy_id=j.req(s, "strategy_id", sp, j.string),
             window_size=j.req(s, "window_size", sp, lambda v, p: j.integer(v, p, minimum=0)),
-            parameters=dict(j.req(s, "parameters", sp, j.obj)), derived=dict(j.req(s, "derived", sp, j.obj))))
+            parameters=_parameters(j.req(s, "parameters", sp, j.obj), f"{sp}.parameters"),
+            derived=j.plain(dict(j.req(s, "derived", sp, j.obj)))))
     if not configs:
         raise LabUiError("invalid_structure", f"{path}.strategies: no strategy was run.")
     ids = [c.strategy_id for c in configs]

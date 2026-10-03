@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/price_literals.hpp"
 #include "trading_engine/common/types.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
@@ -32,9 +33,12 @@ namespace common   = trading_engine::common;
 namespace domain   = trading_engine::domain;
 namespace strategy = trading_engine::strategy;
 
-inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-inline constexpr double kInf = std::numeric_limits<double>::infinity();
-inline constexpr double kMax = std::numeric_limits<double>::max();
+using trading_engine::test_support::kMaxPrice;
+using trading_engine::test_support::kMinPrice;
+using trading_engine::test_support::px;
+using trading_engine::test_support::micros;
+using trading_engine::test_support::units;
+using namespace trading_engine::test_support::literals;
 
 // One snapshot, copied out of the callback.
 struct Seen {
@@ -101,7 +105,7 @@ inline common::Timestamp at_minute(long long minute) {
     return common::Timestamp{} + std::chrono::minutes{minute};
 }
 
-inline domain::MarketEvent event_at(const std::string& symbol, std::optional<double> price,
+inline domain::MarketEvent event_at(const std::string& symbol, std::optional<common::Price> price,
                                     long long minute,
                                     domain::MarketEventType type = domain::MarketEventType::Bar) {
     domain::MarketEvent event;
@@ -147,13 +151,14 @@ private:
 };
 
 // Roughly 15% non-bar events, 30% unlisted or wrongly cased symbols, a tenth bad
-// prices (NaN, infinities, zero, negative, absent, 1e-300, DBL_MAX) and about one
+// prices (zero, negative, absent, the int64 extremes, one micro) and about one
 // timestamp in ten repeated or older.
+// Prices walk in whole cents (10'000 millionths) from 100 currency units.
 inline std::vector<domain::MarketEvent> random_stream(std::uint64_t seed, std::size_t count) {
     Lcg rng{seed};
     const std::vector<std::string> symbols{"AAPL", "AAPL", "AAPL", "MSFT", "MSFT", "ZZZ", "aapl"};
     std::map<std::string, long long> next_minute;
-    double last = 100.0;
+    common::Price last = common::Price::from_units(100);
 
     std::vector<domain::MarketEvent> out;
     out.reserve(count);
@@ -173,30 +178,31 @@ inline std::vector<domain::MarketEvent> random_stream(std::uint64_t seed, std::s
             default: ++fresh; break;
         }
 
-        std::optional<double> price;
+        std::optional<common::Price> price;
         const std::size_t p = rng.below(100);
         if (p < 60 || p >= 92) {
-            last += static_cast<double>(rng.below(2001)) / 100.0 - 10.0;
-            last  = last < 1.0 ? 1.0 : last;
+            const auto cents = static_cast<std::int64_t>(rng.below(2001)) - 1000;   // -10.00 .. +10.00
+            last += micros(cents * 10'000);                                          // a cent is 10'000 millionths
+            last  = last < common::Price::from_units(1) ? common::Price::from_units(1) : last;
             price = last;
         } else if (p < 70) {
             price = last;                                 // a plateau
         } else if (p < 74) {
-            price = kNaN;
+            price = kMinPrice;
         } else if (p < 77) {
-            price = kInf;
+            price = kMaxPrice;
         } else if (p < 79) {
-            price = -kInf;
+            price = -kMaxPrice;
         } else if (p < 82) {
-            price = 0.0;
+            price = common::Price{};
         } else if (p < 85) {
-            price = -3.0;
+            price = -common::Price::from_units(3);
         } else if (p < 88) {
             price = std::nullopt;
         } else if (p < 90) {
-            price = kMax;
+            price = kMaxPrice / 3;
         } else {
-            price = 1e-300;
+            price = micros(1);                             // the smallest positive price
         }
         out.push_back(event_at(symbol, price, minute, type));
     }

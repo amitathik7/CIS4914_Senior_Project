@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "support/price_literals.hpp"
 #include "trading_engine/common/types.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
@@ -24,23 +25,27 @@ namespace common   = trading_engine::common;
 namespace domain   = trading_engine::domain;
 namespace strategy = trading_engine::strategy;
 
-using Closes = std::vector<double>;
+// Closes are exact int64 Prices. Write them with units({3, 2}) (whole currency units) or
+// 0.25_px (exact decimal text); never as a bare number, which would mean that many micros.
+using Closes = std::vector<common::Price>;
 using Labels = std::vector<std::string>;
 
-inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-inline constexpr double kInf = std::numeric_limits<double>::infinity();
-inline constexpr double kMax = std::numeric_limits<double>::max();
+using trading_engine::test_support::kMaxPrice;
+using trading_engine::test_support::px;
+using trading_engine::test_support::micros;
+using trading_engine::test_support::units;
+using namespace trading_engine::test_support::literals;
 
 // The fixture from the task, for a 2/3 pair. Counting bars from 1 it must give
 // exactly: Buy at bar 5 (short 2.5, long 2) and Sell at bar 8 (short 2.5, long 3).
-inline const Closes kFixture{3, 2, 1, 2, 3, 4, 3, 2, 1};
+inline const Closes kFixture = units({3, 2, 1, 2, 3, 4, 3, 2, 1});
 
 inline common::Timestamp at_minute(long long minute) {
     return common::Timestamp{} + std::chrono::minutes{minute};
 }
 
 // A finalized bar: the only fields the strategy reads.
-inline domain::MarketEvent bar(const std::string& symbol, double close, long long minute) {
+inline domain::MarketEvent bar(const std::string& symbol, common::Price close, long long minute) {
     domain::MarketEvent event;
     event.symbol        = symbol;
     event.type          = domain::MarketEventType::Bar;
@@ -85,7 +90,7 @@ public:
     // One bar per close at minutes 1, 2, 3, ..., so a label's number is the 1-based bar.
     void feed_closes(const Closes& closes, const std::string& symbol = "AAPL") {
         long long minute = 0;
-        for (const double close : closes) {
+        for (const common::Price close : closes) {
             feed(bar(symbol, close, ++minute));
         }
     }

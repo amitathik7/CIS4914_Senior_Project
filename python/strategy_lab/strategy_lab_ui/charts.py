@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 
 from . import theme
 from .replay import ReplayModel, SymbolSeries
-from .schema import Event, StrategyConfig
+from .schema import Event, StrategyConfig, exact_text
 
 MAX_SYMBOL_PANELS = 4
 MAX_COMPARE_SYMBOLS = 2
@@ -55,7 +55,7 @@ def _hover(model: ReplayModel, series: SymbolSeries) -> list[str]:
     out = []
     for position, index in enumerate(series.event_indexes):
         event = model.events[index]
-        price = "no price" if series.prices[position] is None else f"close {event.price}"
+        price = "no price" if event.price is None else f"close {exact_text(event.price)}"
         decision = f"{series.verdicts[position]}: {series.reasons[position]}" if series.verdicts[position] else "no diagnostics"
         out.append(f"Event {index + 1} of {model.total} - {event.symbol}<br>{event.exchange_time}<br>"
                    f"{event.type}, {price}<br>{decision}")

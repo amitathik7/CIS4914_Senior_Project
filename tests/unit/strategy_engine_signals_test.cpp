@@ -34,11 +34,11 @@ void expect_same_content(const domain::TradeSignal& actual, const domain::TradeS
 // A fully populated explicit-quantity signal, including the ADR 0002 fields.
 domain::TradeSignal quantity_signal() {
     domain::TradeSignal signal = signal_for("AAPL", domain::SignalSide::Sell);
-    signal.requested_quantity = 50.0;
+    signal.requested_quantity = 50;
     signal.confidence         = 0.75;
     signal.metadata           = {{"reason", "crossover"}, {"fast", "10"}};
     signal.order_type         = domain::OrderType::Limit;
-    signal.limit_price        = 152.75;
+    signal.limit_price        = support::px("152.75");
     return signal;
 }
 
@@ -98,12 +98,12 @@ TEST_F(StrategyEngineTest, HandsStrategiesTheEventWithItsFieldsIntact) {
     const auto a = add("a");
     engine.start();
 
-    domain::MarketEvent sent = market_event("AAPL", domain::MarketEventType::Bar, 101.25);
+    domain::MarketEvent sent = market_event("AAPL", domain::MarketEventType::Bar, support::px("101.25"));
     sent.exchange_time = kT0 + 3s;
     sent.ingest_time   = kT0 + 4s;
-    sent.bid           = 101.0;
-    sent.ask           = 101.5;
-    sent.volume        = 12'000.0;
+    sent.bid           = support::px("101");
+    sent.ask           = support::px("101.5");
+    sent.volume        = 12'000;
     sent.sequence      = 42;
     publish_market(sent);
 

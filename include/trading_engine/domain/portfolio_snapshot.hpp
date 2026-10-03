@@ -22,13 +22,13 @@ struct PortfolioSnapshot {
     common::RunId     run_id{};
     common::Timestamp as_of{};        // UTC
 
-    common::Money cash{0};            // free cash in account currency
-    common::Money total_equity{0};    // cash + marked value of positions
+    common::Money cash{};             // free cash in account currency
+    common::Money total_equity{};     // cash + marked value of positions
 
     std::vector<portfolio::Position> positions{};
 
-    common::Money gross_exposure{0};  // sum of |position notional|
-    common::Money net_exposure{0};    // signed sum of position notional
+    common::Money gross_exposure{};   // sum of |position notional|
+    common::Money net_exposure{};     // signed sum of position notional
 
     // TODO: buying power / margin used, per-strategy sub-accounts, currency
     //       breakdown, realised vs unrealised split, and a monotonically

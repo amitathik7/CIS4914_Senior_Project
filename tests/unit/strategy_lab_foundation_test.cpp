@@ -197,6 +197,30 @@ TEST(LabJsonWriter, WritesNestedStructureWithoutWhitespaceInCompactMode) {
     EXPECT_EQ(w.str(), R"({"a":"x","b":true,"list":[-5,7,0.5,null],"empty_object":{},"empty_array":[]})");
 }
 
+TEST(LabJsonWriter, ScaledNumbersAreExactDecimalTextNeverThroughADouble) {
+    // A Price / Money is an int64 count of 1e-6; it is written digit for digit.
+    const auto text = [](std::int64_t scaled, int decimals) {
+        JsonWriter w;
+        w.scaled_number(scaled, decimals);
+        return w.take();
+    };
+    EXPECT_EQ(text(150'020'000, 6), "150.02");
+    EXPECT_EQ(text(3'000'000, 6), "3");
+    EXPECT_EQ(text(1, 6), "0.000001");
+    EXPECT_EQ(text(0, 6), "0");
+    EXPECT_EQ(text(-1'500'000, 6), "-1.5");
+    EXPECT_EQ(text(123'456'789'123'456, 6), "123456789.123456") << "a double would hold 123456789.12345600128...";
+    EXPECT_EQ(text(9'223'372'036'854'775'807LL, 6), "9223372036854.775807") << "INT64_MAX: every digit survives";
+    EXPECT_EQ(text(std::numeric_limits<std::int64_t>::min(), 6), "-9223372036854.775808") << "INT64_MIN does not overflow";
+    EXPECT_EQ(text(42, 0), "42");
+
+    // As a member and inside an array: ordinary JSON number syntax between the right separators.
+    JsonWriter w;
+    w.begin_object().key("price").scaled_number(101'250'000, 6).key("list").begin_array()
+        .scaled_number(1, 6).scaled_number(-2, 6).end_array().end_object();
+    EXPECT_EQ(w.str(), R"({"price":101.25,"list":[0.000001,-0.000002]})");
+}
+
 TEST(LabJsonWriter, PrettyModeIndentsTwoSpacesAndNeverEmitsCarriageReturns) {
     JsonWriter w{true};
     w.begin_object();

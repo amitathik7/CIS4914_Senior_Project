@@ -41,6 +41,7 @@
 #include <gtest/gtest.h>
 
 #include "support/fake_strategy.hpp"
+#include "support/price_literals.hpp"
 #include "support/recording_event_bus.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/domain/market_event.hpp"
@@ -62,8 +63,8 @@ using domain::SignalSide;
 
 const common::Timestamp kStart = common::Timestamp{} + std::chrono::hours{5};
 
-const std::vector<double> kAapl{3, 2, 1, 2, 3, 4, 3, 2, 1};
-const std::vector<double> kMsft{10, 10, 10, 6, 9, 2, 30, 30, 30};
+const std::vector<common::Price> kAapl = support::units({3, 2, 1, 2, 3, 4, 3, 2, 1});
+const std::vector<common::Price> kMsft = support::units({10, 10, 10, 6, 9, 2, 30, 30, 30});
 
 // What a published signal must show, independently of the implementation.
 struct Expected {
@@ -105,7 +106,7 @@ public:
         }
     }
 
-    static domain::MarketEvent bar(const std::string& symbol, double close, int minute) {
+    static domain::MarketEvent bar(const std::string& symbol, common::Price close, int minute) {
         domain::MarketEvent event;
         event.symbol        = symbol;
         event.type          = domain::MarketEventType::Bar;
@@ -116,7 +117,7 @@ public:
 
     // One bar through the bus, the way MarketDataService will deliver it. The clock
     // moves to the bar's time first, as a replay does.
-    void deliver(const std::string& symbol, double close, int minute) {
+    void deliver(const std::string& symbol, common::Price close, int minute) {
         clock.set(kStart + std::chrono::minutes{minute});
         events::Event envelope;
         envelope.type    = events::EventType::MarketData;
@@ -126,7 +127,7 @@ public:
 
     // The same bar handed to the engine directly. Needed while the bus is refusing
     // everything: the double would refuse the market event itself too.
-    void deliver_directly(const std::string& symbol, double close, int minute) {
+    void deliver_directly(const std::string& symbol, common::Price close, int minute) {
         clock.set(kStart + std::chrono::minutes{minute});
         engine.on_market_event(bar(symbol, close, minute));
     }
@@ -151,7 +152,7 @@ public:
 
 // Everything observable about a published signal, so two runs compare in one line.
 using Fingerprint = std::tuple<std::uint64_t, std::string, std::string, SignalSide, common::Timestamp,
-                               std::optional<double>, std::optional<domain::OrderType>,
+                               std::optional<common::Quantity>, std::optional<domain::OrderType>,
                                std::map<std::string, std::string>>;
 
 std::vector<Fingerprint> fingerprints(const std::vector<domain::TradeSignal>& signals) {
@@ -172,7 +173,7 @@ void expect_signals(const std::vector<domain::TradeSignal>& actual, const std::v
         EXPECT_EQ(actual[i].side, expected[i].side);
         EXPECT_EQ(actual[i].created_at, kStart + std::chrono::minutes{expected[i].minute});
         EXPECT_EQ(actual[i].id.value, expected[i].id);
-        EXPECT_EQ(actual[i].requested_quantity, std::optional<double>{1.0});
+        EXPECT_EQ(actual[i].requested_quantity, std::optional<common::Quantity>{1});
         EXPECT_EQ(actual[i].order_type, std::optional<domain::OrderType>{domain::OrderType::Market});
         EXPECT_FALSE(actual[i].target_exposure.has_value());
         EXPECT_FALSE(actual[i].limit_price.has_value());

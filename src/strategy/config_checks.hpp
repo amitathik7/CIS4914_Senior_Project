@@ -36,11 +36,12 @@ inline std::string format_number(double value) {
     throw common::ConfigError(std::string{strategy} + ": " + problem);
 }
 
-// A finite, positive, whole number of shares. 1.5 is rejected, never rounded.
-inline void require_whole_share_quantity(std::string_view strategy, double quantity) {
-    if (!std::isfinite(quantity) || quantity <= 0.0 || std::floor(quantity) != quantity) {
-        reject(strategy, "requested_quantity must be a finite, positive whole number of shares (got " +
-                             format_number(quantity) + ")");
+// A positive whole number of shares. Quantity is an integer count (common::Quantity), so
+// "whole" holds by construction and nothing is ever rounded: only the sign is checked.
+inline void require_whole_share_quantity(std::string_view strategy, common::Quantity quantity) {
+    if (quantity <= 0) {
+        reject(strategy, "requested_quantity must be a positive whole number of shares (got " +
+                             std::to_string(quantity) + ")");
     }
 }
 

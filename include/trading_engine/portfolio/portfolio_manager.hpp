@@ -65,7 +65,7 @@ public:
 
 private:
     [[maybe_unused]] common::RunId         run_id_{};
-    [[maybe_unused]] common::Money         starting_cash_{0};
+    [[maybe_unused]] common::Money         starting_cash_{};
     [[maybe_unused]] const common::IClock& clock_;
 
     // TODO: symbol -> Position map, running cash balance, realised-P&L ledger,

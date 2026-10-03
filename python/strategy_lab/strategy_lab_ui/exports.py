@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+from decimal import Decimal
 from typing import Sequence
 
 from .replay import ReplayModel
@@ -31,9 +32,11 @@ def scope_prefix(model: ReplayModel, cursor: int, symbol: str | None) -> str:
     return f"visible replay prefix: {first} of {model.total}, {shown}"
 
 
-def _text(value: int | float | None) -> str:
+def _text(value: int | float | Decimal | None) -> str:
     if value is None:
         return ""
+    if isinstance(value, Decimal):
+        return format(value, "f")         # the exact digits, never scientific notation
     return str(value) if isinstance(value, int) else repr(value)
 
 

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "lab/utf8.hpp"
+#include "trading_engine/common/decimal_text.hpp"
 
 namespace trading_engine::lab {
 
@@ -178,6 +179,12 @@ JsonWriter& JsonWriter::number(double value) {
         throw std::logic_error("JsonWriter: could not format a double");
     }
     out_.append(buffer, result.ptr);
+    return *this;
+}
+
+JsonWriter& JsonWriter::scaled_number(std::int64_t scaled, int decimals) {
+    before_value();
+    out_ += common::format_scaled(scaled, decimals);
     return *this;
 }
 

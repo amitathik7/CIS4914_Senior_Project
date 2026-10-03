@@ -10,7 +10,9 @@
 // moving_average_crossover_engine_test.cpp.
 
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -73,7 +75,7 @@ TEST(SmaCrossoverConfig, DefaultsAreFiveTwentyOneShareAndTheSmaCrossoverId) {
     EXPECT_EQ(defaults.strategy_id, "sma_crossover");
     EXPECT_EQ(defaults.short_window, 5u);
     EXPECT_EQ(defaults.long_window, 20u);
-    EXPECT_EQ(defaults.requested_quantity, 1.0);
+    EXPECT_EQ(defaults.requested_quantity, 1);
     EXPECT_TRUE(defaults.symbols.empty()) << "the allowlist has no default";
 
     // Behaviourally, with 5/20 windows: 20 closes falling 120, 119, ..., 101 and
@@ -87,13 +89,13 @@ TEST(SmaCrossoverConfig, DefaultsAreFiveTwentyOneShareAndTheSmaCrossoverId) {
     EXPECT_EQ(h.sma.id(), "sma_crossover");
     Closes closes;
     for (int i = 0; i < 20; ++i) {
-        closes.push_back(120.0 - i);
+        closes.push_back(common::Price::from_units(120 - i));
     }
-    closes.push_back(200.0);
+    closes.push_back(common::Price::from_units(200));
     h.feed_closes(closes);
     EXPECT_EQ(h.labels(), (Labels{"buy@21"}));
     ASSERT_EQ(h.signals.size(), 1u);
-    EXPECT_EQ(h.signals[0].requested_quantity, std::optional<double>{1.0});
+    EXPECT_EQ(h.signals[0].requested_quantity, std::optional<common::Quantity>{1});
     EXPECT_EQ(h.signals[0].metadata.at("short_window"), "5");
     EXPECT_EQ(h.signals[0].metadata.at("long_window"), "20");
     EXPECT_EQ(h.signals[0].metadata.at("short_sma"), "122");
@@ -103,7 +105,9 @@ TEST(SmaCrossoverConfig, DefaultsAreFiveTwentyOneShareAndTheSmaCrossoverId) {
 TEST(SmaCrossoverConfig, AcceptsValidConfigurations) {
     EXPECT_EQ(config_error(make_config(1, 2)), "<accepted>");   // the tightest pair
     EXPECT_EQ(config_error(make_config(50, 200, {"AAPL", "MSFT", "BRK.B"})), "<accepted>");
-    for (const double whole : {1.0, 2.0, 100.0, 1.0e6, 9007199254740992.0}) {
+    for (const common::Quantity whole : {common::Quantity{1}, common::Quantity{2}, common::Quantity{100},
+                                         common::Quantity{1'000'000},
+                                         std::numeric_limits<common::Quantity>::max()}) {
         MovingAverageCrossoverConfig cfg = make_config(2, 3);
         cfg.requested_quantity           = whole;
         EXPECT_EQ(config_error(cfg), "<accepted>") << whole;
@@ -138,18 +142,17 @@ TEST(SmaCrossoverConfig, RejectsAMissingEmptyOrRepeatedSymbol) {
     EXPECT_TRUE(mentions(repeated, "more than once")) << repeated;
 }
 
-TEST(SmaCrossoverConfig, RejectsQuantitiesThatAreNotFinitePositiveWholeNumbers) {
-    // Fractions are rejected, never rounded: 1.5 is not turned into 1 or 2, and
-    // the message shows the offending value.
-    for (const double bad : {0.0, -0.0, -1.0, 0.5, 1.5, 2.000001, kNaN, kInf, -kInf}) {
+TEST(SmaCrossoverConfig, RejectsQuantitiesThatAreNotPositive) {
+    // Quantity is an exact integer count of shares, so a fraction cannot even be written; only
+    // the sign needs checking. The message shows the offending value.
+    for (const common::Quantity bad : {common::Quantity{0}, common::Quantity{-1}, common::Quantity{-1'000},
+                                       std::numeric_limits<common::Quantity>::min()}) {
         MovingAverageCrossoverConfig cfg = make_config(2, 3);
         cfg.requested_quantity           = bad;
         const std::string message        = config_error(cfg);
         EXPECT_TRUE(mentions(message, "requested_quantity")) << bad << ": " << message;
+        EXPECT_TRUE(mentions(message, std::to_string(bad))) << message;
     }
-    MovingAverageCrossoverConfig fractional = make_config(2, 3);
-    fractional.requested_quantity           = 1.5;
-    EXPECT_TRUE(mentions(config_error(fractional), "1.5"));
 }
 
 // --- Warm-up and the baseline ----------------------------------------------------
@@ -157,11 +160,11 @@ TEST(SmaCrossoverConfig, RejectsQuantitiesThatAreNotFinitePositiveWholeNumbers) 
 TEST(SmaCrossoverWarmUp, EmitsNothingUntilTheLongWindowIsFull) {
     Closes nineteen_falling;
     for (int i = 0; i < 19; ++i) {
-        nineteen_falling.push_back(120.0 - i);
+        nineteen_falling.push_back(common::Price::from_units(120 - i));
     }
     expect_labels({
-        {"two bars of a 2/3 pair", 2, 3, {3, 2}, {}},
-        {"a violent move inside the warm-up", 2, 3, {1, 100}, {}},
+        {"two bars of a 2/3 pair", 2, 3, units({3, 2}), {}},
+        {"a violent move inside the warm-up", 2, 3, units({1, 100}), {}},
         {"nineteen bars of a 5/20 pair", 5, 20, nineteen_falling, {}},
     });
 }
@@ -169,10 +172,10 @@ TEST(SmaCrossoverWarmUp, EmitsNothingUntilTheLongWindowIsFull) {
 TEST(SmaCrossoverWarmUp, TheFirstWarmedUpComparisonIsABaselineNotASignal) {
     expect_labels({
         // Bar 3: short (2+3)/2 = 2.5 above long (1+2+3)/3 = 2. Recorded, silent.
-        {"baseline above", 2, 3, {1, 2, 3}, {}},
-        {"baseline above, then more rise", 2, 3, {1, 2, 3, 4, 5}, {}},
+        {"baseline above", 2, 3, units({1, 2, 3}), {}},
+        {"baseline above, then more rise", 2, 3, units({1, 2, 3, 4, 5}), {}},
         // Bar 3: short (2+1)/2 = 1.5 below long (3+2+1)/3 = 2.
-        {"baseline below", 2, 3, {3, 2, 1}, {}},
+        {"baseline below", 2, 3, units({3, 2, 1}), {}},
     });
 }
 
@@ -181,16 +184,17 @@ TEST(SmaCrossoverWarmUp, TheFirstWarmedUpComparisonIsABaselineNotASignal) {
 TEST(SmaCrossoverCrossovers, AnUpwardCrossingBuysAndADownwardOneSells) {
     expect_labels({
         // Bar 3 below (1.5 vs 2: baseline), bar 4 below (1.5 vs 1.667), bar 5 above (2.5 vs 2).
-        {"up", 2, 3, {3, 2, 1, 2, 3}, {"buy@5"}},
+        {"up", 2, 3, units({3, 2, 1, 2, 3}), {"buy@5"}},
         // Bar 3 above (2.5 vs 2: baseline), bar 4 above (2.5 vs 2.333), bar 5 below (1.5 vs 2).
-        {"down", 2, 3, {1, 2, 3, 2, 1}, {"sell@5"}},
+        {"down", 2, 3, units({1, 2, 3, 2, 1}), {"sell@5"}},
     });
 }
 
 TEST(SmaCrossoverCrossovers, NeverRepeatsASignalWhileTheRelationshipHolds) {
     expect_labels({
-        {"keeps rising after the buy", 2, 3, {3, 2, 1, 2, 3, 4, 5, 6, 7}, {"buy@5"}},
-        {"keeps falling after the sell", 2, 3, {1, 2, 3, 2, 1, 0.5, 0.25, 0.125}, {"sell@5"}},
+        {"keeps rising after the buy", 2, 3, units({3, 2, 1, 2, 3, 4, 5, 6, 7}), {"buy@5"}},
+        {"keeps falling after the sell", 2, 3, {1_px, 2_px, 3_px, 2_px, 1_px, 0.5_px, 0.25_px, 0.125_px},
+         {"sell@5"}},
     });
 }
 
@@ -208,7 +212,7 @@ TEST(SmaCrossoverCrossovers, TheSpecFixtureGivesABuyAtBarFiveAndASellAtBarEight)
     Harness h{make_config(2, 3)};
     std::vector<std::size_t> emitted_after_each_bar;
     long long minute = 0;
-    for (const double close : kFixture) {
+    for (const common::Price close : kFixture) {
         h.feed(bar("AAPL", close, ++minute));
         emitted_after_each_bar.push_back(h.signals.size());
     }
@@ -229,10 +233,10 @@ TEST(SmaCrossoverEquality, EqualAveragesKeepTheLastNonzeroRelationship) {
     // With a 1/2 pair the relationship is the sign of the last price change:
     // short = close, long = (previous + close) / 2.
     expect_labels({
-        {"below, equal, below", 1, 2, {5, 4, 4, 4, 3}, {}},
-        {"above, equal, above", 1, 2, {4, 5, 5, 5, 6}, {}},
-        {"below, equal, above is a crossing", 1, 2, {5, 4, 4, 6}, {"buy@4"}},
-        {"above, equal, below is a crossing", 1, 2, {4, 5, 5, 3}, {"sell@4"}},
+        {"below, equal, below", 1, 2, units({5, 4, 4, 4, 3}), {}},
+        {"above, equal, above", 1, 2, units({4, 5, 5, 5, 6}), {}},
+        {"below, equal, above is a crossing", 1, 2, units({5, 4, 4, 6}), {"buy@4"}},
+        {"above, equal, below is a crossing", 1, 2, units({4, 5, 5, 3}), {"sell@4"}},
     });
 }
 
@@ -240,35 +244,35 @@ TEST(SmaCrossoverEquality, InitiallyEqualAveragesNeverSignalByThemselves) {
     expect_labels({
         // Equal at bars 2 and 3; bar 4 (6 vs 5) is the first nonzero: baseline, silent;
         // bar 5 (4 vs 5) is below: Sell.
-        {"equal, then above, then below", 1, 2, {5, 5, 5, 6, 4}, {"sell@5"}},
+        {"equal, then above, then below", 1, 2, units({5, 5, 5, 6, 4}), {"sell@5"}},
         // Equal at bar 2; bar 3 (4 vs 5) is the baseline; bar 4 (6 vs 4) is above: Buy.
-        {"equal, then below, then above", 1, 2, {5, 5, 4, 6}, {"buy@4"}},
+        {"equal, then below, then above", 1, 2, units({5, 5, 4, 6}), {"buy@4"}},
         // 2/3 pair: bars 3 and 4 equal (all 5s), bar 5 above (5.5 vs 5.333) is the
         // baseline, bars 6 and 7 above, bar 8 below (5.5 vs 6): the only signal.
-        {"flat start on a 2/3 pair", 2, 3, {5, 5, 5, 5, 6, 7, 6, 5, 4}, {"sell@8"}},
+        {"flat start on a 2/3 pair", 2, 3, units({5, 5, 5, 5, 6, 7, 6, 5, 4}), {"sell@8"}},
     });
 }
 
-TEST(SmaCrossoverEquality, MathematicallyEqualAveragesAreEqualEvenWhenNotBitEqual) {
+TEST(SmaCrossoverEquality, AveragesThatAreEqualInDecimalAreExactlyEqual) {
     // 2/3 pair. At bar 3 the oldest close is the mean of the other two, so short and
     // long are equal in decimal arithmetic:
     //   (0.3, 0.4, 0.2): short (0.4+0.2)/2 = 0.3 = long (0.3+0.4+0.2)/3
     //   (0.7, 0.5, 0.9): short (0.5+0.9)/2 = 0.7 = long (0.7+0.5+0.9)/3
-    // As doubles they are not quite equal: the first computes short one rounding step
-    // ABOVE long, the second one step BELOW. A strict comparison records that as a
-    // baseline, then reads bar 4, which is clearly the other way (short 0.15 against
-    // long 0.233; short 0.7 against long 0.633), as a crossing: a false Sell, a false
-    // Buy. Read as equal, bar 3 sets no baseline, bar 4 becomes it, and nothing fires.
+    // With doubles these are not bit-equal (one rounding step above, one below), which is
+    // why a floating-point version needs an equality tolerance. Prices are integer micros
+    // here and the averages are compared by cross-multiplication, so the tie is exact and
+    // no tolerance exists: bar 3 sets no baseline, bar 4 becomes it, and nothing fires.
     expect_labels({
-        {"a tie computed one step above", 2, 3, {0.3, 0.4, 0.2, 0.1}, {}},
-        {"a tie computed one step below", 2, 3, {0.7, 0.5, 0.9, 0.5}, {}},
+        {"a tie that doubles read one step above", 2, 3, {0.3_px, 0.4_px, 0.2_px, 0.1_px}, {}},
+        {"a tie that doubles read one step below", 2, 3, {0.7_px, 0.5_px, 0.9_px, 0.5_px}, {}},
     });
 }
 
-TEST(SmaCrossoverEquality, ARealButTinyMoveIsNotMaskedByTheTolerance) {
-    // A 1/2 pair on 100, 99.9999, 100: one hundredth of a cent each way, a gap of
-    // 5e-7 of the price: tiny, but half a million times the tolerance.
-    expect_labels({{"a 1e-6 move", 1, 2, {100.0, 99.9999, 100.0}, {"buy@3"}}});
+TEST(SmaCrossoverEquality, AOneMicroMoveIsAnExactCrossingNotMaskedByAnyTolerance) {
+    // A 1/2 pair on 100, 99.999999, 100: one micro (1e-6) each way, a gap of 5e-9 of the
+    // price. The comparison is exact, so even that is a real crossing (a floating-point
+    // version would need a tolerance far below this to see it).
+    expect_labels({{"a one-micro move", 1, 2, {100_px, 99.999999_px, 100_px}, {"buy@3"}}});
 }
 
 // --- Window eviction ------------------------------------------------------------
@@ -279,7 +283,7 @@ TEST(SmaCrossoverWindows, ClosesOlderThanTheLongWindowStopCounting) {
     // equal. Bar 5: short (1+2)/2 = 1.5 above long (1+1+2)/3: Buy. A 100 that
     // stayed in the window would keep long above short and hide the Buy.
     Harness h{make_config(2, 3)};
-    h.feed_closes({100, 1, 1, 1, 2, 3});
+    h.feed_closes(units({100, 1, 1, 1, 2, 3}));
     EXPECT_EQ(h.labels(), (Labels{"buy@5"}));
     ASSERT_EQ(h.signals.size(), 1u);
     EXPECT_EQ(number(h.signals[0], "short_sma"), 1.5);
@@ -292,7 +296,7 @@ TEST(SmaCrossoverWindows, TheRingStaysCorrectAcrossManyWraps) {
     // long 9) is the baseline, below; bars 7-9 stay below; bar 10 is five 5s: equal;
     // bar 11 has short (5+5+20)/3 = 10 above long (5+5+5+5+20)/5 = 8: Buy. The
     // history has wrapped twice by then, so every eviction index was used.
-    expect_labels({{"wraps twice", 3, 5, {10, 10, 10, 10, 10, 5, 5, 5, 5, 5, 20}, {"buy@11"}}});
+    expect_labels({{"wraps twice", 3, 5, units({10, 10, 10, 10, 10, 5, 5, 5, 5, 5, 20}), {"buy@11"}}});
 }
 
 // --- Symbols -----------------------------------------------------------------------
@@ -303,8 +307,8 @@ TEST(SmaCrossoverSymbols, KeepIndependentStateWhetherOrNotTheirBarsInterleave) {
     //   AAPL: Buy@5 (2.5 vs 2), Sell@8 (2.5 vs 3)
     //   MSFT: Sell@5 (7.5 vs 8), Buy@8 (7.5 vs 7)
     Closes msft;
-    for (const double close : kFixture) {
-        msft.push_back(10.0 - close);
+    for (const common::Price close : kFixture) {
+        msft.push_back(common::Price::from_units(10) - close);
     }
 
     for (const bool alternate : {true, false}) {
@@ -350,7 +354,7 @@ TEST(SmaCrossoverSymbols, IgnoresSymbolsOutsideTheAllowlistAndMatchesExactly) {
 TEST(SmaCrossoverSignals, CarryTheContractedFields) {
     MovingAverageCrossoverConfig cfg = make_config(2, 3);
     cfg.strategy_id                  = "sma_2_3";
-    cfg.requested_quantity           = 25.0;
+    cfg.requested_quantity           = 25;
     Harness h{cfg};
     h.feed_closes(kFixture);
     ASSERT_EQ(h.signals.size(), 2u);
@@ -358,7 +362,7 @@ TEST(SmaCrossoverSignals, CarryTheContractedFields) {
 
     for (const domain::TradeSignal& signal : h.signals) {
         EXPECT_EQ(signal.symbol, "AAPL");
-        EXPECT_EQ(signal.requested_quantity, std::optional<double>{25.0});
+        EXPECT_EQ(signal.requested_quantity, std::optional<common::Quantity>{25});
         EXPECT_EQ(signal.order_type, std::optional<domain::OrderType>{domain::OrderType::Market});
         EXPECT_FALSE(signal.target_exposure.has_value());
         EXPECT_FALSE(signal.limit_price.has_value());

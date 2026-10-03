@@ -1,23 +1,17 @@
 #include "trading_engine/strategy/moving_average_crossover_strategy.hpp"
 
-#include <algorithm>
-#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "config_checks.hpp"
+#include "trading_engine/common/decimal.hpp"
 
 namespace trading_engine::strategy {
 
 namespace {
-
-// Two averages whose gap is at most this fraction of the larger one are EQUAL.
-// That is about 4,500 times a double's rounding step: far above the few ulps the
-// compensated sums leave behind, far below any gap worth acting on. Fixed on
-// purpose; see "Floating point" in the header.
-constexpr double kEqualityTolerance = 1e-12;
 
 constexpr std::string_view kName = "MovingAverageCrossoverStrategy";
 
@@ -47,27 +41,28 @@ MovingAverageCrossoverConfig validated(MovingAverageCrossoverConfig config) {
     return config;
 }
 
+// The largest close for which every sum and both cross-products stay inside int64:
+// a sum is at most long_window closes and a product multiplies it by a window, so
+// the bound is INT64_MAX / long_window^2 (divided twice: the square itself could
+// overflow for an absurd window). The division is UNSIGNED on purpose: a long_window of
+// 2^63 or more cast to int64 would be negative and give a huge, wrong bound. A window of
+// about 3.04 million or more gives a bound under one currency unit and is refused by the
+// constructor.
+common::Price max_close_for(std::size_t long_window) noexcept {
+    const auto window  = static_cast<std::uint64_t>(long_window);
+    const auto largest = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    return common::Price::from_micros(static_cast<std::int64_t>(largest / window / window));
+}
+
 }  // namespace
 
-// --- RollingSum / SymbolState ---------------------------------------------------
-
-void MovingAverageCrossoverStrategy::RollingSum::add(double term) noexcept {
-    const double next_total = total + term;
-    // The operand with the larger magnitude keeps its low-order bits in the sum;
-    // the smaller one loses some. Recover exactly what was lost.
-    if (std::fabs(total) >= std::fabs(term)) {
-        lost += (total - next_total) + term;
-    } else {
-        lost += (term - next_total) + total;
-    }
-    total = next_total;
-}
+// --- SymbolState ----------------------------------------------------------------
 
 void MovingAverageCrossoverStrategy::SymbolState::reset() noexcept {
     closes.clear();   // keeps the capacity, so a restart does not reallocate
     next       = 0;
-    short_sum  = RollingSum{};
-    long_sum   = RollingSum{};
+    short_sum  = common::Price{};
+    long_sum   = common::Price{};
     last_time.reset();
     relation.reset();
 }
@@ -76,8 +71,11 @@ void MovingAverageCrossoverStrategy::SymbolState::reset() noexcept {
 
 MovingAverageCrossoverStrategy::MovingAverageCrossoverStrategy(MovingAverageCrossoverConfig config)
     : config_{validated(std::move(config))},
-      max_close_{std::numeric_limits<double>::max() /
-                 (2.0 * (static_cast<double>(config_.long_window) + 1.0))} {
+      max_close_{max_close_for(config_.long_window)} {
+    if (max_close_ < common::Price::from_units(1)) {
+        reject("long_window " + std::to_string(config_.long_window) +
+               " is too large for exact arithmetic: the sums would overflow for any close of 1 or more");
+    }
     states_.reserve(config_.symbols.size());
     for (const common::Symbol& symbol : config_.symbols) {
         states_.emplace(symbol, SymbolState{});
@@ -111,11 +109,10 @@ void MovingAverageCrossoverStrategy::on_market_event(const domain::MarketEvent& 
         report_ignored(event, &state, BarReason::PriceAbsent);
         return;
     }
-    const double close = *event.price;
-    if (!std::isfinite(close) || close <= 0.0 || close > max_close_) {
-        const bool usable_but_too_large = std::isfinite(close) && close > 0.0;
+    const common::Price close = *event.price;
+    if (close <= common::Price{} || close > max_close_) {
         report_ignored(event, &state,
-                       usable_but_too_large ? BarReason::PriceAboveMaxClose : BarReason::PriceInvalid);
+                       close > common::Price{} ? BarReason::PriceAboveMaxClose : BarReason::PriceInvalid);
         return;
     }
     if (state.last_time.has_value() && event.exchange_time <= *state.last_time) {
@@ -131,9 +128,10 @@ void MovingAverageCrossoverStrategy::on_market_event(const domain::MarketEvent& 
         return;
     }
 
-    const double short_average = state.short_sum.value() / static_cast<double>(config_.short_window);
-    const double long_average  = state.long_sum.value() / static_cast<double>(config_.long_window);
-    const std::optional<Relation> now = relate(short_average, long_average);
+    // The decision is exact integer arithmetic; the averages are derived numbers for the report.
+    const double short_average = average(state.short_sum, config_.short_window);
+    const double long_average  = average(state.long_sum, config_.long_window);
+    const std::optional<Relation> now = relate(state);
     if (!now.has_value()) {
         // equal: no signal, and the last nonzero relationship stands
         report_evaluated(event, state, BarReason::AveragesEqual, BarAction::None, state.relation,
@@ -176,11 +174,11 @@ void MovingAverageCrossoverStrategy::accept_close(SymbolState& state, common::Pr
         // left the long window yet.
         closes.push_back(close);   // may throw; nothing has been modified so far
         const std::size_t count = closes.size();
-        state.long_sum.add(close);
-        state.short_sum.add(close);
+        state.long_sum += close;
+        state.short_sum += close;
         if (count > short_window) {
             // The close short_window bars back has just left the short window.
-            state.short_sum.add(-closes[count - 1 - short_window]);
+            state.short_sum -= closes[count - 1 - short_window];
         }
         return;
     }
@@ -189,25 +187,33 @@ void MovingAverageCrossoverStrategy::accept_close(SymbolState& state, common::Pr
     // bar replaces. The close leaving the short window is the short_window-th
     // most recent one before this bar, which sits short_window slots behind the
     // slot being written.
-    const double leaves_long  = closes[state.next];
-    const double leaves_short = closes[(state.next + long_window - short_window) % long_window];
+    const common::Price leaves_long  = closes[state.next];
+    const common::Price leaves_short = closes[(state.next + long_window - short_window) % long_window];
     closes[state.next] = close;
     state.next = (state.next + 1) % long_window;
 
-    state.long_sum.add(close);
-    state.long_sum.add(-leaves_long);
-    state.short_sum.add(close);
-    state.short_sum.add(-leaves_short);
+    state.long_sum += close - leaves_long;
+    state.short_sum += close - leaves_short;
 }
 
 std::optional<MovingAverageCrossoverStrategy::Relation>
-MovingAverageCrossoverStrategy::relate(double short_average, double long_average) noexcept {
-    const double gap   = short_average - long_average;
-    const double scale = std::max(std::fabs(short_average), std::fabs(long_average));
-    if (std::fabs(gap) <= kEqualityTolerance * scale) {
+MovingAverageCrossoverStrategy::relate(const SymbolState& state) const noexcept {
+    // short_sum / short_window  versus  long_sum / long_window, without dividing: both
+    // sides are multiplied by the product of the windows. Both products fit int64 (see
+    // max_close_), so this is exact.
+    const common::Price above = state.short_sum * static_cast<std::int64_t>(config_.long_window);
+    const common::Price below = state.long_sum * static_cast<std::int64_t>(config_.short_window);
+    if (above == below) {
         return std::nullopt;
     }
-    return gap > 0.0 ? Relation::ShortAboveLong : Relation::ShortBelowLong;
+    return above > below ? Relation::ShortAboveLong : Relation::ShortBelowLong;
+}
+
+double MovingAverageCrossoverStrategy::average(common::Price sum, std::size_t window) noexcept {
+    // One division of two exact values (the integer sum of millionths, and window * 10^6), so the
+    // result is the double nearest the true average: no second rounding from a premature /10^6.
+    return static_cast<double>(sum.micros()) /
+           (static_cast<double>(window) * static_cast<double>(common::Decimal::kScale));
 }
 
 domain::TradeSignal MovingAverageCrossoverStrategy::make_signal(const domain::MarketEvent& event,

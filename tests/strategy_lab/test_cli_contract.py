@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import labtest
 from labtest import LabTestCase, datasets, run_exe, sma_args, strict_loads
@@ -29,10 +30,15 @@ class DescribeContract(LabTestCase):
 
         # Literals from docs/strategies/*.md section 2: the single source (the C++ config structs) must agree.
         self.assertEqual(defaults("sma_crossover"),
-                         {"strategy_id": "sma_crossover", "short_window": 5, "long_window": 20, "requested_quantity": 1.0, "symbols": None})
+                         {"strategy_id": "sma_crossover", "short_window": 5, "long_window": 20, "requested_quantity": 1, "symbols": None})
         self.assertEqual(defaults("mean_reversion"),
                          {"strategy_id": "mean_reversion", "lookback": 20, "entry_threshold": 2.0, "rearm_threshold": 0.5,
-                          "requested_quantity": 1.0, "symbols": None})
+                          "requested_quantity": 1, "symbols": None})
+        # A quantity is a whole number of shares, an exact int64: a JSON integer and a "uint" parameter, never a double.
+        for kind in ("sma_crossover", "mean_reversion"):
+            quantity = [p for p in kinds[kind]["parameters"] if p["name"] == "requested_quantity"][0]
+            self.assertEqual(quantity["type"], "uint", kind)
+            self.assertIs(type(quantity["default"]), int, kind)
         symbols = [p for p in kinds["sma_crossover"]["parameters"] if p["name"] == "symbols"][0]
         self.assertTrue(symbols["required"])
         self.assertNotIn("default", symbols)
@@ -97,7 +103,8 @@ class ReplayContract(LabTestCase):
                          [(1, "buy", 4, "2026-01-05T14:34:00.000000000Z"), (2, "sell", 7, "2026-01-05T14:37:00.000000000Z")])
         self.assertEqual(signals[0]["metadata"], {"long_sma": "2", "long_window": "3", "short_sma": "2.5", "short_window": "2",
                                                   "trigger": "short_crossed_above_long"})
-        self.assertEqual(signals[0]["requested_quantity"], 1.0)
+        self.assertEqual(signals[0]["requested_quantity"], 1)
+        self.assertIs(type(signals[0]["requested_quantity"]), int, "a whole number of shares, written as an integer")
         self.assertEqual(signals[0]["order_type"], "market")
         for forbidden in ("confidence", "target_exposure", "limit_price"):
             self.assertNotIn(forbidden, signals[0], "unset by the strategy, so absent, never null")
@@ -135,9 +142,10 @@ class ReplayContract(LabTestCase):
         self.assertEqual(trade["states"], {})
 
     def test_optional_bar_fields_round_trip_exactly(self) -> None:
-        event = run_exe(sma_args("ohlcv_example.csv")).json()["result"]["events"][0]
+        event = run_exe(sma_args("ohlcv_example.csv")).json(exact=True)["result"]["events"][0]
         self.assertEqual((event["price"], event["open"], event["high"], event["low"], event["volume"]),
-                         (101.25, 100.5, 102.0, 100.25, 15000.0))
+                         (Decimal("101.25"), Decimal("100.5"), Decimal("102"), Decimal("100.25"), 15000))
+        self.assertIs(type(event["volume"]), int, "volume is a whole number of shares")
 
 
 class FaultContract(LabTestCase):
@@ -194,7 +202,10 @@ class ExitStatus(LabTestCase):
 
     def test_invalid_prices_are_refused_never_repaired(self) -> None:
         with labtest.temp_dir() as tmp:
-            for bad in ("nan", "inf", "-inf", "0", "-1", "abc", "1e999", ""):
+            # not exact positive decimals: nan/inf, exponents, a sign, zero, text, nothing, more than 6 decimals,
+            # more than int64 holds. Each is refused at its line and column; none is rounded or repaired.
+            for bad in ("nan", "inf", "-inf", "0", "-1", "abc", "1e999", "1e3", "1.5.2", "", "0.0000001",
+                        "9223372036855", "9223372036854.775808"):
                 path = os.path.join(tmp, "bad.csv")
                 with open(path, "w", encoding="utf-8", newline="\n") as handle:
                     handle.write(f"symbol,exchange_time,type,price\nAAPL,2026-01-05T14:30:00Z,bar,{bad}\n")
@@ -273,13 +284,18 @@ class EncodingContract(LabTestCase):
 
 
 class PrecisionContract(LabTestCase):
-    def test_prices_at_the_edges_of_the_double_range_read_back_to_the_same_double(self) -> None:
-        events = run_exe(sma_args("precision_edge.csv", "2", "3")).json()["result"]["events"]
-        want = [0.1, 0.30000000000000004, 1e-7, 123456789.12345679, 5e-324, 1.7976931348623157e308]
+    def test_prices_are_read_and_written_exactly_at_the_edges_of_the_int64_range(self) -> None:
+        run = run_exe(sma_args("precision_edge.csv", "2", "3"))
+        events = run.json(exact=True)["result"]["events"]
+        want = [Decimal("0.1"), Decimal("0.3"), Decimal("0.000001"), Decimal("123456789.123456"),
+                Decimal("1.25"), Decimal("9223372036854.775807")]
         self.assertEqual([e["price"] for e in events], want)
-        for got, expected in zip((e["price"] for e in events), want):
-            self.assertEqual(float.hex(got), float.hex(expected))
-        # The crossover refuses the largest close (its documented input ceiling); the CSV loader accepted it.
+        # The text carries exactly those digits (shortest form: trailing zeros dropped), so nothing passed through a double.
+        for text in ('"price":0.1,', '"price":0.3,', '"price":0.000001,', '"price":123456789.123456,',
+                     '"price":1.25,', '"price":9223372036854.775807,'):
+            self.assertIn(text, run.stdout)
+        # The crossover refuses the largest close (above its documented INT64_MAX / long_window^2 ceiling); the CSV
+        # loader accepted it because it is exactly an int64.
         self.assertEqual(events[5]["results"][0]["reason"], "price_above_max_close")
 
     def test_every_number_in_a_document_is_standard_json(self) -> None:
@@ -295,14 +311,14 @@ class ScaleContract(LabTestCase):
             with open(path, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write("symbol,exchange_time,type,price\n")
                 state = 12345
-                price = {"AAPL": 100.0, "MSFT": 200.0}
+                cents = {"AAPL": 10000, "MSFT": 20000}   # whole cents: an integer walk, no floating point
                 for i in range(rows // 2):
                     seconds = i
                     stamp = f"2026-01-05T{14 + seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}Z"
                     for symbol in ("AAPL", "MSFT"):
                         state = (state * 6364136223846793005 + 1442695040888963407) % (1 << 64)
-                        price[symbol] = max(1.0, price[symbol] + ((state >> 40) % 2001) / 100.0 - 10.0)
-                        handle.write(f"{symbol},{stamp},bar,{price[symbol]:.2f}\n")
+                        cents[symbol] = max(100, cents[symbol] + (state >> 40) % 2001 - 1000)
+                        handle.write(f"{symbol},{stamp},bar,{cents[symbol] // 100}.{cents[symbol] % 100:02d}\n")
             args = ["run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=AAPL,MSFT",
                     "--strategy", "mean_reversion", "--param", "symbols=AAPL,MSFT", "--no-wall-clock"]
             first = run_exe(args)

@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "support/price_literals.hpp"
 #include "trading_engine/common/types.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
@@ -23,24 +24,33 @@ namespace common   = trading_engine::common;
 namespace domain   = trading_engine::domain;
 namespace strategy = trading_engine::strategy;
 
-using Closes = std::vector<double>;
+// Closes are exact int64 Prices. Write them with units({10, 6}) (whole currency units) or
+// 0.25_px (exact decimal text); never as a bare number, which would mean that many micros.
+using Closes = std::vector<common::Price>;
 using Labels = std::vector<std::string>;
 
+using trading_engine::test_support::kMaxPrice;
+using trading_engine::test_support::px;
+using trading_engine::test_support::micros;
+using trading_engine::test_support::units;
+using namespace trading_engine::test_support::literals;
+
+// Non-finite THRESHOLDS only: an entry / rearm threshold is a z-score, a plain double. A price
+// is an int64 and cannot be non-finite.
 inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 inline constexpr double kInf = std::numeric_limits<double>::infinity();
-inline constexpr double kMax = std::numeric_limits<double>::max();
 
 // The fixture from the task: lookback 4, entry 1.5, rearm 0.5. Counting bars from
 // 1 it must give: nothing on bars 1-3, Buy at 4 (z -1.7320508), a rearm at 5 (z
 // 0.1524986), Buy at 6 (z -1.5261167) and Sell at 7 (z 1.6858628).
-inline const Closes kFixture{10, 10, 10, 6, 9, 2, 30};
+inline const Closes kFixture = units({10, 10, 10, 6, 9, 2, 30});
 
 inline common::Timestamp at_minute(long long minute) {
     return common::Timestamp{} + std::chrono::minutes{minute};
 }
 
 // A finalized bar: the only fields the strategy reads.
-inline domain::MarketEvent bar(const std::string& symbol, double close, long long minute) {
+inline domain::MarketEvent bar(const std::string& symbol, common::Price close, long long minute) {
     domain::MarketEvent event;
     event.symbol        = symbol;
     event.type          = domain::MarketEventType::Bar;
@@ -89,7 +99,7 @@ public:
     void feed_closes(const Closes& closes, const std::string& symbol = "AAPL",
                      long long first_minute = 1) {
         long long minute = first_minute;
-        for (const double close : closes) {
+        for (const common::Price close : closes) {
             feed(bar(symbol, close, minute++));
         }
     }

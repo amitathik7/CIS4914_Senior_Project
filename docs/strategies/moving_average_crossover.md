@@ -33,13 +33,12 @@ file yet.
 | `strategy_id` | `std::string` | `"sma_crossover"` | Not empty. Becomes `TradeSignal::strategy_id`. Two instances in one engine need two ids. |
 | `short_window` | `std::size_t` | `5` | At least 1. Counted in accepted bars. |
 | `long_window` | `std::size_t` | `20` | Greater than `short_window`. |
-| `requested_quantity` | `common::Quantity` | `1` | Finite, positive and a **whole number** of shares. |
+| `requested_quantity` | `common::Quantity` (`std::int64_t`) | `1` | Positive: a **whole number** of shares (an exact integer count; a fraction cannot be written). |
 | `symbols` | `std::vector<std::string>` | none | Not empty, no empty entry, no symbol twice. Matched exactly (case-sensitive) against `MarketEvent::symbol`. |
 
 An invalid value throws `common::ConfigError` from the constructor, naming the
-field and showing the value (`requested_quantity must be a finite, positive
-whole number of shares (got 1.5)`). Nothing is rounded, clamped or defaulted: 1.5
-shares is rejected, not turned into 1 or 2.
+field and showing the value (`requested_quantity must be a positive whole number
+of shares (got 0)`). Nothing is rounded, clamped or defaulted.
 
 ## 3. Input assumptions
 
@@ -61,7 +60,7 @@ last timestamp, not the history, not the averages, not the crossover state.
 |---|---|
 | A symbol not on the allowlist, or only matching case-insensitively | It is not this strategy's instrument. |
 | Any type but `Bar` (`Trade`, `Quote`, `Status`, `Unknown`) | Only bars carry a close. |
-| No `price`, or one that is NaN, infinite, zero or negative | Not a usable close. |
+| No `price`, or one that is zero or negative | Not a usable close. (`Price` is an exact `Decimal`: it has no NaN or infinity.) |
 | A close above `max_close` (section 6) | Summing it could overflow. |
 | An `exchange_time` not later than the last accepted bar's for that symbol | A duplicate, a replay, an out-of-order bar, or a corrected print (there is no revision marker to tell them apart). |
 
@@ -109,32 +108,47 @@ asserts it.
 | 8 | 2 | 2.5 | 3 | -0.5 | below: **Sell** (`short_sma` 2.5, `long_sma` 3) |
 | 9 | 1 | 1.5 | 2 | -0.5 | below |
 
-## 6. Floating point
+## 6. Numbers
 
-`common::Price` is a provisional `double` (`OQ#11`), so the arithmetic is
-defined, not assumed.
+`common::Price` is `common::Decimal`: an exact `int64` count of **millionths** of the
+account currency (`common/decimal.hpp`; 150.02 is 150'020'000). Nothing in a decision
+passes through a `double`.
 
-- **Rolling sums, compensated.** Each window keeps a running sum updated in O(1)
-  per bar (add the new close, subtract the one leaving), with Neumaier's
-  compensation so rounding error does not accumulate over a long run. This
-  matters: doubles near 1e16 are 2 apart, so adding a close of 1 to a sum around
-  1e16 changes nothing, and a plain running total loses it for good. The file must
-  not be built with `-ffast-math` or `/fp:fast`, which would cancel the
-  compensation.
-- **Equality.** The averages are **equal** when
-  `|short - long| <= 1e-12 * max(short, long)`. Mathematically equal averages are
-  rarely bit-equal (`0.1 + 0.2` differs from `0.15 + 0.15`), and a strict
-  comparison would read a tie as a one-ulp "crossing" and fire a false signal.
-  1e-12 is about 4,500 times a double's rounding step: well above the error the
-  compensated sums leave, and a gap that small is noise at any realistic price.
-  The tolerance is fixed, not a configuration option.
-- **Non-finite values cannot occur.** A close above
-  `max_close = DBL_MAX / (2 * (long_window + 1))` is ignored like any other
-  invalid bar, so no rolling sum, average or difference can overflow. No price
-  gets near that limit (of the order of 1e306 for typical windows).
+- **Rolling sums are exact.** Each window keeps a running sum updated in O(1) per bar
+  (add the new close, subtract the one leaving). They are integers, so nothing is
+  compensated, nothing drifts over a long run, and a close of 1 millionth is never lost
+  next to a close of billions.
+- **Equality is exact, with no tolerance.** The averages are compared **without
+  dividing**, by cross-multiplication:
+  `short_sum * long_window` versus `long_sum * short_window`. Equal means equal, so a
+  tie such as `(0.4 + 0.2) / 2` against `(0.3 + 0.4 + 0.2) / 3` is a tie, never a
+  one-ulp "crossing" (a floating-point version needs a fudge factor for that; here
+  there is none to tune).
+- **Overflow is prevented, not detected.** `Decimal` arithmetic is unchecked, so the
+  bound lives here: a close above `max_close = INT64_MAX / long_window^2` millionths is
+  ignored like any other invalid bar (reason `price_above_max_close`), which keeps every
+  sum and both products inside `int64`. For the default 5/20 windows that is about
+  2.3 * 10^16 millionths, i.e. 23 billion currency units. Construction is refused
+  (`ConfigError`) if `long_window` is so large that `max_close` would be under one
+  currency unit: more than 3,037,000. The bound is computed in unsigned arithmetic, so
+  a `long_window` of 2^63 or more cannot wrap into a huge accepted bound. Why the bound
+  suffices: with `S < L` and every close at most `M = INT64_MAX / L^2`, a window sum is
+  at most `L * M` (and the transient `S + 1` closes of the warm-up at most the same),
+  and both products are at most `L * S * M <= INT64_MAX * S / L < INT64_MAX`; the
+  difference `close - leaving close` of two values in `[1, M]` is within `+-M`. The
+  boundary is exercised against an independent 128-bit reference
+  (`SmaCrossoverOverflowBound`).
+- **`short_sma` and `long_sma` are derived.** They are `sum / (window * 10^6)`: one
+  division of two exact values, in currency units, written as the shortest text that
+  reads back as the same `double`. They are for reporting and for the signal metadata
+  only; they never feed back into a decision and are never turned back into a `Price`.
 
-If `OQ#11` moves `Price` to fixed-point or integer units, this section and the
-code behind it should be revisited, not carried over.
+**Status of the representation.** Scaled `int64` money at 10^6 with whole-share quantities is the direction
+*recommended* in ADR 0004 section 12 (Proposed) and implemented as `common::Decimal` on the `adam/portfolio-manager` branch.
+`OQ#11` is **still open**: `docs/OPEN_QUESTIONS.md` requires all four members to sign off, and no ADR or decision record
+here shows that they did (a comment in that branch's `types.hpp` calls it agreed, but that is not recorded). Treat these
+types as a **proposal in use**, not a ratified policy. Only `common/types.hpp` and the lines of this section that name
+`Decimal` depend on it.
 
 ## 7. Signals
 
@@ -156,7 +170,7 @@ Metadata (all values are text):
 |---|---|
 | `trigger` | `short_crossed_above_long` (Buy) or `short_crossed_below_long` (Sell). |
 | `short_window`, `long_window` | The configured window sizes. |
-| `short_sma`, `long_sma` | Both averages on the signalling bar, as the shortest text that reads back as exactly the same `double` (`2.5`, `2`, `1.3333333333333333`). |
+| `short_sma`, `long_sma` | Both averages on the signalling bar, in currency units, as the shortest text that reads back as exactly the same `double` (`2.5`, `2`, `1.3333333333333333`). Derived numbers, not money (section 6). |
 
 **What a signal does not mean.** The strategy tracks no position, so:
 
@@ -181,7 +195,7 @@ a fill (see [`../STRATEGIES.md`](../STRATEGIES.md#2-what-emitting-a-signal-does-
 each run starts cold: after a restart the same bars at the same timestamps are
 accepted again and reproduce the same signals. A freshly constructed strategy is
 already cold, so it can also be driven directly, without an engine, which is how
-most of its tests work. Memory is one `double` per accepted bar up to
+most of its tests work. Memory is one `Decimal` (8 bytes) per accepted bar up to
 `long_window`, per allowlisted symbol; the per-event path allocates nothing
 except while a history is still growing and when a signal is built.
 
@@ -218,14 +232,14 @@ exactly this. Registering it next to the mean-reversion strategy is shown in
 
 | Choice | Why it was made | Status |
 |---|---|---|
-| Quantity is a **whole number of shares**, never rounded; fractions are rejected. | Matches the direction proposed in ADR 0002 section 8, and "silently rounding a fractional request" is the one thing that section rules out. | ADR 0002 is *Proposed*. This is **not** a project-wide numeric policy (`OQ#11`). |
+| Quantity is a **whole number of shares** (`int64`); a fraction cannot be written. | Matches the direction proposed in ADR 0002 section 8, and `Quantity` is an `int64` share count in the fixed-point types (see the status in section 6). | ADR 0002 is *Proposed*; `OQ#11` is open. |
 | Signals are **market orders**: `order_type = Market`, `limit_price` unset. | The order-shape fields ADR 0002 proposes, used as proposed. | Fields are *Proposed*. No component reads them yet. |
 | An explicit **quantity** on every signal, not `target_exposure`. | The requirement for this strategy: a fixed request, with no sizing against portfolio equity. | `OQ#9` (quantity vs target exposure vs delta) is open. |
 | The first nonzero relationship is a **silent baseline**. | A strategy started mid-trend should not fire on its first bar. | Local. |
 | Equal averages keep the last nonzero relationship. | Avoids a false crossover on a plateau. | Local. |
-| Equality tolerance **1e-12**, relative, fixed. | See section 6. | Local; tied to `OQ#11`. |
+| Averages are compared **exactly** (integer cross-multiplication); there is no tolerance. | See section 6. | Local. |
 | Strict timestamp increase; duplicates and older bars are **ignored**. | `MarketEvent` has no revision marker, so a corrected print cannot be told from a replay. | Local; revisit with `OQ#1`. |
-| A close above `max_close` is ignored. | Keeps the sums finite by construction. | Local. |
+| A close above `max_close` is ignored. | Keeps every sum and product inside `int64` by construction (section 6). | Local. |
 | Bad configuration throws **`common::ConfigError`**; a repeated symbol is an error. | The error type reserved for configuration; a repeat is almost certainly a mistake. | Local. |
 | Symbols match **exactly**. | Normalising symbols is `MarketDataService`'s job. | Local. |
 | Signal metadata keys (section 7). | Informational; nothing consumes them yet. | Local. |

@@ -41,7 +41,7 @@ TEST(TradeSignalOrderShape, CanRepresentAMarketShapedSignal) {
     domain::TradeSignal signal{};
     signal.symbol = "AAPL";
     signal.side = domain::SignalSide::Buy;
-    signal.requested_quantity = 100.0;
+    signal.requested_quantity = 100;
     signal.order_type = domain::OrderType::Market;
 
     EXPECT_EQ(signal.order_type, domain::OrderType::Market);
@@ -52,13 +52,15 @@ TEST(TradeSignalOrderShape, CanRepresentALimitShapedSignal) {
     domain::TradeSignal signal{};
     signal.symbol = "AAPL";
     signal.side = domain::SignalSide::Sell;
-    signal.requested_quantity = 50.0;
+    signal.requested_quantity = 50;
     signal.order_type = domain::OrderType::Limit;
-    signal.limit_price = 152.75;
+    signal.limit_price = common::Price::from_micros(152'750'000);   // 152.75, exactly
 
     EXPECT_EQ(signal.order_type, domain::OrderType::Limit);
     ASSERT_TRUE(signal.limit_price.has_value());
-    EXPECT_DOUBLE_EQ(*signal.limit_price, 152.75);
+    EXPECT_EQ(*signal.limit_price, common::Price::from_micros(152'750'000));
+    EXPECT_EQ(*signal.limit_price, common::Price::from_units(152) + common::Price::from_micros(750'000));
+    EXPECT_EQ(*signal.requested_quantity, 50);
 }
 
 TEST(SignalCancelRequestShape, CarriesItsOwnIdSeparatelyFromItsTarget) {

@@ -1,14 +1,17 @@
 """The JSON serializers on documents real runs cannot produce, parsed by a real JSON parser.
 
-The probe (tests/strategy_lab/json_probe.cpp) builds hostile content: NaN and infinite prices and
-diagnostics, unavailable values, quotes, backslashes, control characters, line separators, emoji, the
-extremes of the double range, and counters beyond 2^53. The checks below read every value back.
+The probe (tests/strategy_lab/json_probe.cpp) builds hostile content: NaN and infinite derived
+numbers and diagnostics, unavailable values, quotes, backslashes, control characters, line
+separators, emoji, the extremes of the double range for derived statistics, the extremes of the
+int64 range for prices and quantities, and counters beyond 2^53. The checks below read every value
+back. Prices are read with ``decimal.Decimal`` so they are compared digit for digit.
 """
 
 from __future__ import annotations
 
 import math
 import unittest
+from decimal import Decimal
 
 import labtest
 from labtest import LabTestCase, run_exe, strict_loads
@@ -27,6 +30,7 @@ class HostileDocument(LabTestCase):
         self.run_ = run
         self.doc = run.json()          # strict: duplicate keys, NaN, Infinity, trailing text all fail here
         self.result = self.doc["result"]
+        self.exact = run.json(exact=True)["result"]   # the same, with every decimal number as a Decimal
 
     def test_it_is_one_valid_document_with_no_non_finite_literal_anywhere(self) -> None:
         self.assertEqual(self.doc["schema"], "strategy_lab.replay")
@@ -64,19 +68,35 @@ class HostileDocument(LabTestCase):
         for char in ("\x00", "\x01", "\t", "\n", "\r", "\x7f", " ", " "):
             self.assertNotIn(char, body, repr(char))
 
-    def test_numbers_at_the_edges_read_back_to_the_same_double(self) -> None:
+    def test_derived_numbers_at_the_edges_read_back_to_the_same_double(self) -> None:
         params = dict(self.result["configuration"]["strategies"][0]["parameters"])
-        self.assertEqual(params["requested_quantity"], 1.7976931348623157e308)
         self.assertEqual(params["tiny"], 5e-324)
         self.assertEqual(params["third"], 1.0 / 3.0)
         derived = self.result["configuration"]["strategies"][0]["derived"]
         self.assertEqual(derived["ratio"], 0.1 + 0.2)
         self.assertIs(derived["flag"], True)
-        first = self.result["events"][0]
-        self.assertEqual(first["price"], 0.1)
-        self.assertEqual(first["volume"], 1e-320)
-        self.assertEqual(self.result["signals"][0]["requested_quantity"], 1.0 / 3.0)
         self.assertEqual(self.result["signals"][0]["confidence"], 0.1 + 0.2)
+
+    def test_prices_and_quantities_are_exact_integers_written_digit_for_digit(self) -> None:
+        # A quantity is a whole number of shares: a JSON integer, never a float, even at INT64_MAX.
+        params = self.result["configuration"]["strategies"][0]["parameters"]
+        self.assertEqual(params["requested_quantity"], 9223372036854775807)
+        self.assertIs(type(params["requested_quantity"]), int)
+        first = self.exact["events"][0]
+        self.assertEqual(first["price"], Decimal("0.1"))
+        self.assertEqual(first["low"], Decimal("0.000001"), "one micro")
+        self.assertEqual(first["high"], Decimal("9223372036854.775807"), "INT64_MAX micros: every digit survives")
+        self.assertEqual(first["open"], Decimal("-9223372036854.775808"), "INT64_MIN micros")
+        self.assertEqual(first["volume"], 9223372036854775807)
+        self.assertIs(type(first["volume"]), int)
+        signal = self.exact["signals"][0]
+        self.assertEqual(signal["requested_quantity"], 7)
+        self.assertIs(type(signal["requested_quantity"]), int)
+        self.assertEqual(signal["limit_price"], Decimal("1234567890.123456"))
+        # The raw text carries the same digits: nothing was rounded on the way through a double.
+        for text in ('"high":9223372036854.775807', '"open":-9223372036854.775808', '"low":0.000001',
+                     '"limit_price":1234567890.123456', '"volume":9223372036854775807'):
+            self.assertIn(text, self.run_.stdout)
 
     def test_counters_beyond_two_to_the_fifty_third_are_exact_integers(self) -> None:
         stats = self.result["engine"]["stats"]
@@ -85,17 +105,18 @@ class HostileDocument(LabTestCase):
         self.assertEqual(self.result["configuration"]["strategies"][0]["derived"]["count"], 18446744073709551615)
         self.assertEqual(self.result["input"]["dataset"]["bytes"], 123456789012)
 
-    def test_non_finite_event_and_signal_fields_are_omitted_with_a_status(self) -> None:
+    def test_an_integer_price_is_never_non_finite_and_a_non_finite_rate_is_omitted_with_a_status(self) -> None:
         first = self.result["events"][0]
-        for name, status in (("open", "nan"), ("high", "inf"), ("low", "-inf")):
-            self.assertNotIn(name, first)
-            self.assertEqual(first[f"{name}_status"], status)
-        second = self.result["events"][1]
-        self.assertNotIn("price", second)
-        self.assertEqual(second["price_status"], "nan")
+        for name in ("price", "open", "high", "low", "volume"):
+            self.assertIn(name, first)
+            self.assertNotIn(f"{name}_status", first, "an int64 has no NaN or infinity")
+        second = self.exact["events"][1]
+        self.assertEqual(second["price"], Decimal("-9223372036854.775808"), "an invalid price is still written exactly")
+        self.assertNotIn("price_status", second)
         third = self.result["events"][2]
         self.assertNotIn("price", third)
         self.assertNotIn("price_status", third, "an absent price is simply absent")
+        # target_exposure and confidence are RATES (doubles): a non-finite one is omitted, with a status.
         signal = self.result["signals"][0]
         self.assertNotIn("target_exposure", signal)
         self.assertEqual(signal["target_exposure_status"], "nan")

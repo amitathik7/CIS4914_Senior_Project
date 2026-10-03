@@ -7,8 +7,13 @@ from __future__ import annotations
 import pandas as pd
 
 from .compare import CompareModel, CompletedComparison, MemberRun, Readiness
-from .schema import Event, StrategyEventResult
+from .schema import Event, StrategyEventResult, exact_text
+from .table_order import RowOrder, exact_order
 from .tables import ACTION_TEXT, SIDE_TEXT
+
+# The exact-number columns each Compare table can be ordered by (see table_order).
+SIGNAL_ORDER_COLUMNS = ("Signal id (raw)", "Quantity")
+DIAGNOSTIC_ORDER_COLUMNS = ("Close",)
 
 READINESS_TEXT = {"ready": "Ready", "warming_up": "Warming up", "not_tracked": "No bar has reached the strategy",
                   "no_rows": "No rows revealed yet"}
@@ -97,7 +102,7 @@ def signals_at_event(model: CompareModel, labels: dict[str, str], event_index: i
         s = item.signal
         rows.append({"Configuration": labels[item.member], "Request": SIDE_TEXT.get(s.side, s.side),
                      "Signal id (raw)": str(s.signal_id), "Scoped reference": item.member_ref,
-                     "Quantity": "" if s.requested_quantity is None else str(s.requested_quantity),
+                     "Quantity": exact_text(s.requested_quantity),
                      "Created (UTC)": s.created_at, "Trigger": s.metadata.get("trigger", "")})
     return pd.DataFrame(rows, columns=["Configuration", "Request", "Signal id (raw)", "Scoped reference", "Quantity",
                                        "Created (UTC)", "Trigger"])
@@ -120,30 +125,34 @@ def agreement_sentence(model: CompareModel, event_index: int) -> str:
     return f"Only {who} produced a signal request here ({', '.join(SIDE_TEXT.get(s, s) for s in sides)}); {other} produced none."
 
 
-def signals_table(model: CompareModel, labels: dict[str, str], cursor: int, symbol: str | None) -> pd.DataFrame:
-    rows = []
+def signals_table(model: CompareModel, labels: dict[str, str], cursor: int, symbol: str | None,
+                  order: RowOrder = RowOrder()) -> pd.DataFrame:
+    rows, keys = [], []
     for item in model.signals_through(cursor, symbol):
         s = item.signal
+        keys.append({"Signal id (raw)": s.signal_id, "Quantity": s.requested_quantity})
         rows.append({"Configuration": labels[item.member], "Signal id (raw)": str(s.signal_id),
                      "Scoped reference": item.member_ref, "Event": s.event_index + 1,
                      "Symbol": s.symbol, "Request": SIDE_TEXT.get(s.side, s.side),
-                     "Quantity": None if s.requested_quantity is None else float(s.requested_quantity),
+                     "Quantity": exact_text(s.requested_quantity),
                      "Created (UTC)": s.created_at, "Trigger": s.metadata.get("trigger", "")})
-    return pd.DataFrame(rows, columns=["Configuration", "Signal id (raw)", "Scoped reference", "Event", "Symbol", "Request",
-                                       "Quantity", "Created (UTC)", "Trigger"])
+    return pd.DataFrame(exact_order(rows, keys, order),
+                        columns=["Configuration", "Signal id (raw)", "Scoped reference", "Event", "Symbol", "Request",
+                                 "Quantity", "Created (UTC)", "Trigger"])
 
 
-def diagnostics_table(model: CompareModel, cursor: int, symbol: str | None) -> pd.DataFrame:
+def diagnostics_table(model: CompareModel, cursor: int, symbol: str | None, order: RowOrder = RowOrder()) -> pd.DataFrame:
     first, second = model.members
-    rows = []
+    rows, keys = [], []
     for event in model.events_through(cursor, symbol):
+        keys.append({"Close": event.price})
         a, b = _result_text(model.result_of(first, event)), _result_text(model.result_of(second, event))
         rows.append({"Event": event.index + 1, "Time (UTC)": event.exchange_time, "Symbol": event.symbol,
-                     "Type": event.type, "Close": None if event.price is None else float(event.price),
+                     "Type": event.type, "Close": exact_text(event.price),
                      f"{first} verdict": a[0], f"{first} reason": a[1], f"{first} outcome": a[2], f"{first} window": a[3],
                      f"{second} verdict": b[0], f"{second} reason": b[1], f"{second} outcome": b[2],
                      f"{second} window": b[3], "Decisions differ": "yes" if a[:3] != b[:3] else "no"})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(exact_order(rows, keys, order))
 
 
 def run_summary_rows(comparison: CompletedComparison) -> pd.DataFrame:

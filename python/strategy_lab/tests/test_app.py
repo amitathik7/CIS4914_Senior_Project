@@ -121,7 +121,8 @@ class FirstLoad(AppTestCase):
         sma = catalog.strategy("sma_crossover")
         self.assertEqual(self.at.number_input(key="ui_param.sma_crossover.short_window").value, sma.param("short_window").default)
         self.assertEqual(self.at.number_input(key="ui_param.sma_crossover.long_window").value, sma.param("long_window").default)
-        self.assertEqual(self.at.text_input(key="ui_param.sma_crossover.requested_quantity").value, "1")
+        # A quantity is a whole number of shares (an int64): the catalog says "uint", so it is an integer input.
+        self.assertEqual(self.at.number_input(key="ui_param.sma_crossover.requested_quantity").value, 1)
         self.assertEqual(self.at.text_input(key="ui_symbols").value, "AAPL")                  # the dataset's symbols
 
 

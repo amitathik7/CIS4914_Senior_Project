@@ -5,21 +5,28 @@ TEST-ONLY. This is an oracle for the tests in this directory, written from the s
 of the C++ floating-point machinery (compensated sums, power-of-two scaling, tolerances) is shared
 with it. It is never used by the Strategy Lab tool or UI, which keep every decision in C++.
 
-Where the documented rules involve a floating-point tolerance (equal averages within 1e-12, a
-constant window within 1e-12 of the mean) this model uses the exact meaning (equal; zero variance).
-The fixtures it is run on avoid the band between the two, so the answers must agree.
+Prices are exact integer counts of 1e-6 (``Price`` = int64, scale 10^6 in common/types.hpp). The
+crossover compares its averages exactly in C++ (integer cross-multiplication), so "equal" means equal
+here too. Where the documented rules still involve a floating-point tolerance (mean reversion's constant
+window: a deviation within 1e-12 of the mean) this model uses the exact meaning (zero variance); the
+fixtures it is run on avoid the band between the two, so the answers must agree.
 """
 
 from __future__ import annotations
 
 import csv
-import sys
 from dataclasses import dataclass, field
 from fractions import Fraction
 from math import sqrt
 from pathlib import Path
 
-DBL_MAX = Fraction(sys.float_info.max)
+PRICE_SCALE = 10**6          # common::kPriceScale: a Price is an int64 count of 1e-6
+INT64_MAX = 2**63 - 1
+
+
+def max_close_micros(long_window: int) -> int:
+    """The crossover's largest accepted close, in micros: INT64_MAX / long_window^2 (divided twice, rounding down)."""
+    return INT64_MAX // long_window // long_window
 
 
 @dataclass
@@ -28,7 +35,14 @@ class Row:
     symbol: str
     time: str
     type: str
-    price: Fraction
+    price: Fraction    # in currency units, exactly the decimal text of the file
+
+    @property
+    def micros(self) -> int:
+        """The price as the integer the C++ holds; the loader only accepts at most 6 decimals, so this is exact."""
+        scaled = self.price * PRICE_SCALE
+        assert scaled.denominator == 1, f"more than 6 decimals: {self.price}"
+        return int(scaled)
 
 
 def load_rows(path: str | Path) -> list[Row]:
@@ -58,7 +72,7 @@ def _ignored(rows_state: dict | None, reason: str, size: int) -> Decision:
 def sma_crossover(rows: list[Row], short: int, long: int, symbols: list[str]) -> list[Decision]:
     """docs/strategies/moving_average_crossover.md sections 1, 3 and 4."""
     state = {symbol: {"closes": [], "relation": None} for symbol in symbols}
-    ceiling = DBL_MAX / (2 * (long + 1))
+    ceiling = max_close_micros(long)
     out: list[Decision] = []
     for row in rows:
         if row.type != "bar":
@@ -68,7 +82,7 @@ def sma_crossover(rows: list[Row], short: int, long: int, symbols: list[str]) ->
             out.append(_ignored(None, "symbol_not_allowlisted", long))
             continue
         mine = state[row.symbol]
-        if row.price > ceiling:
+        if row.micros > ceiling:
             out.append(_ignored(mine, "price_above_max_close", long))
             continue
         mine["closes"].append(row.price)

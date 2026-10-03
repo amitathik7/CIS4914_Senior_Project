@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +31,16 @@ class StrictJsonError(AssertionError):
     pass
 
 
-def strict_loads(text: str) -> Any:
+def strict_loads(text: str, exact: bool = False) -> Any:
     """Parse ONE JSON document, refusing anything a strict consumer would refuse.
 
     Python's parser already rejects a trailing comma, a bare ``.5``, a comma used as a decimal point
     and raw control characters in strings. On top of that this refuses duplicate object keys and the
     non-standard literals NaN, Infinity and -Infinity (which ``json`` accepts by default).
+
+    With ``exact=True`` every number written with a decimal point (a price) is read as a
+    ``decimal.Decimal`` instead of a float, so it is compared digit for digit: a price is an int64
+    count of 1e-6 and a float cannot hold the largest ones. Integers are always ``int``.
     """
 
     def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -49,7 +54,8 @@ def strict_loads(text: str) -> Any:
     def refuse_constant(name: str) -> Any:
         raise StrictJsonError(f"non-standard JSON literal {name}")
 
-    decoder = json.JSONDecoder(object_pairs_hook=no_duplicates, parse_constant=refuse_constant)
+    decoder = json.JSONDecoder(object_pairs_hook=no_duplicates, parse_constant=refuse_constant,
+                               parse_float=Decimal if exact else float)
     value, end = decoder.raw_decode(text)
     if text[end:] != "\n":
         raise StrictJsonError(f"expected exactly one document followed by one newline, got trailing {text[end:]!r}")
@@ -66,8 +72,8 @@ class Run:
         self.stdout = completed.stdout.decode("utf-8")        # strict: invalid UTF-8 raises
         self.stderr = completed.stderr.decode("utf-8", errors="replace")
 
-    def json(self) -> Any:
-        return strict_loads(self.stdout)
+    def json(self, exact: bool = False) -> Any:
+        return strict_loads(self.stdout, exact=exact)
 
 
 def run_exe(args: list[str], env: dict[str, str] | None = None, exe: str | None = None) -> Run:

@@ -97,7 +97,9 @@ TEST(LabCatalog, CrossoverDefaultsAreTheDocumentedOnesAndComeFromTheConfigStruct
     EXPECT_EQ(std::get<std::string>(*param(k, "strategy_id").default_value), "sma_crossover");
     EXPECT_EQ(std::get<std::uint64_t>(*param(k, "short_window").default_value), 5u);
     EXPECT_EQ(std::get<std::uint64_t>(*param(k, "long_window").default_value), 20u);
-    EXPECT_EQ(std::get<double>(*param(k, "requested_quantity").default_value), 1.0);
+    EXPECT_EQ(std::get<std::uint64_t>(*param(k, "requested_quantity").default_value), 1u)
+        << "a whole number of shares, never a double";
+    EXPECT_EQ(param(k, "requested_quantity").type, lab::ParamType::Quantity);
     EXPECT_TRUE(param(k, "symbols").required);
     EXPECT_FALSE(param(k, "symbols").default_value.has_value()) << "no default: an allowlist must be chosen";
     // ... and they equal the default-constructed struct, the single source of truth.
@@ -105,7 +107,8 @@ TEST(LabCatalog, CrossoverDefaultsAreTheDocumentedOnesAndComeFromTheConfigStruct
     EXPECT_EQ(std::get<std::string>(*param(k, "strategy_id").default_value), defaults.strategy_id);
     EXPECT_EQ(std::get<std::uint64_t>(*param(k, "short_window").default_value), defaults.short_window);
     EXPECT_EQ(std::get<std::uint64_t>(*param(k, "long_window").default_value), defaults.long_window);
-    EXPECT_EQ(std::get<double>(*param(k, "requested_quantity").default_value), defaults.requested_quantity);
+    EXPECT_EQ(std::get<std::uint64_t>(*param(k, "requested_quantity").default_value),
+              static_cast<std::uint64_t>(defaults.requested_quantity));
 }
 
 TEST(LabCatalog, MeanReversionDefaultsAreTheDocumentedOnesAndComeFromTheConfigStruct) {
@@ -114,7 +117,7 @@ TEST(LabCatalog, MeanReversionDefaultsAreTheDocumentedOnesAndComeFromTheConfigSt
     EXPECT_EQ(std::get<std::uint64_t>(*param(k, "lookback").default_value), 20u);
     EXPECT_EQ(std::get<double>(*param(k, "entry_threshold").default_value), 2.0);
     EXPECT_EQ(std::get<double>(*param(k, "rearm_threshold").default_value), 0.5);
-    EXPECT_EQ(std::get<double>(*param(k, "requested_quantity").default_value), 1.0);
+    EXPECT_EQ(std::get<std::uint64_t>(*param(k, "requested_quantity").default_value), 1u);
     EXPECT_TRUE(param(k, "symbols").required);
 
     const strategy_cfg_mr defaults{};
@@ -240,19 +243,28 @@ TEST(LabCatalogConfig, CrossoverRejectionsAreTheStrategysOwnWords) {
                     direct([](auto& c) { c.short_window = 20; }));
     expect_verbatim("sma_crossover", {{"symbols", "AAPL"}, {"long_window", "3"}},
                     direct([](auto& c) { c.long_window = 3; }));
-    for (const char* quantity : {"1.5", "0", "-1", "nan", "inf"}) {
-        expect_verbatim("sma_crossover", {{"symbols", "AAPL"}, {"requested_quantity", quantity}},
-                        direct([&](auto& c) { c.requested_quantity = lab_test::parse_double(quantity); }));
+    // A quantity is a whole number of shares held as an int64: zero is the strategy's refusal ...
+    expect_verbatim("sma_crossover", {{"symbols", "AAPL"}, {"requested_quantity", "0"}},
+                    direct([](auto& c) { c.requested_quantity = 0; }));
+    // ... and text that is not an unsigned whole number (a fraction, a sign, nan, inf, an exponent) or that
+    // does not fit an int64 never reaches the strategy: it is refused at parse time, never rounded or wrapped.
+    for (const char* quantity : {"1.5", "-1", "nan", "inf", "1e2", "", "9223372036854775808", "18446744073709551615"}) {
+        const lab::LabError error = param_error("sma_crossover", {{"symbols", "AAPL"}, {"requested_quantity", quantity}});
+        EXPECT_EQ(error.code(), ErrorCode::InvalidParameter) << "'" << quantity << "'";
+        EXPECT_NE(std::string{error.what()}.find("requested_quantity"), std::string::npos) << error.what();
     }
+    EXPECT_NO_THROW((void)lab::build_strategy(
+        request("sma_crossover", {{"symbols", "AAPL"}, {"requested_quantity", "9223372036854775807"}}), 0))
+        << "INT64_MAX shares is exact and accepted";
     expect_verbatim("sma_crossover", {{"symbols", "AAPL"}, {"strategy_id", ""}},
                     direct([](auto& c) { c.strategy_id = ""; }));
 
     // Hand-written spot checks of the words themselves.
     EXPECT_EQ(param_error("sma_crossover", {{"symbols", "AAPL"}, {"short_window", "0"}}).what(),
               std::string{"configuration error: MovingAverageCrossoverStrategy: short_window must be at least 1 (got 0)"});
-    EXPECT_EQ(param_error("sma_crossover", {{"symbols", "AAPL"}, {"requested_quantity", "1.5"}}).what(),
-              std::string{"configuration error: MovingAverageCrossoverStrategy: requested_quantity must be a finite, "
-                          "positive whole number of shares (got 1.5)"});
+    EXPECT_EQ(param_error("sma_crossover", {{"symbols", "AAPL"}, {"requested_quantity", "0"}}).what(),
+              std::string{"configuration error: MovingAverageCrossoverStrategy: requested_quantity must be a positive "
+                          "whole number of shares (got 0)"});
 }
 
 TEST(LabCatalogConfig, SymbolAllowlistRejectionsAreTheStrategysOwnWords) {
@@ -348,6 +360,8 @@ TEST(LabCatalogDescribe, TheDescribeDocumentCarriesTheCatalogWithoutAWallClock) 
                                "\"kind\":\"sma_crossover\"", "\"kind\":\"mean_reversion\"", "\"kind\":\"ml\"",
                                "\"available\":false", "\"name\":\"short_window\",\"type\":\"uint\",\"required\":false,\"default\":5",
                                "\"name\":\"entry_threshold\",\"type\":\"double\",\"required\":false,\"default\":2",
+                               "\"name\":\"requested_quantity\",\"type\":\"uint\",\"required\":false,\"default\":1,",
+                               "The price is zero or negative.", "INT64_MAX / long_window^2",
                                "\"name\":\"symbols\",\"type\":\"string_list\",\"required\":true",
                                "\"id\":\"strategy_lab_bars_csv/1\"", "\"name\":\"reject-signals\""}) {
         EXPECT_NE(text.find(needle), std::string::npos) << needle;

@@ -38,7 +38,9 @@ namespace trading_engine::lab {
 // At most this many strategies in one run (each is delivered every event).
 inline constexpr std::size_t kMaxStrategies = 16;
 
-enum class ParamType { String, UInt, Double, StringList };
+// Quantity is a whole number of shares held as an exact int64 (common::Quantity); it is
+// a UInt on the wire (type_name "uint") that is additionally refused above INT64_MAX.
+enum class ParamType { String, UInt, Quantity, Double, StringList };
 
 [[nodiscard]] std::string_view type_name(ParamType type) noexcept;
 

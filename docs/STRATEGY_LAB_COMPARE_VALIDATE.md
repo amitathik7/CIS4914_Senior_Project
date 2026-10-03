@@ -131,7 +131,7 @@ actual/provenance/tolerances, mismatches, errors, the demonstration reported sep
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File python\strategy_lab\setup.ps1    # once: venv with streamlit 1.64.0 and plotly 7.1.0 (needs internet this once)
 powershell -NoProfile -ExecutionPolicy Bypass -File python\strategy_lab\run_lab.ps1   # http://127.0.0.1:8501 ; options -NoBrowser -Port -Exe
-cd python\strategy_lab; .venv\Scripts\python.exe -m unittest discover -s tests         # 401 tests, about 50 s
+cd python\strategy_lab; .venv\Scripts\python.exe -m unittest discover -s tests         # 433 tests, about 90 s
 ```
 
 The replay tool must be built first ([STRATEGY_LAB.md](STRATEGY_LAB.md) section 4; the two `cmake` commands, no GoogleTest needed). **Offline:** after setup nothing is downloaded; the page loaded 173
@@ -141,7 +141,7 @@ resources, all from `127.0.0.1:8501`. No C++ file was changed in this stage, so 
 
 | Check | Result |
 |---|---|
-| Python suite (`unittest discover -s tests`) | **401 tests pass** (186 before this stage; new: theme 22, Compare core 36, Compare exports 13, Compare app 24, scenarios 29, Validate classification 36, Validate against the real exe 17, Validate app 19, navigation 19; no existing test file was edited, `tests/support.py` gained shared helpers) |
+| Python suite (`unittest discover -s tests`) | **401 tests passed at this stage** (433 now: the int64 price/quantity change added 3 schema tests, its review 4 exactness tests and the exact-order control 25 tests; 186 before this stage; new: theme 22, Compare core 36, Compare exports 13, Compare app 24, scenarios 29, Validate classification 36, Validate against the real exe 17, Validate app 19, navigation 19; no existing test file was edited, `tests/support.py` gained shared helpers) |
 | Scenarios against the real executable | 18 of 18 pass. A deliberately wrong expectation injected into **each** scenario (first signal one event late, an expected signal that does not exist, a wrong refusal code) is detected as Failed in every one |
 | Existing process-level tests against the same executable | `test_reference_agreement` + `test_cli_contract`: 38 pass (the JSON-probe module was not run: no probe binary was built) |
 | Targeted mutation check (17 deliberate defects, one at a time, each file restored byte for byte) | all **17 killed**: the other member's event read for a decision, next-signal ignoring B, scoped key dropping the member, pair-alignment off, a failed run shown half-paired, readiness from signals, a stale side missed; a timeout/crash treated as a rejection, tolerance ignored, unavailable allowed to be zero, a short signal list passing, a passing demonstration accepted, fixture pin unchecked, any exit status accepted for a rejection, the zip no longer carrying raw bytes, the prefix export covering the full run, the report counting the demonstration |

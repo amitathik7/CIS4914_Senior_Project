@@ -18,8 +18,8 @@ TEST(ScaffoldContract, DefaultConfigIsRealAndSane) {
     // Configuration is not "results" -- default_config() is a genuine function.
     const tcfg::EngineConfig c = tcfg::default_config();
     EXPECT_EQ(c.mode, tcfg::RunMode::Backtest);
-    EXPECT_GT(c.simulation.starting_cash, 0.0);
-    EXPECT_GT(c.risk.max_gross_exposure, 0.0);
+    EXPECT_GT(c.simulation.starting_cash, tec::Money{});
+    EXPECT_GT(c.risk.max_gross_exposure, tec::Money{});
     EXPECT_EQ(c.alpaca.api_key_env, "ALPACA_API_KEY");
     EXPECT_EQ(c.postgres.password_env, "PGPASSWORD");
 }
@@ -37,7 +37,7 @@ TEST(ScaffoldContract, EventBusOperationsThrowNotImplemented) {
 
 TEST(ScaffoldContract, PortfolioManagerNeverFabricatesState) {
     tec::ManualClock clock;
-    trading_engine::portfolio::PortfolioManager pm{tec::RunId{1}, 100'000.0, clock};
+    trading_engine::portfolio::PortfolioManager pm{tec::RunId{1}, tec::Money::from_units(100'000), clock};
 
     // Returning starting cash / an empty snapshot here would be a lie.
     EXPECT_THROW((void)pm.cash(), tec::NotImplemented);

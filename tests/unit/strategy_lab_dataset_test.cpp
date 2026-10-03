@@ -3,10 +3,13 @@
 // a different question, answered with in-memory events in strategy_lab_replay_test.cpp.
 //
 // The loader validates and never repairs: every refusal names a line and a column, and a
-// bad price is never turned into a good one.
+// bad price is never turned into a good one. A price is read EXACTLY from its decimal text
+// into an int64 count of 1e-6 (volume into a whole number of shares); no floating point is
+// involved, so an expectation here is an integer, e.g. 101.5 is 101'500'000.
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <optional>
 #include <string>
@@ -23,6 +26,8 @@ using namespace lab_test;
 using lab::Dataset;
 using lab::ErrorCode;
 using lab::LabError;
+using Price    = trading_engine::common::Price;
+using Quantity = trading_engine::common::Quantity;
 
 const std::string kHeader = "symbol,exchange_time,type,price\n";
 const std::string kT0     = "2026-01-05T14:30:00Z";
@@ -62,7 +67,7 @@ TEST(LabDataset, ParsesRowsIntoMarketEventsInFileOrderWithProvenance) {
     const domain::MarketEvent& first = dataset.rows[0].event;
     EXPECT_EQ(first.symbol, "AAPL");
     EXPECT_EQ(first.type, domain::MarketEventType::Bar);
-    EXPECT_EQ(first.price, std::optional<double>{101.5});
+    EXPECT_EQ(first.price, std::optional<Price>{Price::from_micros(101'500'000)});
     EXPECT_EQ(first.exchange_time, *lab::parse_utc_timestamp(kT0));
     EXPECT_EQ(first.ingest_time, first.exchange_time) << "the lab replays: ingest time is the exchange time";
     EXPECT_FALSE(first.open.has_value());
@@ -91,11 +96,11 @@ TEST(LabDataset, ReadsAFileUsingItsNameNotItsPathAndParsesOptionalColumns) {
     EXPECT_EQ(dataset.info.name, "ohlcv_example.csv") << "never a directory path";
     ASSERT_EQ(dataset.rows.size(), 3u);
     const domain::MarketEvent& event = dataset.rows[0].event;
-    EXPECT_EQ(event.price, std::optional<double>{101.25});
-    EXPECT_EQ(event.open, std::optional<double>{100.5});
-    EXPECT_EQ(event.high, std::optional<double>{102.0});
-    EXPECT_EQ(event.low, std::optional<double>{100.25});
-    EXPECT_EQ(event.volume, std::optional<double>{15000.0});
+    EXPECT_EQ(event.price, std::optional<Price>{Price::from_micros(101'250'000)});
+    EXPECT_EQ(event.open, std::optional<Price>{Price::from_micros(100'500'000)});
+    EXPECT_EQ(event.high, std::optional<Price>{Price::from_micros(102'000'000)});
+    EXPECT_EQ(event.low, std::optional<Price>{Price::from_micros(100'250'000)});
+    EXPECT_EQ(event.volume, std::optional<Quantity>{15000});
 }
 
 TEST(LabDataset, AcceptsCrlfABomNoFinalNewlineAndAnyColumnOrder) {
@@ -111,7 +116,7 @@ TEST(LabDataset, AcceptsCrlfABomNoFinalNewlineAndAnyColumnOrder) {
     const Dataset permuted = ok("price,type,symbol,exchange_time\n1.5,bar,AAPL," + kT0 + "\n");
     ASSERT_EQ(permuted.rows.size(), 1u);
     EXPECT_EQ(permuted.rows[0].event.symbol, "AAPL");
-    EXPECT_EQ(permuted.rows[0].event.price, std::optional<double>{1.5});
+    EXPECT_EQ(permuted.rows[0].event.price, std::optional<Price>{Price::from_micros(1'500'000)});
 
     // Empty optional cells mean absent.
     const Dataset sparse = ok("symbol,exchange_time,type,price,open,high,low,volume\nAAPL," + kT0 + ",bar,5,,,,\n");
@@ -126,12 +131,18 @@ TEST(LabDataset, SymbolsKeepTheirCaseAndMayContainPunctuation) {
     EXPECT_EQ(dataset.rows[2].event.symbol, "A\\B");
 }
 
-TEST(LabDataset, AcceptsPricesAtTheEdgesOfTheDoubleRange) {
-    const Dataset dataset = ok(kHeader + bar("AAPL", kT0, "5e-324") + bar("AAPL", kT1, "1.7976931348623157e308") +
-                               bar("AAPL", kT2, "0.30000000000000004"));
-    EXPECT_EQ(dataset.rows[0].event.price, std::optional<double>{5e-324});
-    EXPECT_EQ(dataset.rows[1].event.price, std::optional<double>{1.7976931348623157e308});
-    EXPECT_EQ(dataset.rows[2].event.price, std::optional<double>{0.30000000000000004});
+TEST(LabDataset, ReadsPricesExactlyAtTheEdgesOfTheInt64Range) {
+    // The smallest price (one micro, 0.000001), a long fraction that a double would round
+    // (123456789.123456), trailing zeros beyond the sixth decimal (which change nothing), a
+    // price with no integer digits, and the largest price int64 holds (INT64_MAX micros).
+    const Dataset dataset = ok(kHeader + bar("AAPL", kT0, "0.000001") + bar("AAPL", kT1, "123456789.123456") +
+                               bar("AAPL", kT2, "1.2500000") + bar("MSFT", kT2, ".5") +
+                               bar("MSFT", "2026-01-05T14:33:00Z", "9223372036854.775807"));
+    EXPECT_EQ(dataset.rows[0].event.price, std::optional<Price>{Price::from_micros(1)});
+    EXPECT_EQ(dataset.rows[1].event.price, std::optional<Price>{Price::from_micros(123'456'789'123'456)});
+    EXPECT_EQ(dataset.rows[2].event.price, std::optional<Price>{Price::from_micros(1'250'000)});
+    EXPECT_EQ(dataset.rows[3].event.price, std::optional<Price>{Price::from_micros(500'000)});
+    EXPECT_EQ(dataset.rows[4].event.price, std::optional<Price>{Price::from_micros(9'223'372'036'854'775'807LL)});
 }
 
 TEST(LabDataset, TradeRowsAreAcceptedSoTheyCanBeShownBeingIgnored) {
@@ -208,16 +219,24 @@ TEST(LabDatasetRows, OnlyBarAndTradeTypesAreSupported) {
 
 // ---- prices: never repaired ---------------------------------------------------------------------
 
-TEST(LabDatasetPrices, EveryNonFinitePositivePriceIsRefusedNotCorrected) {
+TEST(LabDatasetPrices, EveryPriceThatIsNotAnExactPositiveDecimalIsRefusedNotCorrected) {
     struct Case { const char* text; const char* reason; };
     const std::vector<Case> cases{
-        {"", "required"},          {"0", "greater than 0"},   {"-1", "greater than 0"},
-        {"-0", "greater than 0"},  {"nan", "finite"},         {"NaN", "finite"},
-        {"inf", "finite"},         {"-inf", "finite"},        {"infinity", "finite"},
-        {"1e999", "range"},        {"-1e999", "range"},       {"abc", "not a number"},
-        {"1.5x", "not a number"},  {" 1", "not a number"},    {"1 ", "not a number"},
-        {"+1", "not a number"},    {"0x10", "not a number"},  {"1e", "not a number"},
-        {"1e-400", "range"},       {".", "not a number"},
+        {"", "required"},                 {"0", "greater than 0"},          {"0.000000", "greater than 0"},
+        {"-1", "greater than 0"},         {"-0", "greater than 0"},         {"-0.5", "greater than 0"},
+        // text that is not a plain decimal: nan, infinities, exponents, signs, spaces, hex
+        {"nan", "plain decimal"},         {"NaN", "plain decimal"},         {"inf", "plain decimal"},
+        {"-inf", "plain decimal"},        {"infinity", "plain decimal"},    {"1e3", "plain decimal"},
+        {"1E3", "plain decimal"},         {"1e999", "plain decimal"},       {"-1e999", "plain decimal"},
+        {"1e-7", "plain decimal"},        {"abc", "plain decimal"},         {"1.5x", "plain decimal"},
+        {" 1", "plain decimal"},          {"1 ", "plain decimal"},          {"+1", "plain decimal"},
+        {"0x10", "plain decimal"},        {"1e", "plain decimal"},          {".", "plain decimal"},
+        {"1.2.3", "plain decimal"},       {"1;5", "plain decimal"},         {"--1", "plain decimal"},
+        // a value that cannot be held exactly is refused, never rounded or clamped
+        {"0.0000001", "more than 6 decimal places"},   {"1.0000001", "more than 6 decimal places"},
+        {"123456789.1234567", "more than 6 decimal places"},
+        {"9223372036854.775808", "too large"},         {"9223372036855", "too large"},
+        {"99999999999999999999", "too large"},
     };
     for (const Case& each : cases) {
         const LabError error = refused_row("AAPL," + kT0 + ",bar," + each.text);
@@ -229,7 +248,8 @@ TEST(LabDatasetPrices, EveryNonFinitePositivePriceIsRefusedNotCorrected) {
 
 TEST(LabDatasetPrices, TheSameRulesApplyToTradeRows) {
     EXPECT_TRUE(has_problem(refused_row("AAPL," + kT0 + ",trade,0"), 2, "price", "greater than 0"));
-    EXPECT_TRUE(has_problem(refused_row("AAPL," + kT0 + ",trade,nan"), 2, "price", "finite"));
+    EXPECT_TRUE(has_problem(refused_row("AAPL," + kT0 + ",trade,nan"), 2, "price", "plain decimal"));
+    EXPECT_TRUE(has_problem(refused_row("AAPL," + kT0 + ",trade,1.0000001"), 2, "price", "more than 6 decimal places"));
 }
 
 TEST(LabDatasetPrices, OpenHighLowAndVolumeAreCheckedAgainstTheClose) {
@@ -241,10 +261,18 @@ TEST(LabDatasetPrices, OpenHighLowAndVolumeAreCheckedAgainstTheClose) {
     EXPECT_TRUE(has_problem(row("100,99,101,99.5,10"), 2, "low", "above the open"));
     EXPECT_TRUE(has_problem(row("100,102,101,99,10"), 2, "high", "below the open"));
     EXPECT_TRUE(has_problem(row("100,0,101,99,10"), 2, "open", "greater than 0"));
-    EXPECT_TRUE(has_problem(row("100,,nan,99,10"), 2, "high", "finite"));
+    EXPECT_TRUE(has_problem(row("100,,nan,99,10"), 2, "high", "plain decimal"));
+    EXPECT_TRUE(has_problem(row("100,,101.0000001,99,10"), 2, "high", "more than 6 decimal places"));
     EXPECT_TRUE(has_problem(row("100,,,,-1"), 2, "volume", "at least 0"));
-    EXPECT_TRUE(has_problem(row("100,,,,nan"), 2, "volume", "finite"));
+    EXPECT_TRUE(has_problem(row("100,,,,nan"), 2, "volume", "plain decimal"));
+    EXPECT_TRUE(has_problem(row("100,,,,1e3"), 2, "volume", "plain decimal"));
+    EXPECT_TRUE(has_problem(row("100,,,,1500.5"), 2, "volume", "whole number"));
+    EXPECT_TRUE(has_problem(row("100,,,,9223372036854775808"), 2, "volume", "too large"));
     EXPECT_NO_THROW((void)ok(h + "AAPL," + kT0 + ",bar,100,100,100,100,0\n")) << "a flat bar with zero volume is valid";
+    // A whole-valued volume may be written with a point and zeros; the largest int64 is exact.
+    const Dataset volumes = ok(h + "AAPL," + kT0 + ",bar,100,,,,1500.0\n" + "AAPL," + kT1 + ",bar,100,,,,9223372036854775807\n");
+    EXPECT_EQ(volumes.rows[0].event.volume, std::optional<Quantity>{1500});
+    EXPECT_EQ(volumes.rows[1].event.volume, std::optional<Quantity>{9'223'372'036'854'775'807LL});
 
     const LabError trade = refused(h + "AAPL," + kT0 + ",trade,100,99,,,\n");
     EXPECT_TRUE(has_problem(trade, 2, "open", "only allowed on bar rows"));
@@ -306,7 +334,7 @@ TEST(LabDatasetErrors, SeveralRowProblemsAreCollectedWithTheirLinesAndInvalidRow
     const LabError error = refused(text);
     EXPECT_EQ(error.code(), ErrorCode::DatasetError);
     EXPECT_EQ(error.total_problems(), 3u);
-    EXPECT_TRUE(has_problem(error, 3, "price", "finite"));
+    EXPECT_TRUE(has_problem(error, 3, "price", "plain decimal"));
     EXPECT_TRUE(has_problem(error, 4, "symbol", "symbol"));
     EXPECT_TRUE(has_problem(error, 5, "exchange_time", "exchange_time"));
     EXPECT_NE(std::string{error.what()}.find("3 problems"), std::string::npos) << error.what();

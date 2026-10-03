@@ -465,6 +465,14 @@ they're listed so the decision isn't silently made by omission later.
     component owns that check is not decided here.
   - This ADR still does **not** migrate `common::Quantity`, `Price`, or
     `Money` — see the OQ#11 note at the end of this section.
+  - *Implementation note (2026-10-02; not a decision and not an approval).* The
+    `jordan` branch currently builds the strategies and the Strategy Lab with
+    `Money` / `Price` as `common::Decimal` (an exact `int64` count of millionths)
+    and `Quantity` as `std::int64_t`, the direction ADR 0004 §12 recommends. There a
+    fractional quantity cannot be written at all (the type enforces whole shares),
+    which makes the sentence above that `common::Quantity` "stays `double`" untrue
+    of that branch. OQ#11 remains unratified, and this ADR's JSON price examples stay
+    plain decimal (the Strategy Lab also writes plain decimal text, e.g. `150.02`).
 
 - **Price** (`new_order.price`): must be finite and `> 0` when present.
   Present **only** when `order_type == "limit"`; for `"market"` the key is

@@ -27,12 +27,16 @@
 //               or no zone is an error. The lab sets ingest_time equal to it.
 //   * type      "bar" or "trade". A trade row is accepted so a dataset can show that
 //               the strategies ignore it; no other type is accepted.
-//   * price     required: a finite number > 0, in plain C-locale decimal or scientific
-//               syntax ("101.25", "1e-7"; no sign, no spaces, no hex, no "nan"/"inf"). A
-//               bar's price is its CLOSE. A value that overflows a double is an error.
-//   * open high low  optional, bars only: finite > 0, and consistent with the close:
-//               low <= open, close <= high wherever both are present.
-//   * volume    optional, bars only: finite >= 0.
+//   * price     required: a number > 0 in plain decimal syntax ("101.25", "3", ".5"; no
+//               sign, no spaces, no exponent, no hex, no "nan"/"inf") with at most 6
+//               decimal places (trailing zeros beyond the sixth are allowed: "1.2500000").
+//               It is read EXACTLY into an integer count of 1e-6 (common::Price); nothing
+//               passes through floating point and nothing is rounded: more than 6 real
+//               decimals, or a value that does not fit int64, is an error. A bar's price
+//               is its CLOSE.
+//   * open high low  optional, bars only: the same syntax, > 0, and consistent with the
+//               close: low <= open, close <= high wherever both are present.
+//   * volume    optional, bars only: a whole number of shares >= 0 (common::Quantity).
 //
 //  Interval. The file carries none. The strategies expect FINALIZED bars of ONE
 //  consistent interval per symbol (MarketEvent has no interval or "final" field,

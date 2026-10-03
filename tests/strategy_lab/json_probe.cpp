@@ -64,7 +64,7 @@ RunDocument hostile_document() {
     info.kind        = "sma_crossover";
     info.strategy_id = "s\"1";
     info.parameters  = {{"short_window", std::uint64_t{2}},
-                        {"requested_quantity", 1.7976931348623157e308},
+                        {"requested_quantity", std::uint64_t{9223372036854775807ULL}},   // INT64_MAX shares
                         {"tiny", 5e-324},
                         {"third", 1.0 / 3.0},
                         {"symbols", std::vector<std::string>{"A\\B", "caf\xC3\xA9"}},
@@ -77,7 +77,7 @@ RunDocument hostile_document() {
     info.stats.last_error       = "error with \"quotes\" \x01";
     replay.strategies.push_back(info);
 
-    const auto event = [](const char* sym, std::optional<double> price, long long ns) {
+    const auto event = [](const char* sym, std::optional<common::Price> price, long long ns) {
         EventResult row;
         row.input.source_line               = 2;
         row.input.event.symbol              = sym;
@@ -88,11 +88,13 @@ RunDocument hostile_document() {
         return row;
     };
 
-    EventResult first = event("A\\B", 0.1, 1'767'623'400'000'000'001LL);
-    first.input.event.open   = kNaN;           // non-finite: omitted, with a status
-    first.input.event.high   = kInf;
-    first.input.event.low    = -kInf;
-    first.input.event.volume = 1e-320;         // subnormal
+    // Prices are int64 micros (1e-6) written as exact decimal text: the extremes keep every digit.
+    constexpr auto micros = [](std::int64_t value) { return common::Price::from_micros(value); };
+    EventResult first = event("A\\B", micros(100'000), 1'767'623'400'000'000'001LL);                // 0.1
+    first.input.event.open   = micros(std::numeric_limits<std::int64_t>::min());        // -9223372036854.775808
+    first.input.event.high   = micros(std::numeric_limits<std::int64_t>::max());        //  9223372036854.775807
+    first.input.event.low    = micros(1);                                               // 0.000001
+    first.input.event.volume = std::numeric_limits<common::Quantity>::max();     // a whole number of shares
     first.bus_sequence       = 1;
     DiagnosticRecord record;
     record.verdict     = "evaluated";
@@ -107,7 +109,7 @@ RunDocument hostile_document() {
     first.per_strategy[0].signal_ids  = {1};
     replay.events.push_back(first);
 
-    EventResult second = event("A\\B", kNaN, 1'767'623'460'000'000'000LL);   // a NaN price: never written as a number
+    EventResult second = event("A\\B", micros(std::numeric_limits<std::int64_t>::min()), 1'767'623'460'000'000'000LL);   // an invalid price
     second.bus_sequence = 3;
     DiagnosticRecord ignored;
     ignored.verdict = "ignored";
@@ -127,8 +129,9 @@ RunDocument hostile_document() {
     signal.signal.symbol       = "A\\B";
     signal.signal.side         = domain::SignalSide::Buy;
     signal.signal.created_at   = first.input.event.exchange_time;
-    signal.signal.requested_quantity = 1.0 / 3.0;
-    signal.signal.target_exposure    = kNaN;     // non-finite: omitted, with a status
+    signal.signal.requested_quantity = 7;                       // a whole number of shares
+    signal.signal.limit_price        = common::Price::from_micros(1'234'567'890'123'456);   // 1234567890.123456, exact
+    signal.signal.target_exposure    = kNaN;     // a RATE that is non-finite: omitted, with a status
     signal.signal.confidence         = 0.1 + 0.2;
     signal.signal.order_type         = domain::OrderType::Market;
     signal.signal.metadata           = {{"k\"ey", "v\\al\nue \xF0\x9F\x98\x80"}, {"\xC3\xBCn\xC3\xAF", "\x7F"}};

@@ -7,7 +7,8 @@ trading_engine_add_component_test(smoke
 # Exercises the small pieces of real logic the scaffold does ship.
 trading_engine_add_component_test(common
     common_identifiers_test.cpp
-    common_clock_test.cpp)
+    common_clock_test.cpp
+    common_decimal_test.cpp)
 
 # Shape-only checks for the ADR 0002 (Proposed, not Accepted) TradeSignal
 # additions and the new SignalCancelRequest type. Not validation -- neither
@@ -36,6 +37,11 @@ trading_engine_add_component_test(strategy
     strategy_engine_isolation_test.cpp)
 target_link_libraries(te_test_strategy PRIVATE trading_engine::test_support)
 
+# Exact decimal text <-> common::Decimal / Quantity (common/decimal_text.hpp), used by the
+# reference strategies' signal metadata and by the Strategy Lab's CSV and JSON.
+trading_engine_add_component_test(decimal_text
+    common_decimal_text_test.cpp)
+
 # Reference strategies, each driven directly and through the real StrategyEngine.
 trading_engine_add_component_test(reference_strategies
     moving_average_crossover_strategy_test.cpp
@@ -61,7 +67,7 @@ if(TARGET trading_engine_strategy_lab)
         strategy_lab_replay_test.cpp
         strategy_lab_replay_events_test.cpp
         strategy_lab_cli_test.cpp)
-    target_link_libraries(te_test_strategy_lab PRIVATE trading_engine::strategy_lab)
+    target_link_libraries(te_test_strategy_lab PRIVATE trading_engine::strategy_lab trading_engine::test_support)
     target_compile_definitions(te_test_strategy_lab PRIVATE
         STRATEGY_LAB_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/strategy_lab")
 

@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "support/fake_strategy.hpp"
+#include "support/price_literals.hpp"
 #include "support/recording_event_bus.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/domain/market_event.hpp"
@@ -35,7 +36,7 @@ inline const common::Timestamp kT0 = common::Timestamp{} + std::chrono::hours{5}
 inline domain::MarketEvent market_event(
     std::string symbol,
     domain::MarketEventType type = domain::MarketEventType::Trade,
-    common::Price price = 100.0) {
+    common::Price price = common::Price::from_units(100)) {
     domain::MarketEvent event;
     event.symbol = std::move(symbol);
     event.type   = type;

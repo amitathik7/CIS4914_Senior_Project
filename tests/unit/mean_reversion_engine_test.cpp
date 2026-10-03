@@ -38,7 +38,7 @@ protected:
     }
 
     // A finalized bar `minute` minutes after kT0, the way a replay would stamp it.
-    static domain::MarketEvent bar_at(const std::string& symbol, double close, long long minute) {
+    static domain::MarketEvent bar_at(const std::string& symbol, common::Price close, long long minute) {
         domain::MarketEvent event = mr_test::bar(symbol, close, minute);
         event.exchange_time       = kT0 + std::chrono::minutes{minute};
         return event;
@@ -46,7 +46,7 @@ protected:
 
     // Delivers one bar through the bus. The clock moves to the bar's time first,
     // as a replay advances it, so a signal's created_at is the bar's time.
-    void replay(const std::string& symbol, double close, long long minute) {
+    void replay(const std::string& symbol, common::Price close, long long minute) {
         clock.set(kT0 + std::chrono::minutes{minute});
         publish_market(bar_at(symbol, close, minute));
     }
@@ -54,7 +54,7 @@ protected:
     // Bars at minutes 1, 2, 3, ...
     void replay_closes(const Closes& closes, const std::string& symbol = "AAPL") {
         long long minute = 0;
-        for (const double close : closes) {
+        for (const common::Price close : closes) {
             replay(symbol, close, ++minute);
         }
     }
@@ -64,7 +64,7 @@ protected:
 
 TEST_F(MeanReversionEngineTest, TheFixtureYieldsTheExpectedStampedSignalsAtTheExpectedTimes) {
     MeanReversionConfig cfg = make_config();
-    cfg.requested_quantity  = 10.0;
+    cfg.requested_quantity  = 10;
     add_mean_reversion(cfg);
     engine.start();
 
@@ -78,7 +78,7 @@ TEST_F(MeanReversionEngineTest, TheFixtureYieldsTheExpectedStampedSignalsAtTheEx
         EXPECT_EQ(signal.strategy_id, "mean_reversion") << "the engine signs with id()";
         EXPECT_TRUE(signal.id.valid());
         EXPECT_EQ(signal.symbol, "AAPL");
-        EXPECT_EQ(signal.requested_quantity, std::optional<double>{10.0});
+        EXPECT_EQ(signal.requested_quantity, std::optional<common::Quantity>{10});
         EXPECT_EQ(signal.order_type, std::optional<domain::OrderType>{domain::OrderType::Market});
         EXPECT_FALSE(signal.target_exposure.has_value());
         EXPECT_FALSE(signal.limit_price.has_value());
@@ -117,7 +117,7 @@ TEST_F(MeanReversionEngineTest, TheEngineRoutesEveryEventAndTheStrategyIgnoresWh
 
     // The engine does not filter: all of these reach the strategy, which ignores them.
     long long minute = 0;
-    for (const double close : kFixture) {
+    for (const common::Price close : kFixture) {
         ++minute;
         replay("TSLA", close, minute);   // a bar for a symbol it does not trade
         domain::MarketEvent print = bar_at("AAPL", close, minute);
@@ -178,7 +178,7 @@ TEST_F(MeanReversionEngineTest, RunsBesideTheCrossoverStrategyAndEachIsSignedAsI
     EXPECT_EQ(ids(), (std::vector<std::string>{"sma_crossover", "mean_reversion"}));
     engine.start();
 
-    replay_closes({3, 2, 1, 2, 3, 4, 3, 2, 1});
+    replay_closes(mr_test::units({3, 2, 1, 2, 3, 4, 3, 2, 1}));
 
     const std::vector<domain::TradeSignal> signals = bus.signals();
     ASSERT_EQ(signals.size(), 4u);
@@ -209,7 +209,7 @@ TEST_F(MeanReversionEngineTest, TwoInstancesWithDifferentIdsRunSideBySide) {
     // Lookback 2 with entry 1.0 sees a Sell on any rising pair and a Buy on any
     // falling one (z = +-1 exactly, the inclusive boundary), then holds while the
     // direction stays: closes 1 2 3 2: Sell at bar 2 (2 over 1), held at bar 3, Buy at 4.
-    replay_closes({1, 2, 3, 2});
+    replay_closes(mr_test::units({1, 2, 3, 2}));
 
     const std::vector<domain::TradeSignal> signals = bus.signals();
     ASSERT_EQ(signals.size(), 2u);
@@ -255,22 +255,22 @@ TEST_F(MeanReversionEngineTest, TheDocumentedExampleBuildsRegistersAndTrades) {
     // Nineteen closes of 100 then a 110: the mean reversion's first full window is
     // z = +4.3589 (see the strategy test), a Sell. The crossover sees equal averages
     // all the way, then its silent baseline, and says nothing.
-    Closes closes(19, 100.0);
-    closes.push_back(110.0);
+    Closes closes(19, common::Price::from_units(100));
+    closes.push_back(common::Price::from_units(110));
     replay_closes(closes);
 
     const std::vector<domain::TradeSignal> signals = bus.signals();
     ASSERT_EQ(signals.size(), 1u);
     EXPECT_EQ(signals[0].strategy_id, "mean_reversion_20");
     EXPECT_EQ(signals[0].side, domain::SignalSide::Sell);
-    EXPECT_EQ(signals[0].requested_quantity, std::optional<double>{10.0});
+    EXPECT_EQ(signals[0].requested_quantity, std::optional<common::Quantity>{10});
     EXPECT_EQ(signals[0].created_at, kT0 + 20min);
 }
 
 TEST_F(MeanReversionEngineTest, ASignalTheBusRefusesIsLostNotResentWhileTheExcursionLasts) {
     add_mean_reversion(make_config());
     engine.start();
-    const Closes closes{10, 10, 10, 6, 2, 1, 1, 1, 1, 10};
+    const Closes closes = mr_test::units({10, 10, 10, 6, 2, 1, 1, 1, 1, 10});
     replay_closes(Closes(closes.begin(), closes.begin() + 3));   // bars 1-3: warming up
 
     // Bar 4 is the Buy, and the bus refuses it. A direct call: the double would

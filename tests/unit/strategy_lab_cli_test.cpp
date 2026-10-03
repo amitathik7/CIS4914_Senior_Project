@@ -211,12 +211,23 @@ TEST(LabCliExitStatus, EveryFailureClassHasItsDocumentedStatusAndAMatchingErrorD
 TEST(LabCliExitStatus, AStrategyConfigurationErrorCarriesTheStrategysOwnWordsInBothStreams) {
     const lab::CliResult result =
         run({"run", "--dataset", fixture_path("sma_crossover.csv").string(), "--strategy", "sma_crossover",
-             "--param", "symbols=AAPL", "--param", "requested_quantity=1.5"});
+             "--param", "symbols=AAPL", "--param", "requested_quantity=0"});
     EXPECT_EQ(result.exit_code, 2);
-    const std::string words = "MovingAverageCrossoverStrategy: requested_quantity must be a finite, positive whole number of shares (got 1.5)";
+    const std::string words = "MovingAverageCrossoverStrategy: requested_quantity must be a positive whole number of shares (got 0)";
     EXPECT_TRUE(contains(result.out, words));
     EXPECT_TRUE(contains(result.err, words));
     EXPECT_TRUE(contains(result.err, "strategies[0]")) << "and says which strategy";
+}
+
+TEST(LabCliExitStatus, AFractionalQuantityIsRefusedAtParseTimeNotRounded) {
+    // requested_quantity is a whole number of shares (an int64): 1.5 is not turned into 1 or 2.
+    const lab::CliResult result =
+        run({"run", "--dataset", fixture_path("sma_crossover.csv").string(), "--strategy", "sma_crossover",
+             "--param", "symbols=AAPL", "--param", "requested_quantity=1.5"});
+    EXPECT_EQ(result.exit_code, 2);
+    EXPECT_TRUE(contains(result.out, "\"code\":\"invalid_parameter\""));
+    EXPECT_TRUE(contains(result.err, "requested_quantity"));
+    EXPECT_TRUE(contains(result.err, "unsigned whole number"));
 }
 
 TEST(LabCliExitStatus, ADatasetErrorListsEachProblemWithItsLineAndColumn) {

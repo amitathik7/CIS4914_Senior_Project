@@ -1,10 +1,15 @@
 """Replay over a finished result: prefix selection, the cursor, display filters, event/signal association."""
 
+import re
 import unittest
+from decimal import Decimal
 
-from support import ev, make_document, parse
+from support import dumps, ev, make_document, parse
 
-from strategy_lab_ui.replay import ReplayModel, plotly_time
+from strategy_lab_ui import charts, tables
+from strategy_lab_ui.jsonio import strict_loads
+from strategy_lab_ui.replay import ReplayModel, plot_float, plotly_time
+from strategy_lab_ui.schema import exact_text, parse_replay
 
 
 def two_symbols():
@@ -14,6 +19,51 @@ def two_symbols():
         ev("AAPL", 31, 11), ev("MSFT", 31, 21),
         ev("AAPL", 32, 12, signals=[(0, 2, "sell")]), ev("MSFT", 32, 22, signals=[(0, 3, "sell")]),
         ev("AAPL", 33, 13)]))
+
+
+class ExactValues(unittest.TestCase):
+    """A price (an int64 count of 1e-6 written as decimal text) and a whole-share quantity are shown and exported
+    exactly; the one float made from a price is the plotting coordinate, `plot_float`."""
+
+    PRICE = "9223372036854.775807"        # INT64_MAX millionths: a float cannot hold it
+    QUANTITY = 2**62 + 1                  # differs from 2**62 as an integer but not as a float
+
+    def setUp(self):
+        document = make_document([ev("A", 30, 5, signals=[(0, 1, "buy")]), ev("A", 31, 6)])
+        document["result"]["signals"][0]["requested_quantity"] = self.QUANTITY
+        raw = re.sub(r'"price":5(?=[,}])', f'"price":{self.PRICE}', dumps(document).decode("utf-8"), count=1)
+        self.assertIn(self.PRICE, raw)
+        self.model = ReplayModel(parse_replay(strict_loads(raw.encode("utf-8"))))
+
+    def test_the_parsed_price_is_exact_and_a_float_would_not_be(self):
+        price = self.model.events[0].price
+        self.assertEqual(price, Decimal(self.PRICE))
+        self.assertNotEqual(Decimal(float(price)), price)
+        self.assertEqual(self.model.events[1].price, 6)
+
+    def test_tables_captions_and_hovers_show_the_exact_text(self):
+        self.assertEqual(tables.signals_table(self.model, 2, None)["Quantity"][0], str(self.QUANTITY))
+        closes = tables.diagnostics_table(self.model, 2, None, ())["Close"]
+        self.assertEqual(list(closes), [self.PRICE, "6"])
+        series = self.model.series("A", 2, ())
+        hover = charts._hover(self.model, series)
+        self.assertIn(f"close {self.PRICE}<", hover[0] + "<")
+        self.assertIn("close 6<", hover[1] + "<")
+
+    def test_the_plotting_coordinate_is_the_only_float_and_is_kept_apart(self):
+        series = self.model.series("A", 2, ())
+        self.assertIsInstance(series.prices[0], float)
+        self.assertEqual(series.prices[0], plot_float(Decimal(self.PRICE)))
+        self.assertEqual(series.prices[0], float(self.PRICE))
+        self.assertIsNone(plot_float(None))
+
+    def test_exact_text_never_goes_through_a_float_or_scientific_notation(self):
+        self.assertEqual(exact_text(Decimal("0.000001")), "0.000001")
+        self.assertEqual(exact_text(Decimal("1E-7")), "0.0000001")
+        self.assertEqual(exact_text(Decimal("100.5")), "100.5")
+        self.assertEqual(exact_text(10**30), str(10**30))
+        self.assertEqual(exact_text(self.QUANTITY), str(self.QUANTITY))
+        self.assertEqual(exact_text(None), "")
 
 
 class Prefix(unittest.TestCase):

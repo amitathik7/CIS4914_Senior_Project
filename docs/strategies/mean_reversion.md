@@ -49,7 +49,7 @@ Cost: `O(N)` work per accepted bar and `O(N)` history per allowlisted symbol.
 | `lookback` | `std::size_t` | `20` | At least 2. Counted in accepted bars, current bar included. |
 | `entry_threshold` | `double` | `2.0` | Finite, and greater than `rearm_threshold`. |
 | `rearm_threshold` | `double` | `0.5` | Finite, at least 0, strictly less than `entry_threshold`. |
-| `requested_quantity` | `common::Quantity` | `1` | Finite, positive and a **whole number** of shares. |
+| `requested_quantity` | `common::Quantity` (`std::int64_t`) | `1` | Positive: a **whole number** of shares (an exact integer count; a fraction cannot be written). |
 | `symbols` | `std::vector<std::string>` | none | Not empty, no empty entry, no symbol twice. Matched exactly (case-sensitive) against `MarketEvent::symbol`. |
 
 An invalid value throws `common::ConfigError` from the constructor, prefixed with
@@ -71,10 +71,10 @@ The same policy as the [crossover](moving_average_crossover.md#3-input-assumptio
 
 Everything else is **ignored, and an ignored event changes nothing**: not the last
 timestamp, not the history, not the latch. That is a symbol not on the allowlist
-(or matching only case-insensitively), any type but `Bar`, a missing or NaN,
-infinite, zero or negative price, and an `exchange_time` not later than the last
-accepted bar's for that symbol. There is no upper limit on a close: any finite
-positive price is accepted (see section 5). A bad bar is not read as a neutral
+(or matching only case-insensitively), any type but `Bar`, a missing, zero or
+negative price (`Price` is an exact `Decimal`: it has no NaN or infinity), and an
+`exchange_time` not later than the last accepted bar's for that symbol. There is no
+upper limit on a close: any positive price is accepted (see section 5). A bad bar is not read as a neutral
 observation either: it cannot rearm a latch.
 
 ## 4. The latch
@@ -107,63 +107,65 @@ Consequences:
   comparison.
 - **Rearming closes nothing.** Entering the rearm band emits no order.
 
-## 5. Floating point
+## 5. Numbers
 
-`common::Price` is a provisional `double` (`OQ#11`), so the arithmetic is defined,
-not assumed. The window is **re-measured from its raw closes on every bar**; no
-running sum or sum of squares is kept. So no error accumulates over a long run, and
-a bad window cannot poison a later one: once its closes have left the window, they
-no longer affect anything.
+`common::Price` is `common::Decimal`: an exact `int64` count of **millionths** of the
+account currency (`common/decimal.hpp`; 150.02 is 150'020'000). The closes are kept
+exactly and the **window is re-measured from them on every bar**; no running sum or
+sum of squares is kept. So no error accumulates over a long run, and a bad window
+cannot poison a later one: once its closes have left the window, they no longer
+affect anything.
 
-- **Overflow.** Squaring a deviation of 1e200 overflows a double, and so does a
-  plain sum of large closes. Before anything is summed, the closes are scaled by an
-  exact power of two (`frexp`/`ldexp`) that brings the window's largest close into
-  `[0.5, 1)`. That adds no rounding, `z` does not depend on the scale, and the mean
-  and standard deviation are scaled back at the end. Every finite positive close,
-  up to `DBL_MAX`, therefore works, and no input bound is needed. The variance is
-  never reported: it can exceed `DBL_MAX` when the deviation does not. (A close more
-  than 2^1022 smaller than the window's largest loses precision when scaled (it
-  becomes subnormal, and is 0 beyond about 2^1074), which is invisible next to that
-  largest close.)
+The statistics themselves are **derived real numbers, never money**. Each close is
+first expressed as an **offset from the newest close, in exact `int64` arithmetic** (the
+difference of two positive `int64` never overflows), and only the offset is converted to
+a `double`: exact up to 2^53 millionths *whatever the price level*. Converting the
+closes themselves would round every close above 2^53 millionths (about 9 * 10^9
+currency units) to a multiple of 2, 4, ... 1024 millionths, merging distinct prices and
+putting an error of up to about 2 * 10^-5 into `z`; with offsets the error is about
+10^-16, relative to the spread rather than to the price (`MeanReversionNumerics.
+DistinctPricesFarAbove2To53MicrosAreNotCollapsedOntoOneDouble`). The mean, standard
+deviation and `z` are computed in `double`; the mean and standard deviation are reported
+in currency units (divided by 10^6), and `z` is a dimensionless ratio, so neither the
+scale nor the origin enters it. Nothing derived is ever turned back into a `Price`.
+
+- **Overflow cannot happen.** A close is at most `INT64_MAX` (about 9.2 * 10^18), so no
+  sum, square or `|z|` can overflow a `double`. Every positive close is accepted, and
+  the reason `price_above_max_close` never occurs here (it is the crossover's, whose
+  integer sums need a bound).
 - **Cancellation.** The deviations are taken from a first-pass mean, and the mean is
   then corrected by the mean of those deviations (the corrected two-pass
   algorithm). The cancellation-prone `E[x^2] - E[x]^2` is not used, so a spread of 1
-  on a level of 1e9 is still measured accurately.
+  millionth on a level of 1e9 millionths is still measured accurately.
 - **Negligible variance.** A window is **constant** when
-  `standard_deviation <= 1e-12 * mean`, a relative spread of one part in 10^12 (about
-  4,500 times a double's rounding step). Equal closes rarely sum back to exactly their
-  common value (thirty copies of 0.1 do not), and dividing noise by noise gives an
-  arbitrary `z`. A constant window emits nothing and sets the latch to `Neutral`: it
-  is a genuine observation of "no deviation". The tolerance is fixed, not a
-  configuration option. Consequence: a step of 1 on a level of 1e13 is below it, and
-  on 1e9 is above it.
+  `standard_deviation <= 1e-12 * mean`. Equal integer closes have a deviation of
+  exactly 0; the tolerance only widens that to a spread under one part in 10^12 of the
+  mean (one millionth at a price above about 1,000,000 currency units), which is
+  treated as no deviation rather than as an extreme `z`. A constant window emits
+  nothing and sets the latch to `Neutral`: it is a genuine observation of "no
+  deviation". The tolerance is fixed, not a configuration option. Consequence: a step
+  of one millionth on a level of 100 is a real deviation, and on a level of 2,000,000
+  is below the tolerance.
 - **Failure.** A window whose mean, deviation or `z` comes out non-finite emits
   nothing and leaves the latch **exactly as it was**: an unrelated numerical failure
-  is not evidence that the price returned to normal, so it never rearms. The bar
-  itself was accepted, so the next bar measures its own window from scratch and there
-  is nothing to recover. **This path is a guard, not a case any known input takes, and
-  it has no direct test.** Why it should not trigger, and what that rests on: after
-  scaling every value is in `[0, 1)`, so the sums are below `lookback`, the squared
-  deviations below 1, the standard deviation below 1 and `|z|` below about
-  `2 * lookback * 1e12` (the constant-window test keeps the divisor away from zero),
-  all finite; and the mean is capped at the largest close, so rescaling it cannot
-  overflow. That holds for IEEE-754 binary64 with round-to-nearest, no `-ffast-math`
-  or `/fp:fast`, and a `lookback` far below 2^53. It is an argument, plus a randomized
-  search over hundreds of thousands of windows (near `DBL_MAX`, subnormal, and of mixed
-  magnitudes) that found no trigger. It is **not a proof**, so the behaviour is
-  specified rather than assumed away. What the tests do show is the recovery property
-  it relies on: windows full of extreme values scroll out, and the fixture then behaves
-  exactly as on a fresh strategy.
-- Do not build with `-ffast-math` or `/fp:fast`: reassociation would undo the exact
-  scaling and the correction step.
+  is not evidence that the price returned to normal, so it never rearms. With integer
+  closes up to `INT64_MAX` every intermediate value is finite, so **this path is a guard
+  that no input can reach, kept as a cheap defence; it has no direct test.**
+- Do not build with `-ffast-math` or `/fp:fast`: reassociation would undo the
+  correction step.
 
 Threshold comparisons are exact in floating point. When `z` is mathematically
 *equal* to a threshold, the computed `z` is exact only if the window's arithmetic is
-exact in binary (the tests use `[10 10 10 10 15]` at exactly 2.0); for an inexact
-window it may land an ulp either side. Pick thresholds with that in mind.
+exact in binary (the tests use `[10 10 10 10 15]` at exactly 2.0, where every number
+is a small integer count of millionths); for an inexact window it may land an ulp
+either side. Pick thresholds with that in mind.
 
-If `OQ#11` moves `Price` to fixed-point or integer units, this section and the code
-behind it should be revisited, not carried over.
+**Status of the representation.** Scaled `int64` money at 10^6 with whole-share quantities is the direction
+*recommended* in ADR 0004 section 12 (Proposed) and implemented as `common::Decimal` on the `adam/portfolio-manager` branch.
+`OQ#11` is **still open**: `docs/OPEN_QUESTIONS.md` requires all four members to sign off, and no ADR or decision record
+here shows that they did (a comment in that branch's `types.hpp` calls it agreed, but that is not recorded). Treat these
+types as a **proposal in use**, not a ratified policy. Only `common/types.hpp` and the lines of section 5 that name
+`Decimal` depend on it.
 
 ## 6. Worked example
 
@@ -200,14 +202,15 @@ One signal per trigger:
 | `metadata` | See below. |
 | `id`, `created_at`, `strategy_id` | Left unset by the strategy: the engine stamps them (see [Strategies](../STRATEGIES.md#1-what-every-strategy-gets-and-owes)). |
 
-Metadata (all values are text; numbers are the shortest text that reads back as the
-exact `double`, and are never non-finite):
+Metadata (all values are text; the derived statistics are the shortest text that
+reads back as the exact `double`, never non-finite; the close is the exact decimal
+text of the `Price`):
 
 | Key | Value |
 |---|---|
 | `trigger` | `z_score_at_or_below_lower_entry` (Buy) or `z_score_at_or_above_upper_entry` (Sell). |
 | `lookback` | The configured window size. |
-| `close` | The signalling bar's close. |
+| `close` | The signalling bar's close, exactly (`150.02`, `100.000001`: the decimal text of the integer, never a float). |
 | `mean`, `standard_deviation`, `z_score` | The window statistics, current close included. |
 | `entry_threshold`, `rearm_threshold` | The configured thresholds. |
 
@@ -236,7 +239,7 @@ portfolio-aware exits**, so:
 starts cold: after a restart the same bars at the same timestamps are accepted
 again and reproduce the same signals. A freshly constructed strategy is already
 cold, so it can be driven directly, without an engine, which is how most of its
-tests work. Memory is one `double` per accepted bar up to `lookback`, per
+tests work. Memory is one `Decimal` (8 bytes) per accepted bar up to `lookback`, per
 allowlisted symbol; the per-event path allocates nothing except while a history is
 growing and when a signal is built.
 
@@ -286,9 +289,9 @@ and are not repeated.
 | A **latch** per symbol, not a position: a request repeats only after a rearm. | Stops a long excursion repeating the same order every bar, without inventing holdings. | Local. Position-aware exits wait on `OQ#9` / `OQ#11`. |
 | The first full window may signal: **no silent baseline**. | A window already beyond the threshold is an observation; the crossover, by contrast, needs a previous side to compare. | Local. |
 | **No exit** when price returns to the mean; rearming emits nothing. | The strategy cannot know whether a request filled, and a Sell is not "close". | Local. Blocked on signal semantics (`OQ#9`). |
-| Constant window: emit nothing, latch to `Neutral`, tolerance `1e-12` relative to the mean, fixed. | Equal closes do not sum back exactly; noise over noise is not a `z`. | Local. Tied to `OQ#11`. |
-| Power-of-two scaling instead of an input bound (section 5). | No price is rejected for being large, and the scaling is exact. | Local. |
-| A non-finite measurement leaves the latch untouched. | An unrelated failure is not a neutral reading. Not known to be reachable for finite input (section 5). | Local. |
+| Constant window: emit nothing, latch to `Neutral`, tolerance `1e-12` relative to the mean, fixed. | A spread far below the mean's last digits is not a deviation, and dividing it by itself gives an arbitrary `z`. | Local. |
+| No input bound: every positive `int64` close is accepted (section 5). | The statistics are taken in `double`, which cannot overflow on `int64` inputs. | Local. |
+| A non-finite measurement leaves the latch untouched. | An unrelated failure is not a neutral reading. Not reachable for `int64` input (section 5). | Local. |
 | `z` is compared **exactly** to the thresholds. | No fudge factor on a trading threshold. A tie is inclusive but can land an ulp either way for an inexact window. | Local. |
 | Metadata keys (section 7). | Informational; nothing consumes them yet. | Local. |
 

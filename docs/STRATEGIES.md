@@ -17,7 +17,7 @@
 | Page | Contents |
 |---|---|
 | This page | The shared contract, what a signal does and does not guarantee, running several strategies, threading and bus assumptions, what is not integrated, and what the other component owners must provide. |
-| [Moving-average crossover](strategies/moving_average_crossover.md) | Configuration, input rules, baseline and equality rules, floating point, signals, worked example, local choices. |
+| [Moving-average crossover](strategies/moving_average_crossover.md) | Configuration, input rules, baseline and equality rules, numbers (exact integer sums), signals, worked example, local choices. |
 | [Mean reversion](strategies/mean_reversion.md) | Configuration, the z-score and its bounds, the latch, numerical policy, signals, worked example, local choices. |
 | [Strategy Lab](STRATEGY_LAB.md) | An optional developer tool that replays bars through the real engine and shows each bar's decision (see section 7). |
 

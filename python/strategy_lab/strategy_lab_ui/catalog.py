@@ -96,6 +96,19 @@ def check_envelope(document: Any, expected_schema: str) -> Mapping[str, Any]:
     return root
 
 
+def _default(kind: str, raw: Any, path: str) -> Any:
+    """A parameter default, kept as the type the catalog declares it to be. Only a "double" (a ratio or a statistic such as an
+    entry threshold) may become a float. A "uint" (a window or a whole-share quantity) must be an exact integer, so a quantity
+    can never silently become a float or a Decimal; text stays text. A value of the wrong type is refused, not converted."""
+    if kind == "uint":
+        return j.integer(raw, path, minimum=0)
+    if kind == "double":
+        return j.number(raw, path)
+    if kind == "string":
+        return j.string(raw, path)
+    return [j.string(item, f"{path}[{i}]") for i, item in enumerate(j.arr(raw, path))]      # string_list
+
+
 def _param(value: Any, path: str) -> ParamSpec:
     item = j.obj(value, path)
     kind = j.req(item, "type", path, j.string)
@@ -107,7 +120,7 @@ def _param(value: Any, path: str) -> ParamSpec:
         type=kind,
         required=j.req(item, "required", path, j.boolean),
         constraint=j.req(item, "constraint", path, j.string),
-        default=item["default"] if has_default else None,
+        default=_default(kind, item["default"], f"{path}.default") if has_default else None,
         has_default=has_default,
     )
 

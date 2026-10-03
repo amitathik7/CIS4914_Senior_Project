@@ -11,7 +11,7 @@ import streamlit as st
 
 from .catalog import StrategySpec
 from .replay import ReplayModel
-from .schema import Event, StrategyEventResult
+from .schema import Event, StrategyEventResult, exact_text
 from .tables import ACTION_TEXT, SIDE_TEXT
 
 VERDICT_BADGE = {"evaluated": ("Evaluated", "blue"), "warming_up": ("Warming up", "gray"), "ignored": ("Ignored", "orange")}
@@ -46,7 +46,7 @@ def render_inspector(model: ReplayModel, spec: StrategySpec | None, cursor: int,
     result = model.result_of(event)
     st.markdown(f"**Event {event.index + 1} of {model.total}** - {event.symbol} - {event.type} - "
                 f"`{event.exchange_time}`")
-    price = "no price" if event.price is None else f"close {event.price}"
+    price = "no price" if event.price is None else f"close {exact_text(event.price)}"
     st.caption(f"{price}; source line {event.source_line if event.source_line is not None else 'unknown'}; "
                f"bus sequence {event.bus_sequence}.")
     if symbol is not None and event.symbol != symbol:
@@ -73,7 +73,7 @@ def render_inspector(model: ReplayModel, spec: StrategySpec | None, cursor: int,
         st.markdown(f"**{len(signals)} signal request{'s' if len(signals) != 1 else ''} on this event**")
         for signal in signals:
             st.markdown(f"- **{SIDE_TEXT.get(signal.side, signal.side)} #{signal.signal_id}** ({signal.signal_ref}), "
-                        f"{signal.order_type or 'no order type'}, quantity {signal.requested_quantity}, "
+                        f"{signal.order_type or 'no order type'}, quantity {exact_text(signal.requested_quantity)}, "
                         f"created `{signal.created_at}`")
             if signal.metadata:
                 st.caption("; ".join(f"{k} = {v}" for k, v in signal.metadata.items()))

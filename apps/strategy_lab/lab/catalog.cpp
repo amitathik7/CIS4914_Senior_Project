@@ -38,7 +38,8 @@ std::optional<ParamValue> parse_param_text(ParamType type, std::string_view text
     switch (type) {
         case ParamType::String:
             return ParamValue{std::string{text}};
-        case ParamType::UInt: {
+        case ParamType::UInt:
+        case ParamType::Quantity: {
             std::uint64_t value = 0;
             const char* first   = text.data();
             const char* last    = first + text.size();
@@ -47,8 +48,11 @@ std::optional<ParamValue> parse_param_text(ParamType type, std::string_view text
                 why = "expected an unsigned whole number (digits only), got '" + utf8_excerpt(text, 40) + "'";
                 return std::nullopt;
             }
-            if (result.ec == std::errc::result_out_of_range ||
-                value > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+            // A quantity is held as an int64: anything above INT64_MAX is refused here, never wrapped.
+            const std::uint64_t largest =
+                type == ParamType::Quantity ? static_cast<std::uint64_t>(std::numeric_limits<common::Quantity>::max())
+                                            : static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max());
+            if (result.ec == std::errc::result_out_of_range || value > largest) {
                 why = "'" + utf8_excerpt(text, 40) + "' is too large";
                 return std::nullopt;
             }
@@ -99,10 +103,10 @@ const std::vector<ParamDef<SmaConfig>>& sma_params() {
         {"long_window", ParamType::UInt, false, "Greater than short_window; counted in accepted bars.",
          [](SmaConfig& c, const ParamValue& v) { c.long_window = static_cast<std::size_t>(std::get<std::uint64_t>(v)); },
          [](const SmaConfig& c) -> ParamValue { return static_cast<std::uint64_t>(c.long_window); }},
-        {"requested_quantity", ParamType::Double, false,
-         "Shares requested on every signal: finite, positive and a whole number.",
-         [](SmaConfig& c, const ParamValue& v) { c.requested_quantity = std::get<double>(v); },
-         [](const SmaConfig& c) -> ParamValue { return c.requested_quantity; }},
+        {"requested_quantity", ParamType::Quantity, false,
+         "Shares requested on every signal: a positive whole number (an exact integer count).",
+         [](SmaConfig& c, const ParamValue& v) { c.requested_quantity = static_cast<common::Quantity>(std::get<std::uint64_t>(v)); },
+         [](const SmaConfig& c) -> ParamValue { return static_cast<std::uint64_t>(c.requested_quantity); }},
         {"symbols", ParamType::StringList, true,
          "Comma-separated allowlist: at least one, no empty entry, no repeats; matched exactly and case-sensitively.",
          [](SmaConfig& c, const ParamValue& v) { c.symbols = std::get<std::vector<std::string>>(v); },
@@ -126,10 +130,10 @@ const std::vector<ParamDef<MrConfig>>& mr_params() {
         {"rearm_threshold", ParamType::Double, false, "Finite, at least 0 and below entry_threshold.",
          [](MrConfig& c, const ParamValue& v) { c.rearm_threshold = std::get<double>(v); },
          [](const MrConfig& c) -> ParamValue { return c.rearm_threshold; }},
-        {"requested_quantity", ParamType::Double, false,
-         "Shares requested on every signal: finite, positive and a whole number.",
-         [](MrConfig& c, const ParamValue& v) { c.requested_quantity = std::get<double>(v); },
-         [](const MrConfig& c) -> ParamValue { return c.requested_quantity; }},
+        {"requested_quantity", ParamType::Quantity, false,
+         "Shares requested on every signal: a positive whole number (an exact integer count).",
+         [](MrConfig& c, const ParamValue& v) { c.requested_quantity = static_cast<common::Quantity>(std::get<std::uint64_t>(v)); },
+         [](const MrConfig& c) -> ParamValue { return static_cast<std::uint64_t>(c.requested_quantity); }},
         {"symbols", ParamType::StringList, true,
          "Comma-separated allowlist: at least one, no empty entry, no repeats; matched exactly and case-sensitively.",
          [](MrConfig& c, const ParamValue& v) { c.symbols = std::get<std::vector<std::string>>(v); },
@@ -170,11 +174,11 @@ std::vector<ReasonSpec> ignore_reasons(bool with_price_ceiling) {
                          "The symbol is not in this strategy's symbols list (matching is exact and case-sensitive)."));
     out.push_back(reason(BarReason::PriceAbsent, BarVerdict::Ignored, "The event has no price."));
     out.push_back(reason(BarReason::PriceInvalid, BarVerdict::Ignored,
-                         "The price is NaN, infinite, zero or negative."));
+                         "The price is zero or negative."));
     if (with_price_ceiling) {
         out.push_back(reason(BarReason::PriceAboveMaxClose, BarVerdict::Ignored,
                              "The price is above the largest close this strategy accepts "
-                             "(DBL_MAX / (2 * (long_window + 1))), so summing it could overflow."));
+                             "(INT64_MAX / long_window^2, in 1e-6 units), so the exact integer sums could overflow."));
     }
     out.push_back(reason(BarReason::TimeNotAfterLastAccepted, BarVerdict::Ignored,
                          "exchange_time is not later than the last accepted bar's for this symbol "
@@ -198,8 +202,8 @@ StrategyKind sma_kind() {
                                   "The first bar after warm-up where the averages differ: its side is recorded as the "
                                   "baseline and never signalled."));
     kind.reasons.push_back(reason(BarReason::AveragesEqual, BarVerdict::Evaluated,
-                                  "The averages are equal within 1e-12 (relative): no signal, and the last nonzero "
-                                  "relation stands."));
+                                  "The averages are exactly equal (compared as integers, no tolerance): no signal, and "
+                                  "the last nonzero relation stands."));
     kind.reasons.push_back(reason(BarReason::SameSide, BarVerdict::Evaluated,
                                   "The short average is still on the same side of the long average; a crossover "
                                   "signals once."));
@@ -347,6 +351,7 @@ std::string_view type_name(ParamType type) noexcept {
     switch (type) {
         case ParamType::String:     return "string";
         case ParamType::UInt:       return "uint";
+        case ParamType::Quantity:   return "uint";
         case ParamType::Double:     return "double";
         case ParamType::StringList: return "string_list";
     }

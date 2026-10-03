@@ -20,9 +20,9 @@ struct Fill {
     common::OrderId   order_id{};
     common::Symbol    symbol{};
     common::Quantity  filled_quantity{0};   // signed: +buy / -sell
-    common::Price     fill_price{0};        // price actually paid/received
-    common::Money     fees{0};              // commissions + exchange fees, >= 0
-    common::Price     slippage{0};          // fill_price - reference_price (modelled)
+    common::Price     fill_price{};         // price actually paid/received
+    common::Money     fees{};               // commissions + exchange fees, >= 0
+    common::Price     slippage{};           // fill_price - reference_price (modelled)
     common::Timestamp filled_at{};          // UTC
 
     // TODO: liquidity flag (maker/taker), reference price used for slippage,

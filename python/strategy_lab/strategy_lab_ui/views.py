@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from . import charts, details, exports, playback, session, tables
+from . import charts, details, exports, playback, session, table_order, tables
 from .catalog import StrategySpec
 from .errors import LabUiError
 from .inspector import render_inspector
@@ -72,11 +72,12 @@ def _signals_tab(run: CompletedRun, cursor: int, symbol: str | None) -> None:
     model = run.model
     scope = exports.scope_prefix(model, cursor, symbol)
     st.caption(f"Signal requests in the {scope}.")
-    table = tables.signals_table(model, cursor, symbol)
+    order = table_order.control("ui_order_signals", tables.SIGNAL_ORDER_COLUMNS)
+    table = tables.signals_table(model, cursor, symbol, order)
     if table.empty:
         st.info("No signal requests in the visible prefix." if cursor else "Nothing revealed yet.")
     else:
-        st.dataframe(table, hide_index=True, width="stretch")
+        st.dataframe(table, hide_index=True, width="stretch", column_config=table_order.column_config(table))
     prefix = [s for s in model.signals_through(cursor, symbol)]
     left, right = st.columns(2)
     left.download_button(f"Signals CSV - VISIBLE PREFIX ({len(prefix)} rows)",
@@ -100,12 +101,13 @@ def _diagnostics_tab(run: CompletedRun, spec: StrategySpec | None, cursor: int, 
     if not reasons.empty:
         st.markdown("**Decision reasons so far**")
         st.dataframe(reasons, hide_index=True, width="stretch")
+    order = table_order.control("ui_order_diagnostics", tables.DIAGNOSTIC_ORDER_COLUMNS)
     table = tables.diagnostics_table(model, cursor, symbol, charts.indicator_names(config.kind) or
-                                     (spec.indicators if spec else ()))
+                                     (spec.indicators if spec else ()), order)
     if table.empty:
         st.info("Nothing revealed yet." if cursor == 0 else "No rows for the displayed symbol yet.")
     else:
-        st.dataframe(table, hide_index=True, width="stretch")
+        st.dataframe(table, hide_index=True, width="stretch", column_config=table_order.column_config(table))
 
 
 def render_results(run: CompletedRun, spec: StrategySpec | None) -> None:

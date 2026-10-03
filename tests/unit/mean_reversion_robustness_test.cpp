@@ -32,16 +32,17 @@ std::vector<domain::MarketEvent> ignorable_events() {
     std::vector<domain::MarketEvent> events;
     for (const MarketEventType type : {MarketEventType::Unknown, MarketEventType::Trade,
                                        MarketEventType::Quote, MarketEventType::Status}) {
-        domain::MarketEvent event = bar("AAPL", 5.0, 1000);
+        domain::MarketEvent event = bar("AAPL", 5_px, 1000);
         event.type                = type;
         events.push_back(event);
     }
-    events.push_back(bar("TSLA", 5.0, 1000));   // not on the allowlist
-    events.push_back(bar("aapl", 5.0, 1000));   // not an exact match
-    domain::MarketEvent missing = bar("AAPL", 5.0, 1000);
+    events.push_back(bar("TSLA", 5_px, 1000));   // not on the allowlist
+    events.push_back(bar("aapl", 5_px, 1000));   // not an exact match
+    domain::MarketEvent missing = bar("AAPL", 5_px, 1000);
     missing.price.reset();
     events.push_back(missing);
-    for (const double bad : {kNaN, kInf, -kInf, 0.0, -0.0, -5.0}) {
+    // zero and negatives are invalid prices (an int64 has no NaN or infinity)
+    for (const common::Price bad : {common::Price{}, -5_px, -kMaxPrice, trading_engine::test_support::kMinPrice}) {
         events.push_back(bar("AAPL", bad, 1000));
     }
     return events;
@@ -64,7 +65,7 @@ void expect_noise_changes_nothing(const Closes& closes, std::size_t lookback, do
 
     Harness noisy{make_config(lookback, entry, rearm)};
     long long minute = 0;
-    for (const double close : closes) {
+    for (const common::Price close : closes) {
         for (const domain::MarketEvent& ignored : ignorable_events()) {
             noisy.feed(ignored);
         }
@@ -89,8 +90,9 @@ TEST(MeanReversionIgnoredEvents, CannotRearmOrResetALatch) {
     // A bad bar is not an observation, so it must not read as a neutral one. These
     // runs hold a latch across the noise (a suppressed repeat) and cross a constant
     // window (a genuine rearm): the noisy run must match the clean one exactly.
-    expect_noise_changes_nothing({10, 10, 10, 6, 2, 1, 1, 1, 0.1}, 4, 1.5, 0.5, {"buy@4"});
-    expect_noise_changes_nothing({10, 10, 10, 6, 6, 6, 6, 2}, 4, 1.5, 0.5, {"buy@4", "buy@8"});
+    expect_noise_changes_nothing({10_px, 10_px, 10_px, 6_px, 2_px, 1_px, 1_px, 1_px, 0.1_px}, 4, 1.5, 0.5,
+                                 {"buy@4"});
+    expect_noise_changes_nothing(units({10, 10, 10, 6, 6, 6, 6, 2}), 4, 1.5, 0.5, {"buy@4", "buy@8"});
 }
 
 TEST(MeanReversionIgnoredEvents, DuplicateAndOlderBarsChangeNothing) {
@@ -99,9 +101,9 @@ TEST(MeanReversionIgnoredEvents, DuplicateAndOlderBarsChangeNothing) {
         const auto minute = static_cast<long long>(i) + 1;
         noisy.feed(bar("AAPL", kFixture[i], minute));
         noisy.feed(bar("AAPL", kFixture[i], minute));   // an exact re-delivery
-        noisy.feed(bar("AAPL", 1000.0, minute));        // the same time, another price
-        noisy.feed(bar("AAPL", 1000.0, minute - 1));    // not later than the last accepted bar
-        noisy.feed(bar("AAPL", 1000.0, 0));             // older than every accepted bar
+        noisy.feed(bar("AAPL", 1000_px, minute));       // the same time, another price
+        noisy.feed(bar("AAPL", 1000_px, minute - 1));   // not later than the last accepted bar
+        noisy.feed(bar("AAPL", 1000_px, 0));            // older than every accepted bar
     }
     Harness clean{make_config()};
     clean.feed_closes(kFixture);
@@ -127,10 +129,10 @@ TEST(MeanReversionIgnoredEvents, ASymbolsRejectedBarDoesNotTouchAnotherSymbolsCl
     // AAPL is at minute 7. A MSFT bar at minute 2 is MSFT's first accepted bar; an
     // AAPL bar at minute 2 is old. Each symbol keeps its own last timestamp.
     Harness h{make_config(2, 1.0, 0.5, {"AAPL", "MSFT"})};
-    h.feed(bar("AAPL", 10.0, 7));
-    h.feed(bar("AAPL", 12.0, 2));    // older than AAPL's last: ignored
-    h.feed(bar("MSFT", 10.0, 1));
-    h.feed(bar("MSFT", 12.0, 2));    // MSFT's second bar: first full window, a Sell
+    h.feed(bar("AAPL", 10_px, 7));
+    h.feed(bar("AAPL", 12_px, 2));    // older than AAPL's last: ignored
+    h.feed(bar("MSFT", 10_px, 1));
+    h.feed(bar("MSFT", 12_px, 2));    // MSFT's second bar: first full window, a Sell
     EXPECT_EQ(h.labels("MSFT"), (Labels{"sell@2"}));
     EXPECT_TRUE(h.labels("AAPL").empty()) << "AAPL has only one accepted bar";
 }
@@ -138,129 +140,178 @@ TEST(MeanReversionIgnoredEvents, ASymbolsRejectedBarDoesNotTouchAnotherSymbolsCl
 // --- Numerical edge cases ------------------------------------------------------------
 
 TEST(MeanReversionNumerics, TheZScoreDoesNotDependOnThePriceLevel) {
-    // z is a ratio, so the fixture scaled by anything gives the fixture's labels
-    // and z-scores, from the tiniest normal prices to the largest: 1e300 times 30
-    // would overflow a plain sum of squares many times over.
+    // z is a ratio, so the fixture's numbers (10 10 10 6 9 2 30) scaled by anything give
+    // the fixture's labels and z-scores, from the smallest prices (the numbers as plain
+    // MICROS, a millionth of a currency unit each) to the largest (3 * 10^18 micros, within
+    // int64): a plain sum of squares of those would overflow a double's precision many
+    // times over.
     Harness reference{make_config()};
-    reference.feed_closes(kFixture);
+    reference.feed_closes(kFixture);   // the same numbers, in whole currency units
     ASSERT_EQ(reference.signals.size(), 3u);
 
-    for (const double scale : {1e-300, 1e-150, 1e-3, 1e3, 1e150, 1e300}) {
-        SCOPED_TRACE(scale);
+    for (const long long micros_per_number : {1LL, 10LL, 1'000LL, 1'000'000LL, 1'000'000'000LL,
+                                             1'000'000'000'000LL, 1'000'000'000'000'000LL,
+                                             100'000'000'000'000'000LL}) {
+        SCOPED_TRACE(micros_per_number);
         Closes closes;
-        for (const double close : kFixture) {
-            closes.push_back(close * scale);
+        for (const long long n : {10, 10, 10, 6, 9, 2, 30}) {
+            closes.push_back(micros(n * micros_per_number));
         }
         Harness h{make_config()};
         h.feed_closes(closes);
         EXPECT_EQ(h.labels(), kFixtureLabels);
         ASSERT_EQ(h.signals.size(), 3u);
+        // The reference has 10^6 micros per number; mean and deviation are reported in
+        // currency units, so they scale with micros_per_number / 10^6.
+        const double relative = static_cast<double>(micros_per_number) / static_cast<double>(common::Decimal::kScale);
         for (std::size_t i = 0; i < 3; ++i) {
             expect_finite_metadata(h.signals[i]);
             EXPECT_NEAR(number(h.signals[i], "z_score"), number(reference.signals[i], "z_score"), 1e-9);
-            EXPECT_NEAR(number(h.signals[i], "mean") / scale, number(reference.signals[i], "mean"),
-                        1e-9);
-            EXPECT_NEAR(number(h.signals[i], "standard_deviation") / scale,
+            EXPECT_NEAR(number(h.signals[i], "mean") / relative, number(reference.signals[i], "mean"), 1e-9);
+            EXPECT_NEAR(number(h.signals[i], "standard_deviation") / relative,
                         number(reference.signals[i], "standard_deviation"), 1e-9);
         }
     }
 }
 
-TEST(MeanReversionNumerics, TheLargestDoublesNeitherOverflowTheSumNorTheSquares) {
-    // [M M M M/2]: mean 0.875 M, deviations 0.125 M (x3) and -0.375 M, variance
-    // 0.046875 M^2 = 3/64 M^2, z = -0.375 / sqrt(3/64) = -sqrt(3). Both the squares
-    // (M^2) and a four-term sum of M overflow a double; the answer must not.
+TEST(MeanReversionNumerics, TheLargestPricesNeitherOverflowTheSumNorTheSquares) {
+    // M = INT64_MAX micros (about 9.2 * 10^12 currency units). [M M M M/2]: mean 0.875 M,
+    // deviations 0.125 M (x3) and -0.375 M, variance 0.046875 M^2 = 3/64 M^2,
+    // z = -0.375 / sqrt(3/64) = -sqrt(3). The squares (M^2 is about 8.5 * 10^37) and a
+    // four-term sum of M (which overflows int64) are why the statistics are taken in
+    // double; the answer must still be right. Mean and deviation are reported in
+    // currency units, so they are checked as micros (times 10^6).
+    const double largest = static_cast<double>(kMaxPrice.micros());
+    const double scale   = static_cast<double>(common::Decimal::kScale);
     Harness h{make_config()};
-    h.feed_closes({kMax, kMax, kMax, kMax / 2});
+    h.feed_closes({kMaxPrice, kMaxPrice, kMaxPrice, kMaxPrice / 2});
     EXPECT_EQ(h.labels(), (Labels{"buy@4"}));
     ASSERT_EQ(h.signals.size(), 1u);
     expect_finite_metadata(h.signals[0]);
     EXPECT_NEAR(number(h.signals[0], "z_score"), -std::sqrt(3.0), 1e-9);
-    EXPECT_NEAR(number(h.signals[0], "mean") / kMax, 0.875, 1e-12);
-    EXPECT_NEAR(number(h.signals[0], "standard_deviation") / kMax, std::sqrt(3.0 / 64.0), 1e-12);
+    EXPECT_NEAR(number(h.signals[0], "mean") * scale / largest, 0.875, 1e-12);
+    EXPECT_NEAR(number(h.signals[0], "standard_deviation") * scale / largest, std::sqrt(3.0 / 64.0), 1e-12);
 
-    // The sum of fifty M overflows by itself. Forty-nine M and one M/2 give
-    // z = -sqrt(49) = -7: a lone close is at most sqrt(N-1) deviations away.
+    // Forty-nine M and one M/2 give z = -sqrt(49) = -7: a lone close is at most
+    // sqrt(N-1) deviations away.
     Harness wide{make_config(50, 1.5, 0.5)};
-    Closes closes(49, kMax);
-    closes.push_back(kMax / 2);
+    Closes closes(49, kMaxPrice);
+    closes.push_back(kMaxPrice / 2);
     wide.feed_closes(closes);
     EXPECT_EQ(wide.labels(), (Labels{"buy@50"}));
     ASSERT_EQ(wide.signals.size(), 1u);
     EXPECT_NEAR(number(wide.signals[0], "z_score"), -7.0, 1e-9);
 
-    // A constant window of the largest double is just constant.
+    // A constant window of the largest price is just constant.
     Harness flat{make_config()};
-    flat.feed_closes(Closes(8, kMax));
+    flat.feed_closes(Closes(8, kMaxPrice));
     EXPECT_TRUE(flat.signals.empty());
 }
 
 TEST(MeanReversionNumerics, ClosesOfWildlyDifferentMagnitudeAreMeasuredAgainstTheLargest) {
-    // [1e300 1e300 1e300 1e-300]: next to 1e300 the last close is zero, so it is
-    // 0.75e300 below the mean 0.75e300 with deviation 0.433e300: z = -sqrt(3), a
-    // Buy. The mirror image, one 1e300 after three 1e-300, is z = +sqrt(3), a Sell.
+    // [M M M 1 micro]: next to M the last close is zero, so it is 0.75 M below the mean
+    // 0.75 M with deviation 0.433 M: z = -sqrt(3), a Buy. The mirror image, one M after
+    // three single micros, is z = +sqrt(3), a Sell.
     Harness down{make_config()};
-    down.feed_closes({1e300, 1e300, 1e300, 1e-300});
+    down.feed_closes({kMaxPrice, kMaxPrice, kMaxPrice, micros(1)});
     EXPECT_EQ(down.labels(), (Labels{"buy@4"}));
     expect_finite_metadata(down.signals.at(0));
     EXPECT_NEAR(number(down.signals[0], "z_score"), -std::sqrt(3.0), 1e-9);
 
     Harness up{make_config()};
-    up.feed_closes({1e-300, 1e-300, 1e-300, 1e300});
+    up.feed_closes({micros(1), micros(1), micros(1), kMaxPrice});
     EXPECT_EQ(up.labels(), (Labels{"sell@4"}));
     expect_finite_metadata(up.signals.at(0));
     EXPECT_NEAR(number(up.signals[0], "z_score"), std::sqrt(3.0), 1e-9);
 }
 
-TEST(MeanReversionNumerics, SubnormalPricesWorkLikeAnyOther) {
-    // The fixture in whole multiples of the smallest positive double: exactly
-    // representable, so the statistics are exactly the fixture's.
-    const double unit = std::numeric_limits<double>::denorm_min();
-    Closes closes;
-    for (const double close : kFixture) {
-        closes.push_back(close * unit);
-    }
-    Harness h{make_config()};
-    h.feed_closes(closes);
-    EXPECT_EQ(h.labels(), kFixtureLabels);
-    for (const domain::TradeSignal& signal : h.signals) {
-        expect_finite_metadata(signal);
-    }
-    EXPECT_NEAR(number(h.signals[0], "z_score"), -std::sqrt(3.0), 1e-9);
-}
-
 TEST(MeanReversionNumerics, ASmallSpreadOnALargeLevelIsNotLostToCancellation) {
-    // [1e9 1e9 1e9 1e9+1]: mean 1e9 + 0.25, variance (3 x 0.0625 + 0.5625) / 4 =
+    // Four closes of 1e9 micros, the last one micro higher (bare numbers here are micros, a
+    // millionth of a currency unit): mean 1e9 + 0.25, variance (3 x 0.0625 + 0.5625) / 4 =
     // 0.1875, deviation 0.4330127, z = 0.75 / 0.4330127 = +sqrt(3). E[x^2] - E[x]^2
     // would subtract two numbers near 1e18 whose difference is 0.19, below the
     // rounding step (128) of either, and return noise.
     Harness h{make_config()};
-    h.feed_closes({1e9, 1e9, 1e9, 1e9 + 1.0});
+    h.feed_closes({micros(1'000'000'000), micros(1'000'000'000), micros(1'000'000'000), micros(1'000'000'001)});
     EXPECT_EQ(h.labels(), (Labels{"sell@4"}));
     ASSERT_EQ(h.signals.size(), 1u);
-    EXPECT_NEAR(number(h.signals[0], "standard_deviation"), std::sqrt(0.1875), 1e-9);
+    const double scale = static_cast<double>(common::Decimal::kScale);   // reported in currency units
+    EXPECT_NEAR(number(h.signals[0], "standard_deviation") * scale, std::sqrt(0.1875), 1e-9);
     EXPECT_NEAR(number(h.signals[0], "z_score"), std::sqrt(3.0), 1e-9);
-    EXPECT_NEAR(number(h.signals[0], "mean"), 1e9 + 0.25, 1e-6);
+    EXPECT_NEAR(number(h.signals[0], "mean") * scale, 1e9 + 0.25, 1e-6);
 }
 
 TEST(MeanReversionNumerics, AVariationBelowOnePartInATrillionIsNegligible) {
-    // The same step of 1 on 1e13 is a relative 1e-13 spread (deviation 0.433 against
-    // a mean of 1e13), below the documented 1e-12 tolerance: constant, no signal.
-    // On 1e9 (above) it is a real deviation.
+    // The same one-micro step on 1e13 micros is a relative 4e-14 spread (deviation 0.433
+    // against a mean of 1e13), below the documented 1e-12 tolerance: constant, no signal.
+    // On 1e9 micros (above) it is a real deviation.
     Harness h{make_config()};
-    h.feed_closes({1e13, 1e13, 1e13, 1e13 + 1.0});
+    h.feed_closes({micros(10'000'000'000'000LL), micros(10'000'000'000'000LL), micros(10'000'000'000'000LL),
+                   micros(10'000'000'000'001LL)});
     EXPECT_TRUE(h.signals.empty());
 }
 
+TEST(MeanReversionNumerics, DistinctPricesFarAbove2To53MicrosAreNotCollapsedOntoOneDouble) {
+    // A double holds an integer exactly only up to 2^53 millionths (about 9 * 10^9 currency units); above
+    // that it rounds to a multiple of 2, 4, ... 1024, so converting the CLOSES would merge distinct prices
+    // and put an error of up to ~2e-5 into z. The strategy converts exact int64 OFFSETS from the newest
+    // close instead. The offsets below are odd on purpose (not representable once rounded to a multiple of
+    // 4 or more) and larger than the 1e-12 constant-window tolerance at every level tried.
+    // z depends only on the offsets: z = (N * d_new - S) / sqrt(N * Q - S^2) with d the offset from the
+    // newest close, S their sum and Q the sum of squares, all exact integers here.
+    const std::vector<std::int64_t> below_newest{50'000'001, 30'000'003, 10'000'007, 0};
+    std::int64_t s = 0;
+    std::int64_t q = 0;
+    for (const std::int64_t offset : below_newest) {
+        s -= offset;
+        q += offset * offset;
+    }
+    const double expected_z = static_cast<double>(-s) / std::sqrt(static_cast<double>(4 * q - s * s));
+
+    for (const std::int64_t level : {std::int64_t{9'007'199'254'740'993},     // 2^53 + 1
+                                     std::int64_t{1'152'921'504'606'846'977},   // 2^60 + 1
+                                     std::numeric_limits<std::int64_t>::max() - 10}) {
+        SCOPED_TRACE(level);
+        Closes closes;
+        for (const std::int64_t offset : below_newest) {
+            closes.push_back(micros(level - offset));
+        }
+        for (std::size_t i = 1; i < closes.size(); ++i) {
+            ASSERT_NE(closes[i - 1], closes[i]) << "the closes are distinct integers";
+        }
+        Harness h{make_config(4, 0.5, 0.1)};
+        h.feed_closes(closes);
+        ASSERT_EQ(h.labels(), (Labels{"sell@4"}));
+        EXPECT_NEAR(number(h.signals[0], "z_score"), expected_z, 1e-12)
+            << "relative error 1e-16 is expected; converting the closes first gave 2e-8 .. 2e-5";
+    }
+}
+
+TEST(MeanReversionNumerics, AFewMicrosApartAtAHugePriceIsConstantByTheDocumentedToleranceNotByRounding) {
+    // [P P P P-3] has an exact z of -sqrt(3): at a modest price that is a Buy. At P near INT64_MAX the
+    // spread (about 1.3 millionths) is far below 1e-12 of the mean (9.2e6 millionths), so the window is
+    // CONSTANT by the documented rule, and nothing is emitted. This is the tolerance doing its job, not
+    // a conversion collapsing the prices: the closes stay distinct integers.
+    const std::int64_t huge = std::numeric_limits<std::int64_t>::max() - 10;
+    Harness at_huge{make_config()};
+    at_huge.feed_closes({micros(huge), micros(huge), micros(huge), micros(huge - 3)});
+    EXPECT_TRUE(at_huge.signals.empty());
+
+    Harness at_one_unit{make_config()};
+    at_one_unit.feed_closes({1_px, 1_px, 1_px, micros(1'000'000 - 3)});
+    EXPECT_EQ(at_one_unit.labels(), (Labels{"buy@4"})) << "the same three millionths ARE a deviation at a price of 1";
+    EXPECT_NEAR(number(at_one_unit.signals[0], "z_score"), -std::sqrt(3.0), 1e-12);
+}
+
 TEST(MeanReversionNumerics, ExtremeWindowsLeaveNothingBehindOnceTheyHaveScrolledOut) {
-    // Four bars at the largest double (constant), then four tens, then the fixture.
+    // Four bars at the largest price (constant), then four tens, then the fixture.
     // Windows containing both scales are measured against the largest (bar 5, [M M M
     // 10], is a legitimate z = -sqrt(3) Buy; bars 6 and 7 hold). By bar 8 the window
     // is four tens: constant, rearm. From bar 12 the extreme closes are long gone and
     // the fixture must behave exactly as it does on a fresh strategy: Buy at its bar
     // 4 (overall 12), the rearm, Buy at its bar 6 (14) and Sell at its bar 7 (15).
-    Closes closes(4, kMax);
-    closes.insert(closes.end(), 4, 10.0);
+    Closes closes(4, kMaxPrice);
+    closes.insert(closes.end(), 4, 10_px);
     closes.insert(closes.end(), kFixture.begin(), kFixture.end());
 
     Harness h{make_config()};
@@ -298,9 +349,9 @@ TEST(MeanReversionLifecycle, OnStartForgetsTheLatch) {
     // The run ends LowerExtreme after a Buy at bar 4. If that survived, the same
     // extreme window in the second run would be a suppressed repeat.
     Harness h{make_config()};
-    h.feed_closes({10, 10, 10, 6});
+    h.feed_closes(units({10, 10, 10, 6}));
     h.mr.on_start();
-    h.feed_closes({10, 10, 10, 6});
+    h.feed_closes(units({10, 10, 10, 6}));
     EXPECT_EQ(h.labels(), (Labels{"buy@4", "buy@4"}));
 }
 
@@ -308,7 +359,7 @@ TEST(MeanReversionLifecycle, OnStartForgetsAHalfWarmHistory) {
     // Two 100s sit in the history when the run restarts. If they stayed, the
     // fixture's bars would be measured with them and the signals would move.
     Harness h{make_config()};
-    h.feed_closes({100, 100});
+    h.feed_closes(units({100, 100}));
     h.mr.on_start();
     h.feed_closes(kFixture);
     EXPECT_EQ(h.labels(), kFixtureLabels);
@@ -412,7 +463,8 @@ TEST(MeanReversionReference, AgreesWithAnExactIntegerReferenceOnLongRandomRuns) 
 
             Harness h{make_config(setup.lookback, setup.entry, setup.rearm)};
             for (std::size_t i = 0; i < closes.size(); ++i) {
-                h.feed(bar("AAPL", static_cast<double>(closes[i]), static_cast<long long>(i) + 1));
+                // whole currency units scaled to micros; z does not depend on the scale
+                h.feed(bar("AAPL", common::Price::from_units(closes[i]), static_cast<long long>(i) + 1));
             }
             EXPECT_EQ(h.labels(), expected.labels);
         }

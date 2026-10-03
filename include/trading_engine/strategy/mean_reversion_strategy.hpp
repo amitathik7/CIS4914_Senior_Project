@@ -24,10 +24,10 @@
 //     filled in, so a missing bar simply is not in the window.
 //   * Everything else is IGNORED, and an ignored event changes nothing: not the
 //     last timestamp, not the history, not the latch. That covers a symbol outside
-//     the allowlist, any other event type, a missing / non-finite / non-positive
-//     close and an exchange_time that is not later than the last accepted bar's
-//     for that symbol (a duplicate, a replay, an older bar). Any finite positive
-//     close is accepted, however large or small (see "Floating point").
+//     the allowlist, any other event type, a missing or non-positive close and an
+//     exchange_time that is not later than the last accepted bar's for that symbol
+//     (a duplicate, a replay, an older bar). Any positive close is accepted, from one
+//     micro to INT64_MAX (see "Numbers").
 //
 //  The statistic. N is `lookback`. After the current accepted close is added to
 //  the window, and once N closes have been accepted:
@@ -53,51 +53,52 @@
 //  Neutral bar between. The first warmed-up window may emit (unlike the SMA
 //  strategy, there is no silent baseline). Rearming closes nothing.
 //
-//  Floating point (common::Price is a provisional double, OQ#11)
-//   * The window is re-measured from its raw closes on every bar. No running sum
-//     or sum of squares is kept, so no error accumulates over a long run and a bad
-//     window cannot poison a later one: once its closes have left the window it
-//     is gone. This is the same two-pass computation whatever the price level.
-//   * Overflow. Squaring a deviation of 1e200 overflows, so the closes are first
-//     scaled by an exact power of two (the one that brings the window's largest
-//     close into [0.5, 1)). Scaling by 2^k is exact, z does not depend on the scale,
-//     and the mean and standard deviation are scaled back at the end, with the mean
-//     capped at the largest close so that rescaling cannot overflow. Every finite
-//     positive close up to DBL_MAX is accepted. (A close more than 2^1022 times
-//     smaller than the window's largest loses precision when scaled and is 0 beyond
-//     about 2^1074; it is invisible next to that largest close, whose scale z is
-//     measured in.) The variance itself is never reported, because it can exceed
-//     DBL_MAX when the deviation does not.
+//  Numbers (common::Price is common::Decimal, an exact int64 count of millionths; see
+//  common/decimal.hpp)
+//   * The window keeps its closes as exact Decimals and is re-measured from them on
+//     every bar. No running sum or sum of squares is kept, so no error accumulates
+//     over a long run and a bad window cannot poison a later one: once its closes
+//     have left the window it is gone.
+//   * The statistics are DERIVED real numbers, never money. Each close is first
+//     expressed as an OFFSET from the newest close, in exact int64 arithmetic (the
+//     difference of two positive int64 never overflows); only then is the offset
+//     converted to a double, which is exact up to 2^53 millionths WHATEVER the price
+//     level. So distinct prices that are far above 2^53 millionths (about 9 * 10^9
+//     currency units) are never collapsed onto one double, and the precision of z is
+//     relative to the spread, not to the price. The mean, standard deviation and z
+//     are computed in double; the mean and standard deviation are reported in
+//     currency units (divided by 10^6). z is a dimensionless ratio, so neither the
+//     scale nor the origin enters it. Nothing derived is ever turned back into a
+//     Price.
+//   * Overflow. A close is at most INT64_MAX (about 9.2 * 10^18), so no sum, square
+//     or |z| can overflow a double: every positive close is accepted and the reason
+//     price_above_max_close never occurs here.
 //   * Cancellation. The deviations are taken from a first-pass mean (not the
 //     E[x^2] - E[x]^2 form) and the mean is then corrected by the mean of those
 //     deviations, so rounding in the first sum does not leak into the variance.
-//   * Negligible variance. A window is CONSTANT when
-//     standard_deviation <= 1e-12 * mean. Mathematically equal closes rarely sum
-//     back to exactly their common value (0.1 added thirty times does not), and
-//     dividing noise by noise would give an arbitrary z. A constant window emits
-//     nothing and sets the latch to Neutral: it is a genuine observation of "no
-//     deviation". The tolerance is fixed, not a configuration option.
+//   * Negligible variation. A window is CONSTANT when
+//     standard_deviation <= 1e-12 * mean. Equal integer closes have a deviation of
+//     exactly 0; the tolerance only widens that to a spread under one part in 10^12
+//     of the mean (one micro at a price above about 1,000,000 currency units), which
+//     is treated as no deviation rather than as an extreme z. A constant window
+//     emits nothing and sets the latch to Neutral: it is a genuine observation of
+//     "no deviation". The tolerance is fixed, not a configuration option.
 //   * Failure. A window whose mean, deviation or z would be non-finite emits
 //     nothing and leaves the latch exactly as it was: an unrelated numerical
-//     failure is not evidence the price is back to normal, so it never rearms.
-//     The bar itself was accepted, so the next bar measures its own window
-//     afresh. This is a guard, not a path any known input takes, and it has no
-//     direct test. After scaling every value is in [0, 1), so every sum, square
-//     and |z| stays finite (|z| < about 2 * lookback * 1e12), which holds for
-//     IEEE-754 binary64 round-to-nearest, no fast-math and a lookback far below
-//     2^53. That is an argument plus a randomized search that found no trigger,
-//     not a proof; see docs/strategies/mean_reversion.md, section 5.
+//     failure is not evidence the price is back to normal, so it never rearms. With
+//     integer closes up to INT64_MAX every intermediate value is finite, so this is
+//     a guard that no input can reach, kept as a cheap defence; it has no test.
 //   * Do not build this file with -ffast-math or /fp:fast: reassociation would
-//     undo the exact scaling and the correction step.
+//     undo the correction step.
 //
 //  Signals. Each one carries the event's symbol, side Buy or Sell, the configured
 //  requested_quantity, order_type Market, and metadata (all values text, the
-//  numbers as the shortest text that reads back as the exact double, never
-//  non-finite):
+//  derived numbers as the shortest text that reads back as the exact double, never
+//  non-finite; the close as its exact decimal text):
 //    trigger              "z_score_at_or_below_lower_entry" (Buy)
 //                         | "z_score_at_or_above_upper_entry" (Sell)
 //    lookback             the configured window size, in bars
-//    close                the signalling bar's close
+//    close                the signalling bar's close, exact decimal (150.02, not a float)
 //    mean, standard_deviation, z_score   the window statistics, current close included
 //    entry_threshold, rearm_threshold    the configured thresholds
 //  target_exposure, limit_price and confidence stay unset. id, created_at and
@@ -170,11 +171,11 @@ struct MeanReversionConfig {
     // extremes). 0 rearms only on a constant window or a close exactly at the mean.
     double rearm_threshold{0.5};
 
-    // Shares requested on every signal. A whole number: finite and positive,
-    // never rounded (1.5 is rejected, not turned into 1 or 2). Whole shares are
-    // this strategy's local choice, not a project-wide numeric policy (see
-    // docs/adr/0002-strategy-risk-signal-contract.md, section 8, still Proposed).
-    common::Quantity requested_quantity{1.0};
+    // Shares requested on every signal: a positive whole number (Quantity is an
+    // integer count, so a fraction cannot even be written). Whole shares follow the
+    // proposed v1 policy (docs/adr/0002-strategy-risk-signal-contract.md, section 8,
+    // still Proposed).
+    common::Quantity requested_quantity{1};
 
     // The symbols to trade, matched exactly (case-sensitive) against
     // MarketEvent::symbol. No default: it must be non-empty, contain no empty

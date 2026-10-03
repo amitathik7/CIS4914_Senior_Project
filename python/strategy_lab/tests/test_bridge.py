@@ -291,6 +291,14 @@ class RealExecutable(unittest.TestCase):
         self.assertEqual((sma.param("short_window").default, sma.param("long_window").default), (5, 20))
         self.assertTrue(sma.param("symbols").required and not sma.param("symbols").has_default)
         self.assertEqual(catalog.strategy("mean_reversion").param("entry_threshold").default, 2)
+        # A whole-share quantity is a "uint" parameter and an int; a rate default (0.5) is a plain float, never a
+        # Decimal: only prices keep their exact decimal type.
+        quantity = sma.param("requested_quantity")
+        self.assertEqual((quantity.type, quantity.default), ("uint", 1))
+        self.assertIs(type(quantity.default), int)
+        rearm = catalog.strategy("mean_reversion").param("rearm_threshold").default
+        self.assertEqual(rearm, 0.5)
+        self.assertIs(type(rearm), float)
         self.assertIn("crossover_buy", [r.code for r in sma.reasons])
 
     def test_sma_fixture_signals_are_where_the_hand_derivation_puts_them(self):

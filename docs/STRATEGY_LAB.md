@@ -73,7 +73,7 @@ the configure offline, `<googletest-src>` being e.g. `build\_deps\googletest-src
 cmake -S . -B out/strategy_lab_tests -G "Visual Studio 17 2022" -A x64 -DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON `
     -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=<googletest-src> -DFETCHCONTENT_FULLY_DISCONNECTED=ON
 cmake --build out/strategy_lab_tests --config Debug
-ctest --test-dir out/strategy_lab_tests -C Debug -L strategy_lab --output-on-failure     # 129 GoogleTest cases + the Python suite
+ctest --test-dir out/strategy_lab_tests -C Debug -L strategy_lab --output-on-failure     # 131 GoogleTest cases + the Python suite
 ctest --test-dir out/strategy_lab_tests -C Debug -L reference_strategies                 # includes the 21 diagnostics tests
 ```
 
@@ -143,14 +143,15 @@ clamped or defaulted. Full rules: `apps/strategy_lab/lab/dataset.hpp`.
 | Interval | **Not carried and not checked.** The strategies expect finalized bars of one consistent interval per symbol (`MarketEvent` has no such field, `OQ#1`); that is the data author's responsibility. Windows count accepted bars whatever the spacing |
 | Symbols | 1-32 printable ASCII characters, no comma or quote; case preserved. The strategies match **exactly and case-sensitively**: `aapl` is not `AAPL`, and a mismatch is reported as a warning, not fixed |
 | Types | `bar` (the price is the close) and `trade` (so a dataset can show the strategies ignoring it). Anything else is an error |
-| Prices | `price` is required and must be a **finite number greater than 0**: `nan`, `inf`, `0`, negatives, `1e999`, empty, `+1`, spaces and hex are errors, never turned into a valid value. `open/high/low` must be finite and > 0 and consistent with the close; `volume` finite and >= 0; bars only |
+| Prices | `price` is required and must be a **plain decimal number greater than 0 with at most 6 decimal places** (`101.25`, `3`, `.5`, `0.000001`; `1.2500000` is fine, trailing zeros past the sixth change nothing). It is read **exactly** into a `common::Decimal` (an int64 count of millionths): no floating point, no rounding. `nan`, `inf`, `1e3`/`1e-7` (any exponent), `0`, negatives, `+1`, empty, spaces, hex, **more than 6 real decimals** (`0.0000001`) and a value that does not fit int64 (`9223372036854.775808`) are errors, never turned into a valid value. `open/high/low` follow the same rules and must be consistent with the close; `volume` is a **whole number of shares** >= 0 (`1500` or `1500.0`, not `1500.5`); bars only |
 | Per-symbol order | A symbol's **bars strictly increase** in time (a duplicate or older bar is an error, not dropped), and no row precedes that symbol's previous row |
 | File order | Across the file `exchange_time` never decreases (the replay clock only moves forward). Rows are replayed **in file order; nothing is sorted** |
 | Ties | Rows of **different symbols with equal `exchange_time` replay in the order the file lists them**. This is a **lab-only policy** so a run is reproducible. It is **not** the production replay's merge or tie-break (plan M3 says ties break by `sequence`; undecided and unimplemented) and it decides nothing about it. A trade may share a timestamp with a bar of its symbol |
 | Fingerprint | SHA-256 of the file bytes is reported; the file's name (never a path) identifies it |
 
-How a strategy treats a **malformed event that reaches it** (NaN price, repeated time...) is a separate matter: the loader
-refuses such rows, so those cases are tested with in-memory events (section 12).
+How a strategy treats a **malformed event that reaches it** (a zero, negative or extreme price, repeated time...) is a separate
+matter: the loader refuses such rows, so those cases are tested with in-memory events (section 12). A `Price` is an int64, so it
+can never be NaN or infinite.
 
 ## 8. Strategies, parameters and defaults (single authoritative mapping)
 
@@ -164,7 +165,7 @@ kind's decision reasons, indicator and state names, metadata keys, the CSV colum
 | `strategy_id` | string | `sma_crossover` | Non-empty; unique per run |
 | `short_window` | uint | `5` | At least 1, below `long_window` |
 | `long_window` | uint | `20` | Above `short_window` |
-| `requested_quantity` | double | `1` | Finite, positive, whole |
+| `requested_quantity` | uint | `1` | Positive whole number of shares (an exact int64 count; above INT64_MAX is refused, never wrapped; a fraction, sign, `nan` or exponent is refused at parse time) |
 | `symbols` | list | none (required) | Non-empty, no empty entry, no repeat |
 
 | `mean_reversion` | Type | Default | Rule |
@@ -204,12 +205,20 @@ approval status of ADR 0002 or any other ADR**, and no ADR is an input to it. Si
 | `result.engine` | The engine's `Stats`, each strategy's `StrategyStats` plus `observer_failures`, and the bus summary |
 | `result.summary` | Counts only: events, bars, signals; per strategy buy/sell, verdict and reason counts |
 
-A **non-finite number is never written** (JSON has none). A field that can hold one (an event's `price`, a signal's
-`confidence`...) is omitted and `<field>_status` says `nan`, `inf` or `-inf`; an indicator that does not exist, or is non-finite,
-is listed under `unavailable` with its reason (`warming_up`, `event_ignored`, `constant_window`, `measurement_failed`, `non_finite`).
-Doubles use the shortest text that reads back to the same bits, independent of any locale; whole values print without a
-fraction (`100`, `-0`), so a consumer must read them as numbers, not as integers versus floats. Times are RFC 3339 UTC with
-nine fractional digits. Counters are JSON integers (exact, though a JavaScript consumer loses precision above 2^53).
+**Money, price and quantity are exact integers underneath and are never written through a double.** A price (`price`, `open`,
+`high`, `low`, a signal's `limit_price`) is a `common::Decimal` (int64 millionths) written as its exact decimal text: `150.02`,
+`0.000001`, `9223372036854.775807`, never an exponent and never `NaN`. A quantity (`requested_quantity`, `volume`) is a whole number
+of shares, written as a JSON integer (`1`, `9223372036854775807`). **Read prices with an exact decimal type** (Python:
+`json.loads(text, parse_float=decimal.Decimal)`); a float cannot hold the larger ones, and JavaScript loses integer precision above
+2^53. The wire text of a valid price or quantity is the same as before this was made exact, so the schema version did not change.
+
+A **non-finite number is never written** (JSON has none). Only the DERIVED real numbers can be non-finite: a field such as a
+signal's `confidence` or `target_exposure` (rates, doubles) is omitted and `<field>_status` says `nan`, `inf` or `-inf`; an
+indicator that does not exist, or is non-finite, is listed under `unavailable` with its reason (`warming_up`, `event_ignored`,
+`constant_window`, `measurement_failed`, `non_finite`). Derived statistics (averages, z-scores, thresholds) are doubles written as the
+shortest text that reads back to the same bits, independent of any locale; whole values print without a fraction (`100`, `-0`), so
+a consumer must read them as numbers, not as integers versus floats. Times are RFC 3339 UTC with nine fractional digits. Counters
+are JSON integers (exact, though a JavaScript consumer loses precision above 2^53).
 
 ## 10. Determinism and ordering
 
@@ -249,8 +258,8 @@ Header: `include/trading_engine/strategy/strategy_diagnostics.hpp` (its comment 
 
 **Why trading behaviour does not change, and how that was checked rather than argued.** The report calls sit at existing exits of
 `on_market_event`; they read values the decision already computed (the one new expression is `short - long`, and a branch label).
-That is rationale. The evidence: with the observer on and off, on seeded streams of 4000 events full of NaN, infinite, zero,
-negative and absent prices, repeated and older timestamps, unlisted and wrongly cased symbols and non-bar events, across 3 crossover
+That is rationale. The evidence: with the observer on and off, on seeded streams of 4000 events full of zero, negative, extreme
+(INT64_MIN/INT64_MAX) and absent prices, repeated and older timestamps, unlisted and wrongly cased symbols and non-bar events, across 3 crossover
 windows and 3 reversion setups, the signals (every field, metadata included) are identical, driven directly **and** through the real
 engine, where `stats()` and every `strategy_stats()` field also match; one snapshot arrives per call; throwing and re-entering
 observers change nothing; attach, detach and engine restart are covered. All 189 pre-existing tests pass unmodified. A mutation
@@ -265,15 +274,15 @@ this order and the **first failure is the reason**. `describe` carries a plain-l
 | Reason (verdict `ignored`) | When |
 |---|---|
 | `not_a_bar` / `symbol_not_allowlisted` / `price_absent` | Not a bar / symbol not in `symbols` / no price |
-| `price_invalid` | NaN, infinite, zero or negative |
-| `price_above_max_close` | Crossover only: above `DBL_MAX / (2 * (long_window + 1))` |
+| `price_invalid` | Zero or negative (a `Price` is an int64: never NaN or infinite) |
+| `price_above_max_close` | Crossover only: above `INT64_MAX / long_window^2` millionths, so its exact integer sums cannot overflow |
 | `time_not_after_last_accepted` | `exchange_time` not later than the symbol's last accepted bar |
 
 | Accepted bar | Verdict | Signal? | Effect |
 |---|---|---|---|
 | **Crossover** `warming_up` | `warming_up` | no | Until `long_window` bars; no averages exist |
 | `baseline_established` | `evaluated` | no | First nonzero short-vs-long relation: recorded, **never signalled** (first possible signal: bar `long_window + 1`) |
-| `averages_equal` / `same_side` | `evaluated` | no | Equal within 1e-12 (keeps the last relation) / still on one side |
+| `averages_equal` / `same_side` | `evaluated` | no | Exactly equal (compared as integers, no tolerance; keeps the last relation) / still on one side |
 | `crossover_buy` / `crossover_sell` | `evaluated` | **yes** | Relation committed before emitting |
 | **Reversion** `warming_up` | `warming_up` | no | Until `lookback` bars; **no silent baseline**: the first full window may signal |
 | `measurement_failed` / `constant_window` | `evaluated` | no | Guard, latch unchanged / deviation negligible: z unavailable, latch rearms |
@@ -296,21 +305,21 @@ a comment beside it); none is a snapshot of the implementation. All are syntheti
 | `two_symbols_interleaved` | AAPL and MSFT per minute; `sma_2_3` + `mr_4` | The 8 signals and ids of `strategies_combined_engine_test.cpp`; each symbol decided on its own |
 | `tie_aapl_first` / `tie_msft_first` | Both symbols sell at one timestamp | Id 1 goes to whichever the file lists first |
 | `bars_and_trades` | Bars with trade rows | Trades are `not_a_bar`, windows untouched; Sell on bar 3 |
-| `ohlcv_example`, `precision_edge`, `escape_symbol` | Optional fields; double-range edges; a `\` in a symbol | Round-trip and escaping tests |
+| `ohlcv_example`, `precision_edge`, `escape_symbol` | Optional fields; exact-decimal edges (one millionth, 6-decimal fractions, trailing zeros, INT64_MAX); a `\` in a symbol | Round-trip and escaping tests |
 
 What ran (all on this machine, MSVC 19.39, warnings treated as errors; **a build was completed before every test run**):
 
 | Suite | Count | Covers |
 |---|---|---|
 | Diagnostics (`reference_strategies`) | 21 new (116 total) | Every bar of both worked examples, every ignore reason, snapshot/signal agreement, the invariance streams, observer exceptions and re-entry, attach/detach/restart |
-| `strategy_lab` GoogleTest | 129 | UTF-8, timestamps (vs hand epoch values), SHA-256 (vs FIPS vectors), JSON writer (escaping, shortest doubles, hostile locale, refusal of NaN), **CSV validation**, the bus contract and the engine on it, catalog and verbatim configuration errors, **fixture sequences, warm-up boundaries, per-symbol isolation, combined strategies, ties, repeatability, malformed events (in-memory), publication failures, run identity, the CLI exit and stdout/stderr contract** |
-| `strategy_lab_python` | 50 | A **real JSON parser** (duplicate keys and NaN/Infinity refused): documents, hostile text, exact edge doubles, counters beyond 2^53, locale independence, error documents with invalid UTF-8, exit statuses, byte-reproducibility, CRLF absence, write failure, a 20,000-row run, and **agreement with an independent exact-rational reference** (`reference_model.py`, test-only, written from the docs with `fractions`) on all comparable fixtures |
+| `strategy_lab` GoogleTest | 131 | UTF-8, timestamps (vs hand epoch values), SHA-256 (vs FIPS vectors), JSON writer (escaping, shortest doubles, exact decimal prices, hostile locale, refusal of NaN), **CSV validation (exact decimal prices and whole-share volumes, every refusal)**, the bus contract and the engine on it, catalog and verbatim configuration errors, **fixture sequences, warm-up boundaries, per-symbol isolation, combined strategies, ties, repeatability, malformed events (in-memory), publication failures, run identity, the CLI exit and stdout/stderr contract** |
+| `strategy_lab_python` | 51 | A **real JSON parser** (duplicate keys and NaN/Infinity refused): documents, hostile text, exact edge doubles for derived numbers, **prices and quantities read digit for digit at the int64 extremes**, counters beyond 2^53, locale independence, error documents with invalid UTF-8, exit statuses, byte-reproducibility, CRLF absence, write failure, a 20,000-row run, and **agreement with an independent exact-rational reference** (`reference_model.py`, test-only, written from the docs with `fractions`) on all comparable fixtures |
 
-Results (final tree, clean strict builds): default build (lab OFF) 210/210; lab ON, whole suite 340/340 in Debug (130 of them labelled `strategy_lab`) and the 130 in Release; 306/306 labelled `strategy_lab`, `reference_strategies` and `strategy` under AddressSanitizer with no report
+Results (final tree, clean strict builds, after money/price/quantity became exact integers): default build (lab OFF) 240/240; lab ON, whole suite 372/372 in Debug and in Release (132 of them labelled `strategy_lab`); the **whole** 372/372 under AddressSanitizer with no report (an earlier run filtered by label and covered 342; the other 25 are the `smoke`, `domain`, `scaffold_contract` and `support` components, which that filter did not select)
 (MSVC `/fsanitize=address`; on Windows 11 build 26200 the runtime also needs `ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1`). A mutation
 check of 14 deliberate defects in the lab (clock not advanced, duplicates accepted, price 0 accepted, rows re-sorted, backslash unescaped,
 NaN written as null, no unsubscribe barrier, wrong run id, wrong exit status, wall clock in `result`, paraphrased errors, CRLF, ignored
-flush failure) found every one. Not run: GCC, Clang, ThreadSanitizer, POSIX.
+flush failure) found every one, and six further defects after the int64 change (an overflow bound a factor too loose, the crossover comparing with the wrong windows, the CSV loader truncating extra decimals, the bound computed in signed arithmetic so a huge `long_window` wraps, mean reversion converting closes to double before subtracting) were each caught (the CSV one at compile time, by a `static_assert` on the parse). Not run: GCC, Clang, ThreadSanitizer, UBSan (MSVC has none: signed overflow in the exact sums is prevented by the `max_close` bound and tested at its boundary, not detected), POSIX.
 
 ## 14. Explore interface (implemented) and what is still planned
 
@@ -405,12 +414,21 @@ real name. An argument that file cannot carry (empty, a line break, starting wit
   `event_number`, symbol, side, quantity, `created_at` (nanoseconds), bus sequence and every metadata key. The `export_scope` column repeats the scope on each row, and the
   file name carries it. The prefix export is exactly the Signals table (same cursor and symbol filter). Values are written as recorded; a spreadsheet may treat a
   cell starting with `=`, `+`, `-` or `@` as a formula.
+* **Exact prices, quantities and ids in the tables, and the "Sort rows by" control.** A price (`Close`), a whole-share quantity and a signal id are
+  shown as **exact text**, right-aligned. `st.dataframe` cannot do better itself, which was checked in a browser (Streamlit 1.64): a text column sorts as
+  text (`100` before `20` before `3`); a numeric column is converted to a floating-point number in the browser, so `9223372036854.775807` and
+  `9223372036854.775806` both display as `9223372036854.773`, and integers above 2^53 are flagged and mis-ordered; there is no option to turn
+  header sorting off. So the exact order is an explicit **Sort rows by** selector above each of the four sortable tables (Explore and Compare, Signals
+  and Diagnostics): *Recorded order* (the default), or a column low to high / high to low. The rows are ordered in Python on the exact `int` / `Decimal`
+  values (no float is involved; equal values keep their recorded order and rows without a value come last), and the choice is kept when you leave the
+  view. **Limitation:** clicking the header of a price, quantity or id column still sorts as text; use the selector for numeric order (its help text says
+  so). Indicator columns are derived statistics (floats) and sort natively. The plotted line is the only float made from a price, and it is for drawing.
 
 ### 14.6 What was checked (2026-10-02, this machine only)
 
 | Check | Result |
 |---|---|
-| `python\strategy_lab\.venv\Scripts\python.exe -m unittest discover -s tests` (from `python\strategy_lab`) | **186 tests, all pass** (about 15 s; **401 now**, with Compare, Validate and the theme: [STRATEGY_LAB_COMPARE_VALIDATE.md](STRATEGY_LAB_COMPARE_VALIDATE.md) section 6): strict JSON and schema (malformed, unsupported, inconsistent, ids beyond 2^53, equal timestamps), replay prefix/navigation/filters/two strategies on one event, charts, exports and stale/failed status, datasets, the subprocess bridge (fake runner: timeout, flood, exit statuses, UTF-8, non-ASCII temp directory, cleanup; **and the real executable**) and 32 AppTest scenarios against the real executable |
+| `python\strategy_lab\.venv\Scripts\python.exe -m unittest discover -s tests` (from `python\strategy_lab`) | **186 tests, all pass** (about 15 s; **433 now**, with Compare, Validate and the theme: [STRATEGY_LAB_COMPARE_VALIDATE.md](STRATEGY_LAB_COMPARE_VALIDATE.md) section 6): strict JSON and schema (malformed, unsupported, inconsistent, ids beyond 2^53, equal timestamps), replay prefix/navigation/filters/two strategies on one event, charts, exports and stale/failed status, datasets, the subprocess bridge (fake runner: timeout, flood, exit statuses, UTF-8, non-ASCII temp directory, cleanup; **and the real executable**) and 32 AppTest scenarios against the real executable |
 | Targeted mutation check of the UI core (22 deliberate defects: future row revealed, filters ignored, stale reported as current, links/major version/dataset hash/exit status unchecked, timeout off, export scope, thresholds hard-coded, gap drawn as zero, an engine launch on navigation, ...) | all 22 killed in the end: 20 at once, and two (the per-signal link check; another strategy's signals leaking into a model) only after a test was added for each |
 | Existing C++ `reference_strategies` suite (diagnostics, invariance streams), strict build, Debug | 116/116 pass. This covers the question whether moving the per-symbol state reference ahead of the invalid-price checks changed ignored events: it binds a reference only (`find`, no insertion, state is built in the constructor); no C++ was changed |
 | Real browser (the Claude desktop app's built-in Chromium pane, 1440x900 emulated) | Built-in SMA run and its Buy at event 5 and Sell at event 8; mean reversion run (3 requests, z panel with the configured thresholds); two-symbol run with equal timestamps and the MSFT filter; forward and backward stepping (the chart's traces shrink to the prefix); stale labelling after a parameter edit; a failing configuration (message verbatim, last run kept and labelled); Restore defaults (5 and 20); a valid run with no signals; CSV upload (valid, invalid with line/column, empty); the prefix CSV's content; Run details showing launch number 1 after a run, nine Next-bar clicks and a tab change |

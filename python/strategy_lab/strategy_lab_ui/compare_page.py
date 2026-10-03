@@ -10,10 +10,11 @@ from __future__ import annotations
 import streamlit as st
 
 from . import (charts, compare_details, compare_exports, compare_session as cs, compare_sidebar, compare_tables, playback,
-               state)
+               state, table_order)
 from .bridge import Runner
 from .catalog import Catalog
 from .compare import CompletedComparison, FailedComparison
+from .schema import exact_text
 from .state import Status
 
 _STATUS_BADGE = {"empty": ("No comparison yet", "gray"), "current": ("Comparison complete - settings match", "green"),
@@ -67,7 +68,7 @@ def _event_panel(model, labels: dict[str, str], cursor: int, symbol: str | None)
         st.info("No event selected: at position 0 nothing has been revealed. Step forward to compare the first recorded decisions.")
         return
     st.markdown(f"**Event {event.index + 1} of {model.total}** - {event.symbol} - {event.type} - `{event.exchange_time}`")
-    st.caption(("no price" if event.price is None else f"close {event.price}") + f"; source line "
+    st.caption(("no price" if event.price is None else f"close {exact_text(event.price)}") + f"; source line "
                f"{event.source_line if event.source_line is not None else 'unknown'}.")
     if symbol is not None and event.symbol != symbol:
         st.info(f"This event belongs to {event.symbol}, not the displayed symbol ({symbol}). The cursor follows the recorded "
@@ -96,11 +97,12 @@ def _signals_tab(comparison: CompletedComparison, labels: dict[str, str], cursor
     scope = compare_exports.scope_prefix(model, cursor, symbol)
     st.caption(f"Signal requests of both configurations in the {scope}. Signal ids repeat across the two runs: "
                "the scoped reference is the unique one.")
-    table = compare_tables.signals_table(model, labels, cursor, symbol)
+    order = table_order.control("cmp_order_signals", compare_tables.SIGNAL_ORDER_COLUMNS)
+    table = compare_tables.signals_table(model, labels, cursor, symbol, order)
     if table.empty:
         st.info("No signal requests in the visible prefix." if cursor else "Nothing revealed yet.")
     else:
-        st.dataframe(table, hide_index=True, width="stretch")
+        st.dataframe(table, hide_index=True, width="stretch", column_config=table_order.column_config(table))
     prefix = model.signals_through(cursor, symbol)
     left, right = st.columns(2)
     left.download_button(f"Signals CSV - VISIBLE PREFIX ({len(prefix)} rows)",
@@ -118,11 +120,12 @@ def _signals_tab(comparison: CompletedComparison, labels: dict[str, str], cursor
 def _diagnostics_tab(model, cursor: int, symbol: str | None) -> None:
     scope = compare_exports.scope_prefix(model, cursor, symbol)
     st.caption(f"One row per recorded event in the {scope}, with both configurations' decisions side by side.")
-    table = compare_tables.diagnostics_table(model, cursor, symbol)
+    order = table_order.control("cmp_order_diagnostics", compare_tables.DIAGNOSTIC_ORDER_COLUMNS)
+    table = compare_tables.diagnostics_table(model, cursor, symbol, order)
     if table.empty:
         st.info("Nothing revealed yet." if cursor == 0 else "No rows for the displayed symbol yet.")
     else:
-        st.dataframe(table, hide_index=True, width="stretch")
+        st.dataframe(table, hide_index=True, width="stretch", column_config=table_order.column_config(table))
 
 
 def _results(comparison: CompletedComparison) -> None:

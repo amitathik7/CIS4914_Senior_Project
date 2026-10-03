@@ -36,7 +36,7 @@ using events::EventType;
 
 const common::Timestamp kStart = common::Timestamp{} + std::chrono::hours{7};
 
-events::Event market(const std::string& symbol, double price) {
+events::Event market(const std::string& symbol, common::Price price) {
     events::Event event;
     event.type = EventType::MarketData;
     domain::MarketEvent payload;
@@ -66,16 +66,16 @@ protected:
 
 TEST_F(DemoBusTest, RefusesPublicationUntilStartedAndAfterShutdown) {
     EXPECT_FALSE(bus.running());
-    EXPECT_FALSE(bus.publish(market("AAPL", 1.0))) << "not started";
+    EXPECT_FALSE(bus.publish(market("AAPL", common::Price::from_units(1)))) << "not started";
     EXPECT_EQ(bus.counters().rejected_not_running, 1u);
 
     bus.start();
     EXPECT_TRUE(bus.running());
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1))));
 
     bus.request_shutdown();
     EXPECT_FALSE(bus.running());
-    EXPECT_FALSE(bus.publish(market("AAPL", 1.0))) << "a bus that stopped accepting events says so";
+    EXPECT_FALSE(bus.publish(market("AAPL", common::Price::from_units(1)))) << "a bus that stopped accepting events says so";
     EXPECT_EQ(bus.counters().rejected_not_running, 2u);
     EXPECT_NO_THROW(bus.wait_until_drained()) << "nothing is queued: nothing to wait for";
     EXPECT_THROW(bus.start(), std::logic_error) << "a shut-down bus cannot be restarted";
@@ -89,10 +89,10 @@ TEST_F(DemoBusTest, StampsASequenceAcrossAllTypesAndTheInjectedClockTime) {
     bus.subscribe(EventType::Signal, [&](const events::Event& e) { seen.push_back(e); });
 
     clock.set(kStart + 5min);
-    bus.publish(market("AAPL", 1.0));
+    bus.publish(market("AAPL", common::Price::from_units(1)));
     clock.set(kStart + 6min);
     bus.publish(signal("AAPL"));
-    bus.publish(market("MSFT", 2.0));
+    bus.publish(market("MSFT", common::Price::from_units(2)));
 
     ASSERT_EQ(seen.size(), 3u);
     EXPECT_EQ(seen[0].sequence, 1u);
@@ -111,7 +111,7 @@ TEST_F(DemoBusTest, DeliversOnlyToSubscribersOfThatTypeInSubscriptionOrder) {
     bus.subscribe(EventType::MarketData, [&](const events::Event&) { order.push_back(1); });
     bus.subscribe(EventType::Signal, [&](const events::Event&) { order.push_back(99); });
     bus.subscribe(EventType::MarketData, [&](const events::Event&) { order.push_back(2); });
-    bus.publish(market("AAPL", 1.0));
+    bus.publish(market("AAPL", common::Price::from_units(1)));
     EXPECT_EQ(order, (std::vector<int>{1, 2}));
     EXPECT_EQ(bus.subscription_count(EventType::MarketData), 2u);
     EXPECT_EQ(bus.subscription_count(EventType::Fill), 0u);
@@ -130,7 +130,7 @@ TEST_F(DemoBusTest, AHandlerMayPublishAndTheNestedDeliveryFinishesBeforeTheOuter
     });
     bus.subscribe(EventType::Signal,
                   [&](const events::Event& e) { log.push_back("signal seq " + std::to_string(e.sequence)); });
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1))));
     EXPECT_EQ(log, (std::vector<std::string>{"market:begin", "signal seq 2", "market:end"}))
         << "depth first: the market event took sequence 1 before its handler ran";
 }
@@ -140,13 +140,13 @@ TEST_F(DemoBusTest, RunawayRecursionBecomesAnErrorAndTheBusRecovers) {
     std::size_t depth_reached = 0;
     const auto id = bus.subscribe(EventType::MarketData, [&](const events::Event&) {
         ++depth_reached;
-        bus.publish(market("AAPL", 1.0));   // publishes itself forever
+        bus.publish(market("AAPL", common::Price::from_units(1)));   // publishes itself forever
     });
-    EXPECT_THROW(bus.publish(market("AAPL", 1.0)), std::logic_error);
+    EXPECT_THROW(bus.publish(market("AAPL", common::Price::from_units(1))), std::logic_error);
     EXPECT_EQ(depth_reached, SynchronousDemoBus::kMaxDepth);
 
     bus.unsubscribe(id);
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0))) << "the nesting counter unwound with the exception";
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1)))) << "the nesting counter unwound with the exception";
 }
 
 // ---- unsubscribe is a barrier; subscribe during delivery ---------------------------------------
@@ -162,8 +162,8 @@ TEST_F(DemoBusTest, AHandlerUnsubscribedByAnEarlierHandlerIsSkippedInThatDeliver
     });
     victim = bus.subscribe(EventType::MarketData, [&](const events::Event&) { ++victim_calls; });
 
-    bus.publish(market("AAPL", 1.0));
-    bus.publish(market("AAPL", 2.0));
+    bus.publish(market("AAPL", common::Price::from_units(1)));
+    bus.publish(market("AAPL", common::Price::from_units(2)));
     EXPECT_EQ(first_calls, 2);
     EXPECT_EQ(victim_calls, 0) << "once unsubscribe returns, the handler never starts again";
     EXPECT_EQ(bus.subscription_count(EventType::MarketData), 1u);
@@ -177,8 +177,8 @@ TEST_F(DemoBusTest, AHandlerMayUnsubscribeItself) {
         ++calls;
         bus.unsubscribe(self);
     });
-    bus.publish(market("AAPL", 1.0));
-    bus.publish(market("AAPL", 2.0));
+    bus.publish(market("AAPL", common::Price::from_units(1)));
+    bus.publish(market("AAPL", common::Price::from_units(2)));
     EXPECT_EQ(calls, 1);
 }
 
@@ -192,9 +192,9 @@ TEST_F(DemoBusTest, ASubscriptionMadeDuringADeliveryHearsOnlyLaterEvents) {
             bus.subscribe(EventType::MarketData, [&](const events::Event&) { ++late_calls; });
         }
     });
-    bus.publish(market("AAPL", 1.0));
+    bus.publish(market("AAPL", common::Price::from_units(1)));
     EXPECT_EQ(late_calls, 0) << "not the event in flight";
-    bus.publish(market("AAPL", 2.0));
+    bus.publish(market("AAPL", common::Price::from_units(2)));
     EXPECT_EQ(late_calls, 1);
 }
 
@@ -206,9 +206,9 @@ TEST_F(DemoBusTest, ASubscribeThatIsRefusedLeavesNoSubscriptionBehind) {
 TEST_F(DemoBusTest, AnExceptionFromAHandlerReachesThePublisherAndTheBusKeepsWorking) {
     bus.start();
     const auto id = bus.subscribe(EventType::MarketData, [](const events::Event&) { throw std::runtime_error("handler"); });
-    EXPECT_THROW(bus.publish(market("AAPL", 1.0)), std::runtime_error);
+    EXPECT_THROW(bus.publish(market("AAPL", common::Price::from_units(1))), std::runtime_error);
     bus.unsubscribe(id);
-    EXPECT_TRUE(bus.publish(market("AAPL", 2.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(2))));
     EXPECT_EQ(bus.last_sequence(), 2u);
 }
 
@@ -219,7 +219,7 @@ TEST_F(DemoBusTest, UseFromASecondThreadIsRefusedLoudlyInsteadOfRacing) {
     std::exception_ptr failure;
     std::thread other([&] {
         try {
-            bus.publish(market("AAPL", 1.0));
+            bus.publish(market("AAPL", common::Price::from_units(1)));
         } catch (...) {
             failure = std::current_exception();
         }
@@ -227,7 +227,7 @@ TEST_F(DemoBusTest, UseFromASecondThreadIsRefusedLoudlyInsteadOfRacing) {
     other.join();
     ASSERT_TRUE(failure != nullptr) << "a second thread must not get through";
     EXPECT_THROW(std::rethrow_exception(failure), std::logic_error);
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0))) << "the owner thread is unaffected";
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1)))) << "the owner thread is unaffected";
     EXPECT_EQ(bus.last_sequence(), 1u);
 }
 
@@ -240,7 +240,7 @@ TEST(DemoBusFaults, RejectSignalsRefusesEverySignalRecordsItAndLeavesMarketDataA
     int signals_heard = 0;
     bus.subscribe(EventType::Signal, [&](const events::Event&) { ++signals_heard; });
 
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1))));
     EXPECT_FALSE(bus.publish(signal("AAPL")));
     EXPECT_FALSE(bus.publish(signal("MSFT")));
     EXPECT_EQ(signals_heard, 0) << "a refused signal is not delivered";
@@ -258,7 +258,7 @@ TEST(DemoBusFaults, ThrowOnSignalMakesPublishThrowAndRecordsTheFailure) {
     common::ManualClock clock{kStart};
     SynchronousDemoBus bus{clock, SynchronousDemoBus::Fault::ThrowOnSignal};
     bus.start();
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1))));
     EXPECT_THROW(bus.publish(signal("AAPL")), std::runtime_error);
     ASSERT_EQ(bus.failures().size(), 1u);
     EXPECT_EQ(bus.failures()[0].kind, SynchronousDemoBus::FailedPublication::Kind::Threw);
@@ -305,7 +305,8 @@ TEST(DemoBusEngine, SignalsAreStampedWithTheClockAtDeliveryAndPublishedThroughTh
     engine.start();
 
     // closes 3 2 1 2 3: a Buy on the fifth bar (the documented crossover fixture)
-    const std::vector<double> closes{3, 2, 1, 2, 3};
+    const std::vector<common::Price> closes{common::Price::from_units(3), common::Price::from_units(2), common::Price::from_units(1),
+                                            common::Price::from_units(2), common::Price::from_units(3)};
     for (std::size_t i = 0; i < closes.size(); ++i) {
         clock.set(kStart + std::chrono::minutes{static_cast<long long>(i) + 1});   // BEFORE delivery
         events::Event event = market("AAPL", closes[i]);
@@ -330,13 +331,13 @@ TEST(DemoBusEngine, AfterShutdownTheEngineReceivesNothingAndStoppingAfterTheDrai
     engine.register_strategy(std::make_shared<strategy::MovingAverageCrossoverStrategy>(crossover_2_3()));
     bus.start();
     engine.start();
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1))));
     EXPECT_EQ(engine.stats().events_routed, 1u);
 
     // The composition root's order: shut the bus, drain it, then stop the engine.
     bus.request_shutdown();
     bus.wait_until_drained();
-    EXPECT_FALSE(bus.publish(market("AAPL", 2.0)));
+    EXPECT_FALSE(bus.publish(market("AAPL", common::Price::from_units(2))));
     EXPECT_EQ(engine.stats().events_routed, 1u) << "a refused event never reaches the engine";
     engine.stop();
     EXPECT_EQ(engine.stats().bus_errors, 0u);
@@ -357,7 +358,7 @@ TEST(DemoBusEngine, AnEngineWhoseUnsubscribeIsRefusedAbsorbsAndCountsTheBusError
     EXPECT_EQ(engine.stats().bus_errors, 1u);
     EXPECT_FALSE(engine.is_running());
     // The handler the bus still holds is inert once the engine stopped.
-    EXPECT_TRUE(bus.publish(market("AAPL", 1.0)));
+    EXPECT_TRUE(bus.publish(market("AAPL", common::Price::from_units(1))));
     EXPECT_EQ(engine.stats().events_routed, 0u);
 }
 

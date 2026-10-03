@@ -4,14 +4,21 @@ The runner promises exactly one JSON document and a newline on stdout (docs/STRA
 section 6). This reader holds it to that: valid UTF-8, no duplicate keys, none of the
 non-standard literals NaN/Infinity, nothing after the document but the newline.
 
-Integers stay Python integers (arbitrary precision) so identifiers and counters above 2**53
-survive exactly; nothing here routes an identifier through a float.
+Integers stay Python integers (arbitrary precision) so identifiers, counters, quantities and
+volumes above 2**53 survive exactly; nothing here routes an identifier through a float.
+
+Decimal numbers (anything written with a point) are read as `decimal.Decimal`, not float: the
+tool writes a price as the exact decimal text of its int64 count of 1e-6 (150.02, 0.000001,
+9223372036854.775807), and a float cannot hold the larger ones. `exact_number()` keeps such a
+value as it was written; `number()` is for DERIVED statistics (averages, z-scores) and converts to
+float. Nothing a price passes through here is ever a float.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from typing import Any, Callable, Mapping
 
 from .errors import LabUiError
@@ -46,7 +53,8 @@ def strict_loads(stdout: bytes) -> Any:
     except UnicodeDecodeError as error:
         raise LabUiError("malformed_output", "The replay tool's output is not valid UTF-8.",
                          detail=str(error), stdout_excerpt=excerpt(stdout)) from error
-    decoder = json.JSONDecoder(object_pairs_hook=_no_duplicates, parse_constant=_refuse_constant)
+    decoder = json.JSONDecoder(object_pairs_hook=_no_duplicates, parse_constant=_refuse_constant,
+                               parse_float=Decimal)
     try:
         value, end = decoder.raw_decode(text)
     except ValueError as error:
@@ -120,9 +128,27 @@ def integer(value: Any, path: str, *, minimum: int | None = None) -> int:
 
 
 def number(value: Any, path: str) -> int | float:
-    """A JSON number, kept as parsed (int stays int). Booleans are not numbers."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    """A DERIVED statistic (an average, a z-score): int stays int, a decimal becomes a float. Not for prices."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise bad(path, "a number", value)
+    return float(value) if isinstance(value, Decimal) else value
+
+
+def exact_number(value: Any, path: str) -> int | Decimal:
+    """A price (int64 ticks of 1e-6) exactly as written: an int when written without a point, else a Decimal."""
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+        raise bad(path, "an exact decimal number", value)
+    return value
+
+
+def plain(value: Any) -> Any:
+    """Decimals inside a parsed structure (a strategy parameter, a derived value) as floats; everything else as is."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {key: plain(inner) for key, inner in value.items()}
+    if isinstance(value, list):
+        return [plain(inner) for inner in value]
     return value
 
 

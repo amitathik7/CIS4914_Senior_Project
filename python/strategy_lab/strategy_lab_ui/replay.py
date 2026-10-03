@@ -17,6 +17,7 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Mapping
 
 from .schema import Event, ReplayDocument, Signal, StrategyEventResult
@@ -45,7 +46,7 @@ class SymbolSeries:
     symbol: str
     event_indexes: list[int]
     times: list[str]                 # axis position only (millisecond resolution); identity is the event's own text
-    prices: list[float | None]
+    prices: list[float | None]       # plotting coordinates only (see plot_float); the exact price is on the Event
     verdicts: list[str | None]
     reasons: list[str | None]
     indicators: dict[str, list[float | None]]
@@ -61,8 +62,10 @@ def plotly_time(exchange_time: str) -> str:
     return text
 
 
-def _plain_float(value: int | float | None) -> float | None:
-    """For drawing only (never for identity or joins). Huge integers that overflow float are not drawn."""
+def plot_float(value: int | float | Decimal | None) -> float | None:
+    """THE place a price becomes a float: a plotting coordinate, for drawing only (never for identity, joins, tables,
+    captions, hovers or exports, which all use the exact value through `schema.exact_text`). A value too large for a
+    float is not drawn."""
     if value is None:
         return None
     try:
@@ -180,10 +183,10 @@ class ReplayModel:
             result = self.result_of(event)
             out.event_indexes.append(index)
             out.times.append(self.time_text(event))
-            out.prices.append(_plain_float(event.price))
+            out.prices.append(plot_float(event.price))
             out.verdicts.append(result.verdict)
             out.reasons.append(result.reason)
             out.types.append(event.type)
             for name in indicator_names:
-                out.indicators[name].append(_plain_float(result.indicators.get(name)))
+                out.indicators[name].append(plot_float(result.indicators.get(name)))
         return out

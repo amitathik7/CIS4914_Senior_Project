@@ -353,7 +353,7 @@ TEST(StrategyDiagnosticsLifecycle, AttachingAndDetachingBetweenEventsOnlyChanges
 TEST(StrategyDiagnosticsLifecycle, ARestartResetsTheStrategyButNotTheObserverAndReportsTheSameRun) {
     // AAPL 3 2 1 2 3 4 3 2 1 for a 2/3 pair; the second run replays the same bars and times.
     World world{true};
-    const std::vector<double> closes{3, 2, 1, 2, 3, 4, 3, 2, 1};
+    const std::vector<common::Price> closes = units({3, 2, 1, 2, 3, 4, 3, 2, 1});
     std::vector<domain::MarketEvent> stream;
     for (std::size_t i = 0; i < closes.size(); ++i) {
         stream.push_back(event_at("AAPL", closes[i], static_cast<long long>(i) + 1));
@@ -390,7 +390,7 @@ TEST(StrategyDiagnosticsLifecycle, TheSnapshotIsReportedBeforeEmitSoASinkThatThr
 
     long long minute = 0;
     std::size_t thrown_at = 0;
-    for (const double close : {3.0, 2.0, 1.0, 2.0, 3.0, 4.0}) {
+    for (const common::Price close : units({3, 2, 1, 2, 3, 4})) {
         ++minute;
         try {
             sma.on_market_event(event_at("AAPL", close, minute), sink);

@@ -1,6 +1,6 @@
 // The runner with EVENTS built in memory, bypassing the CSV loader. Two things need that:
-//  * MALFORMED events (NaN, infinite, zero, absent prices; other symbols; non-bars; repeated and
-//    older timestamps). The loader refuses these in a file (strategy_lab_dataset_test.cpp); here
+//  * MALFORMED events (zero, negative, extreme and absent prices; other symbols; non-bars; repeated
+//    and older timestamps). A Price is an int64, so it cannot be NaN or infinite. The loader refuses these in a file (strategy_lab_dataset_test.cpp); here
 //    they reach the strategies anyway, so the strategies' OWN handling can be observed.
 //  * Bus faults, which the runner reports as results (publication failures), not as errors.
 // Also run identity, warnings and the errors the session raises.
@@ -16,19 +16,22 @@
 #include "lab/result_json.hpp"
 #include "lab/sha256.hpp"
 #include "strategy_lab_test_support.hpp"
+#include "support/price_literals.hpp"
 
 namespace {
 
 using namespace lab_test;
+using namespace trading_engine::test_support::literals;
+using trading_engine::test_support::units;
 using Lines = std::vector<std::string>;
 
-constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-constexpr double kInf = std::numeric_limits<double>::infinity();
-constexpr double kMax = std::numeric_limits<double>::max();
+using trading_engine::test_support::kMaxPrice;
+using trading_engine::test_support::kMinPrice;
+using trading_engine::test_support::micros;
 
 const common::Timestamp kBase = common::Timestamp{} + std::chrono::hours{20};
 
-lab::ReplayEvent make_event(const std::string& symbol, std::optional<double> price, long long minute,
+lab::ReplayEvent make_event(const std::string& symbol, std::optional<common::Price> price, long long minute,
                             domain::MarketEventType type = domain::MarketEventType::Bar) {
     lab::ReplayEvent out;
     out.event.symbol        = symbol;
@@ -50,24 +53,24 @@ std::vector<lab::BuiltStrategy> sma_and_mr() {
 
 TEST(LabReplayMalformed, EveryKindOfBadEventIsIgnoredWithItsOwnReasonAndTheNextGoodBarStillCounts) {
     const std::vector<lab::ReplayEvent> events{
-        make_event("AAPL", 10.0, 0),                                              //  0 accepted by both
-        make_event("AAPL", 10.0, 1, domain::MarketEventType::Trade),              //  1 not a bar
-        make_event("MSFT", 10.0, 1),                                              //  2 not on the allowlist
+        make_event("AAPL", 10_px, 0),                                             //  0 accepted by both
+        make_event("AAPL", 10_px, 1, domain::MarketEventType::Trade),             //  1 not a bar
+        make_event("MSFT", 10_px, 1),                                             //  2 not on the allowlist
         make_event("AAPL", std::nullopt, 1),                                      //  3 no price
-        make_event("AAPL", kNaN, 1),                                              //  4 NaN
-        make_event("AAPL", kInf, 1),                                              //  5 +inf
-        make_event("AAPL", -kInf, 1),                                             //  6 -inf
-        make_event("AAPL", 0.0, 1),                                               //  7 zero
-        make_event("AAPL", -1.0, 1),                                              //  8 negative
-        make_event("AAPL", kMax, 1),                                              //  9 finite and positive, but above the crossover's ceiling
-        make_event("AAPL", 10.0, 0),                                              // 10 repeats event 0's time
-        make_event("AAPL", 10.0, 1),                                              // 11 time 1: after the crossover's last bar (0), equal to the reversion's (event 9)
+        make_event("AAPL", kMinPrice, 1),                                         //  4 INT64_MIN
+        make_event("AAPL", -kMaxPrice, 1),                                        //  5 -INT64_MAX
+        make_event("AAPL", micros(-1), 1),                                         //  6 minus one millionth
+        make_event("AAPL", common::Price{}, 1),                                   //  7 zero
+        make_event("AAPL", -1_px, 1),                                             //  8 negative
+        make_event("AAPL", kMaxPrice, 1),                                         //  9 positive, but above the crossover's ceiling
+        make_event("AAPL", 10_px, 0),                                             // 10 repeats event 0's time
+        make_event("AAPL", 10_px, 1),                                             // 11 time 1: after the crossover's last bar (0), equal to the reversion's (event 9)
     };
     const lab::ReplayResult result = lab::run_replay(sma_and_mr(), events);
 
     // Hand-derived. Crossover (2/3): accepts event 0 (fill 1); rejects 9 for its ceiling; event 10 duplicates
     // time 0; event 11 (time 1) is later than 0, so accepted (fill 2). Reversion (lookback 4): accepts event 0
-    // and event 9 (it has no ceiling: DBL_MAX is a finite positive close, time 1); event 10 is older; event 11
+    // and event 9 (it has no ceiling: INT64_MAX is a positive close, time 1); event 10 is older; event 11
     // repeats time 1.
     const Lines want_sma{"warming_up",  "not_a_bar",     "symbol_not_allowlisted", "price_absent",  "price_invalid",
                          "price_invalid", "price_invalid", "price_invalid",         "price_invalid", "price_above_max_close",
@@ -95,13 +98,13 @@ TEST(LabReplayMalformed, AMalformedEventNeverPoisonsALaterWindow) {
     // After a burst of garbage, the documented crossover (3 2 1 2 3 on a 2/3 pair) still buys on its fifth GOOD bar.
     std::vector<lab::ReplayEvent> events;
     long long minute = 0;
-    for (const double close : {3.0, 2.0}) {
+    for (const common::Price close : units({3, 2})) {
         events.push_back(make_event("AAPL", close, ++minute));
-        events.push_back(make_event("AAPL", kNaN, minute));    // same time: ignored
-        events.push_back(make_event("AAPL", kInf, ++minute));
-        events.push_back(make_event("AAPL", -5.0, minute));
+        events.push_back(make_event("AAPL", kMinPrice, minute));    // same time: ignored
+        events.push_back(make_event("AAPL", -kMaxPrice, ++minute));
+        events.push_back(make_event("AAPL", -5_px, minute));
     }
-    for (const double close : {1.0, 2.0, 3.0}) {
+    for (const common::Price close : units({1, 2, 3})) {
         events.push_back(make_event("AAPL", close, ++minute));
     }
     std::vector<lab::BuiltStrategy> built;
@@ -117,9 +120,13 @@ TEST(LabReplayMalformed, AMalformedEventNeverPoisonsALaterWindow) {
     EXPECT_EQ(result.signals[0].signal.metadata.at("long_sma"), "2");
 }
 
-TEST(LabReplayMalformed, MalformedValuesSerializeWithoutNonFiniteNumbers) {
-    const std::vector<lab::ReplayEvent> events{make_event("AAPL", kNaN, 0), make_event("AAPL", kInf, 1),
-                                               make_event("AAPL", -kInf, 2), make_event("AAPL", std::nullopt, 3)};
+TEST(LabReplayMalformed, ExtremePricesSerializeAsTheirExactDecimalTextNeverThroughADouble) {
+    // Every price is an int64 count of 1e-6, written digit for digit: the extremes keep every digit
+    // (a double would round 9223372036854.775807), and nothing is ever NaN, infinite or an exponent.
+    const std::vector<lab::ReplayEvent> events{make_event("AAPL", kMinPrice, 0), make_event("AAPL", kMaxPrice, 1),
+                                               make_event("AAPL", -kMaxPrice, 2), make_event("AAPL", micros(1), 3),
+                                               make_event("AAPL", common::Price{}, 4), make_event("AAPL", 150.02_px, 5),
+                                               make_event("AAPL", std::nullopt, 6)};
     lab::RunDocument doc;
     doc.input.name   = "in-memory";
     doc.input.sha256 = std::string(64, '0');
@@ -127,9 +134,12 @@ TEST(LabReplayMalformed, MalformedValuesSerializeWithoutNonFiniteNumbers) {
     doc.run_id       = lab::make_run_id(doc);
 
     const std::string text = lab::result_json(doc);
-    EXPECT_NE(text.find("\"price_status\":\"nan\""), std::string::npos);
-    EXPECT_NE(text.find("\"price_status\":\"inf\""), std::string::npos);
-    EXPECT_NE(text.find("\"price_status\":\"-inf\""), std::string::npos);
+    for (const char* exact : {"\"price\":-9223372036854.775808", "\"price\":9223372036854.775807",
+                              "\"price\":-9223372036854.775807", "\"price\":0.000001", "\"price\":0,",
+                              "\"price\":150.02,"}) {
+        EXPECT_NE(text.find(exact), std::string::npos) << exact;
+    }
+    EXPECT_EQ(text.find("price_status"), std::string::npos) << "an integer price is never non-finite";
     for (const char* forbidden : {"NaN", "nan,", "Infinity", ":inf", ":-inf", "null"}) {
         EXPECT_EQ(text.find(forbidden), std::string::npos) << forbidden;
     }

@@ -112,6 +112,16 @@ analytics. The rest is drafted in Weeks 1–2 and ratified at **M5**.
 
 - **Money / price type — DECIDE WEEK 1–2:** keep `double` or move to
   fixed-point / integer minor units? Cross-cutting; all four members sign off.
+  *Status (2026-10-02; a record of what exists, not a decision): **still open**.*
+  A scaled-`int64` direction with one contract-wide scale and whole-share quantities
+  is **recommended** in ADR 0004 §12 (Proposed; on
+  `adam/adr-0004-execution-portfolio-fill-contract`), which notes that 10³ and 10⁴
+  were floated in chat while `NUMERIC(18,6)` implies 10⁶ and recommends 10⁶. It is
+  **implemented** as `common::Decimal` (int64 millionths, `Quantity` = `int64_t`) on
+  `adam/portfolio-manager`, and in the strategy / Strategy Lab work on `jordan`.
+  Neither is ratified: no sign-off from all four members is recorded here or in an
+  ADR. Whoever owns the numeric-representation ADR should record the outcome, and
+  amend ADR 0002 §8, which still says `Quantity` stays `double`.
 - Fill model v1: full instant fill? spread crossing? volume participation cap?
 - Slippage model: fixed bps (current field) vs function of size/volatility.
 - Latency: fixed `signal_to_order` / `order_to_fill` (current) vs distribution.

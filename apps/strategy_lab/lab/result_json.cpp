@@ -10,6 +10,7 @@
 #include "lab/sha256.hpp"
 #include "lab/timestamp.hpp"
 #include "lab/utf8.hpp"
+#include "trading_engine/common/decimal_text.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/order.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
@@ -79,6 +80,20 @@ void write_optional_number(JsonWriter& w, std::string_view name, const std::opti
     w.key(std::string{name} + "_status").string(std::isnan(*value) ? "nan" : (*value > 0.0 ? "inf" : "-inf"));
 }
 
+// A price: a Decimal (an exact integer count of 1e-6), written as its exact decimal text.
+void write_optional_price(JsonWriter& w, std::string_view name, const std::optional<common::Price>& value) {
+    if (value.has_value()) {
+        w.key(name).scaled_number(value->micros(), common::kDecimalPlaces);
+    }
+}
+
+// A quantity or volume: a whole number of shares.
+void write_optional_quantity(JsonWriter& w, std::string_view name, const std::optional<common::Quantity>& value) {
+    if (value.has_value()) {
+        w.key(name).integer(*value);
+    }
+}
+
 void write_string_map(JsonWriter& w, const std::map<std::string, std::string>& values) {
     w.begin_object();
     for (const auto& [key, value] : values) {
@@ -98,9 +113,9 @@ void write_signal_fields(JsonWriter& w, const std::string& run_id, const domain:
     if (signal.order_type.has_value()) {
         w.field("order_type", domain::to_string(*signal.order_type));
     }
-    write_optional_number(w, "requested_quantity", signal.requested_quantity);
+    write_optional_quantity(w, "requested_quantity", signal.requested_quantity);
     write_optional_number(w, "target_exposure", signal.target_exposure);
-    write_optional_number(w, "limit_price", signal.limit_price);
+    write_optional_price(w, "limit_price", signal.limit_price);
     write_optional_number(w, "confidence", signal.confidence);
     w.field("created_at", format_utc_timestamp(signal.created_at));
 }
@@ -250,11 +265,11 @@ void write_events(JsonWriter& w, const ReplayResult& replay) {
         w.field("symbol", input.symbol);
         w.field("exchange_time", format_utc_timestamp(input.exchange_time));
         w.field("type", domain::to_string(input.type));
-        write_optional_number(w, "price", input.price);
-        write_optional_number(w, "open", input.open);
-        write_optional_number(w, "high", input.high);
-        write_optional_number(w, "low", input.low);
-        write_optional_number(w, "volume", input.volume);
+        write_optional_price(w, "price", input.price);
+        write_optional_price(w, "open", input.open);
+        write_optional_price(w, "high", input.high);
+        write_optional_price(w, "low", input.low);
+        write_optional_quantity(w, "volume", input.volume);
         w.field("bus_sequence", event.bus_sequence);
         w.key("results").begin_array();
         for (std::size_t s = 0; s < event.per_strategy.size(); ++s) {

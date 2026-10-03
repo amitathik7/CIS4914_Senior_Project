@@ -65,10 +65,13 @@ class SignalsCsv(unittest.TestCase):
         self.assertEqual(tables.signals_table(model, 1, None)["Signal"][0], str(sid))   # text in the UI table too
 
     def test_numbers_round_trip_and_timestamps_keep_nanoseconds(self):
+        # A quantity is an exact int64 count of shares: 2**62 + 1 differs from 2**62 as an integer but not as a float.
+        quantity = 2**62 + 1
+        self.assertEqual(float(quantity), float(2**62))        # the trap
         document = make_document([ev("A", 30, time="2026-01-05T14:30:00.123456789Z", signals=[(0, 1, "buy")])])
-        document["result"]["signals"][0]["requested_quantity"] = 0.1 + 0.2
+        document["result"]["signals"][0]["requested_quantity"] = quantity
         row = rows_of(exports.signals_csv(list(parse(document).signals), "x"))[1]
-        self.assertEqual(float(row[9]), 0.1 + 0.2)
+        self.assertEqual(row[9], str(quantity))
         self.assertEqual(row[10], "2026-01-05T14:30:00.123456789Z")
 
     def test_metadata_columns_are_the_sorted_union(self):

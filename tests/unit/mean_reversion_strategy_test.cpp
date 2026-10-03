@@ -12,6 +12,8 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -76,7 +78,7 @@ TEST(MeanReversionConfigTest, DefaultsAreTwentyBarsTwoAndAHalfOneShareAndTheMean
     EXPECT_EQ(defaults.lookback, 20u);
     EXPECT_EQ(defaults.entry_threshold, 2.0);
     EXPECT_EQ(defaults.rearm_threshold, 0.5);
-    EXPECT_EQ(defaults.requested_quantity, 1.0);
+    EXPECT_EQ(defaults.requested_quantity, 1);
     EXPECT_TRUE(defaults.symbols.empty()) << "the allowlist has no default";
 
     // Behaviourally: nineteen closes of 100, then 110. The first full window is
@@ -86,12 +88,12 @@ TEST(MeanReversionConfigTest, DefaultsAreTwentyBarsTwoAndAHalfOneShareAndTheMean
     only_symbols.symbols = {"AAPL"};
     Harness h{only_symbols};
     EXPECT_EQ(h.mr.id(), "mean_reversion");
-    Closes closes(19, 100.0);
-    closes.push_back(110.0);
+    Closes closes(19, 100_px);
+    closes.push_back(110_px);
     h.feed_closes(closes);
     EXPECT_EQ(h.labels(), (Labels{"sell@20"}));
     ASSERT_EQ(h.signals.size(), 1u);
-    EXPECT_EQ(h.signals[0].requested_quantity, std::optional<double>{1.0});
+    EXPECT_EQ(h.signals[0].requested_quantity, std::optional<common::Quantity>{1});
     EXPECT_EQ(h.signals[0].metadata.at("lookback"), "20");
     EXPECT_EQ(h.signals[0].metadata.at("entry_threshold"), "2");
     EXPECT_EQ(h.signals[0].metadata.at("rearm_threshold"), "0.5");
@@ -104,7 +106,9 @@ TEST(MeanReversionConfigTest, AcceptsValidConfigurations) {
     EXPECT_EQ(config_error(make_config(3, 1.5, 0.0)), "<accepted>");   // rearm 0 is allowed
     EXPECT_EQ(config_error(make_config(250, 3.0, 1.0, {"AAPL", "MSFT", "BRK.B"})), "<accepted>");
     EXPECT_EQ(config_error(make_config(5, 1.0e300, 0.5)), "<accepted>") << "large but finite";
-    for (const double whole : {1.0, 2.0, 100.0, 1.0e6, 9007199254740992.0}) {
+    for (const common::Quantity whole : {common::Quantity{1}, common::Quantity{2}, common::Quantity{100},
+                                         common::Quantity{1'000'000},
+                                         std::numeric_limits<common::Quantity>::max()}) {
         MeanReversionConfig cfg = make_config();
         cfg.requested_quantity  = whole;
         EXPECT_EQ(config_error(cfg), "<accepted>") << whole;
@@ -155,27 +159,26 @@ TEST(MeanReversionConfigTest, RejectsAMissingEmptyOrRepeatedSymbol) {
     EXPECT_TRUE(mentions(repeated, "more than once")) << repeated;
 }
 
-TEST(MeanReversionConfigTest, RejectsQuantitiesThatAreNotFinitePositiveWholeNumbers) {
-    // Fractions are rejected, never rounded: 1.5 is not turned into 1 or 2, and the
-    // message shows the offending value.
-    for (const double bad : {0.0, -0.0, -1.0, 0.5, 1.5, 2.000001, kNaN, kInf, -kInf}) {
+TEST(MeanReversionConfigTest, RejectsQuantitiesThatAreNotPositive) {
+    // Quantity is an exact integer count of shares, so a fraction cannot even be written; only
+    // the sign needs checking. The message shows the offending value.
+    for (const common::Quantity bad : {common::Quantity{0}, common::Quantity{-1}, common::Quantity{-1'000},
+                                       std::numeric_limits<common::Quantity>::min()}) {
         MeanReversionConfig cfg = make_config();
         cfg.requested_quantity  = bad;
         const std::string message = config_error(cfg);
         EXPECT_TRUE(mentions(message, "requested_quantity")) << bad << ": " << message;
+        EXPECT_TRUE(mentions(message, std::to_string(bad))) << message;
     }
-    MeanReversionConfig fractional = make_config();
-    fractional.requested_quantity  = 1.5;
-    EXPECT_TRUE(mentions(config_error(fractional), "1.5"));
 }
 
 // --- Warm-up -------------------------------------------------------------------
 
 TEST(MeanReversionWarmUp, EmitsNothingUntilTheWindowIsFull) {
     expect_labels({
-        {"three bars of a lookback-4 window", 4, 1.5, 0.5, {10, 10, 10}, {}},
-        {"a violent move inside the warm-up", 4, 1.5, 0.5, {1, 1000, 1}, {}},
-        {"a single bar", 2, 1.0, 0.5, {10}, {}},
+        {"three bars of a lookback-4 window", 4, 1.5, 0.5, units({10, 10, 10}), {}},
+        {"a violent move inside the warm-up", 4, 1.5, 0.5, units({1, 1000, 1}), {}},
+        {"a single bar", 2, 1.0, 0.5, units({10}), {}},
     });
 }
 
@@ -184,9 +187,9 @@ TEST(MeanReversionWarmUp, TheFirstFullWindowCanSignalWithNoSilentBaseline) {
     // fixture, the first full window, is already a Buy (z = -1.7320508 <= -1.5).
     // Lookback 2 is the extreme case: the second bar is the first full window.
     expect_labels({
-        {"the fixture's fourth bar", 4, 1.5, 0.5, {10, 10, 10, 6}, {"buy@4"}},
-        {"lookback 2, up", 2, 1.0, 0.5, {10, 12}, {"sell@2"}},
-        {"lookback 2, down", 2, 1.0, 0.5, {12, 10}, {"buy@2"}},
+        {"the fixture's fourth bar", 4, 1.5, 0.5, units({10, 10, 10, 6}), {"buy@4"}},
+        {"lookback 2, up", 2, 1.0, 0.5, units({10, 12}), {"sell@2"}},
+        {"lookback 2, down", 2, 1.0, 0.5, units({12, 10}), {"buy@2"}},
     });
 }
 
@@ -194,8 +197,8 @@ TEST(MeanReversionWarmUp, ALookbackOfTwoCapsTheZScoreAtOneSoTheDefaultThresholdN
     // With N = 2 the two closes sit exactly one deviation either side of their
     // mean, so |z| = 1 whatever they are: (10, 1000) is z = +1, never 2.
     expect_labels({
-        {"entry 2.0 with lookback 2", 2, 2.0, 0.5, {10, 1000, 1, 1000, 1}, {}},
-        {"entry 1.0 with lookback 2", 2, 1.0, 0.5, {10, 1000, 1}, {"sell@2", "buy@3"}},
+        {"entry 2.0 with lookback 2", 2, 2.0, 0.5, units({10, 1000, 1, 1000, 1}), {}},
+        {"entry 1.0 with lookback 2", 2, 1.0, 0.5, units({10, 1000, 1}), {"sell@2", "buy@3"}},
     });
 }
 
@@ -218,15 +221,16 @@ TEST(MeanReversionFixture, GivesBuySellAndTheRearmExactlyAsSpecified) {
 
     // The statistics on each signalling bar: mean, population variance (as the
     // square of the reported deviation) and z, each worked out above.
-    struct Expected { double close; double mean; double variance; double z; };
+    // The close is an exact Price and is reported as its exact decimal text.
+    struct Expected { const char* close; double mean; double variance; double z; };
     const Expected expected[] = {
-        {6.0, 9.0, 3.0, -1.7320508075688772},
-        {2.0, 6.75, 9.6875, -1.5261167249147478},
-        {30.0, 11.75, 117.1875, 1.6858627860337072},
+        {"6", 9.0, 3.0, -1.7320508075688772},
+        {"2", 6.75, 9.6875, -1.5261167249147478},
+        {"30", 11.75, 117.1875, 1.6858627860337072},
     };
     for (std::size_t i = 0; i < 3; ++i) {
         SCOPED_TRACE("signal " + std::to_string(i));
-        EXPECT_NEAR(number(h.signals[i], "close"), expected[i].close, 1e-12);
+        EXPECT_EQ(h.signals[i].metadata.at("close"), expected[i].close);
         EXPECT_NEAR(number(h.signals[i], "mean"), expected[i].mean, 1e-12);
         const double deviation = number(h.signals[i], "standard_deviation");
         EXPECT_NEAR(deviation * deviation, expected[i].variance, 1e-9);
@@ -239,7 +243,7 @@ TEST(MeanReversionFixture, UsesThePopulationDeviationAndIncludesTheCurrentClose)
     // z = -1.7320508; the sample deviation (N-1) would give -1.5, and leaving the
     // current 6 out of the window would give a mean of 10 and a deviation of 0.
     Harness h{make_config()};
-    h.feed_closes({10, 10, 10, 6});
+    h.feed_closes(units({10, 10, 10, 6}));
     ASSERT_EQ(h.signals.size(), 1u);
     EXPECT_NEAR(number(h.signals[0], "mean"), 9.0, 1e-12);
     EXPECT_NEAR(number(h.signals[0], "z_score"), -std::sqrt(3.0), 1e-12);
@@ -264,16 +268,16 @@ TEST(MeanReversionFixture, AMissedRearmChangesTheOutcome) {
 TEST(MeanReversionThresholds, EntryIsInclusiveOnBothSides) {
     // Lookback 5, one close five above (or below) four 10s. The window is
     // [10 10 10 10 15]: mean 11, variance (4 x 1 + 16) / 5 = 4, deviation 2,
-    // z = 4 / 2 = +2 exactly (every number is exact in binary too). Likewise
+    // z = 4 / 2 = +2 exactly (every number is an exact integer count of micros). Likewise
     // [10 10 10 10 5]: mean 9, variance 4, z = -2. At entry 2.0 both are on the
     // boundary and fire; the next representable thresholds above do not.
     expect_labels({
-        {"upper boundary fires", 5, 2.0, 0.5, {10, 10, 10, 10, 15}, {"sell@5"}},
-        {"lower boundary fires", 5, 2.0, 0.5, {10, 10, 10, 10, 5}, {"buy@5"}},
-        {"just above, upper", 5, 2.0000001, 0.5, {10, 10, 10, 10, 15}, {}},
-        {"just above, lower", 5, 2.0000001, 0.5, {10, 10, 10, 10, 5}, {}},
-        {"just below fires, upper", 5, 1.9999999, 0.5, {10, 10, 10, 10, 15}, {"sell@5"}},
-        {"just below fires, lower", 5, 1.9999999, 0.5, {10, 10, 10, 10, 5}, {"buy@5"}},
+        {"upper boundary fires", 5, 2.0, 0.5, units({10, 10, 10, 10, 15}), {"sell@5"}},
+        {"lower boundary fires", 5, 2.0, 0.5, units({10, 10, 10, 10, 5}), {"buy@5"}},
+        {"just above, upper", 5, 2.0000001, 0.5, units({10, 10, 10, 10, 15}), {}},
+        {"just above, lower", 5, 2.0000001, 0.5, units({10, 10, 10, 10, 5}), {}},
+        {"just below fires, upper", 5, 1.9999999, 0.5, units({10, 10, 10, 10, 15}), {"sell@5"}},
+        {"just below fires, lower", 5, 1.9999999, 0.5, units({10, 10, 10, 10, 5}), {"buy@5"}},
     });
 }
 
@@ -282,8 +286,8 @@ TEST(MeanReversionThresholds, TheBoundaryIsReachableOnlyBecauseTheWindowIsBigEno
     // whatever the closes: [10 10 10 100] is the most extreme possible and gives
     // z = sqrt(3) = 1.7320508, below 2.
     expect_labels({
-        {"the extreme four-bar window", 4, 2.0, 0.5, {10, 10, 10, 100}, {}},
-        {"the same at entry 1.7", 4, 1.7, 0.5, {10, 10, 10, 100}, {"sell@4"}},
+        {"the extreme four-bar window", 4, 2.0, 0.5, units({10, 10, 10, 100}), {}},
+        {"the same at entry 1.7", 4, 1.7, 0.5, units({10, 10, 10, 100}), {"sell@4"}},
     });
 }
 
@@ -295,10 +299,10 @@ TEST(MeanReversionThresholds, RearmIsInclusiveOnBothSides) {
     // 0.9999999 bar 5 is not inside the band, the latch holds, and bar 6 is silent.
     // The upper side mirrors it: [10 10 10 14], [10 10 14 14] (z = +1), [10 14 14 18].
     expect_labels({
-        {"lower, rearm exactly 1", 4, 1.4, 1.0, {10, 10, 10, 6, 6, 2}, {"buy@4", "buy@6"}},
-        {"lower, rearm just below 1", 4, 1.4, 0.9999999, {10, 10, 10, 6, 6, 2}, {"buy@4"}},
-        {"upper, rearm exactly 1", 4, 1.4, 1.0, {10, 10, 10, 14, 14, 18}, {"sell@4", "sell@6"}},
-        {"upper, rearm just below 1", 4, 1.4, 0.9999999, {10, 10, 10, 14, 14, 18}, {"sell@4"}},
+        {"lower, rearm exactly 1", 4, 1.4, 1.0, units({10, 10, 10, 6, 6, 2}), {"buy@4", "buy@6"}},
+        {"lower, rearm just below 1", 4, 1.4, 0.9999999, units({10, 10, 10, 6, 6, 2}), {"buy@4"}},
+        {"upper, rearm exactly 1", 4, 1.4, 1.0, units({10, 10, 10, 14, 14, 18}), {"sell@4", "sell@6"}},
+        {"upper, rearm just below 1", 4, 1.4, 0.9999999, units({10, 10, 10, 14, 14, 18}), {"sell@4"}},
     });
 }
 
@@ -311,8 +315,8 @@ TEST(MeanReversionLatch, ARepeatedExtremeDuringOneExcursionEmitsOnce) {
     //  held; bar 9 [1 1 1 1] is constant: rearm; bar 10 [1 1 1 10] z = +1.7320508 Sell.
     // The mirror image ends with a Buy.
     expect_labels({
-        {"downward excursion", 4, 1.5, 0.5, {10, 10, 10, 6, 2, 1, 1, 1, 1, 10}, {"buy@4", "sell@10"}},
-        {"upward excursion", 4, 1.5, 0.5, {10, 10, 10, 14, 18, 19, 19, 19, 19, 1}, {"sell@4", "buy@10"}},
+        {"downward excursion", 4, 1.5, 0.5, units({10, 10, 10, 6, 2, 1, 1, 1, 1, 10}), {"buy@4", "sell@10"}},
+        {"upward excursion", 4, 1.5, 0.5, units({10, 10, 10, 14, 18, 19, 19, 19, 19, 1}), {"sell@4", "buy@10"}},
     });
 }
 
@@ -321,7 +325,7 @@ TEST(MeanReversionLatch, BetweenTheBandsTheLatchHoldsAndAnotherExtremeIsStillSup
     // bars 5-8 never came inside the rearm band (their |z| stayed above 0.5, the
     // smallest being 0.5774). The latch never reset, so there is no second Buy.
     expect_labels({
-        {"never rearmed", 4, 1.5, 0.5, {10, 10, 10, 6, 2, 1, 1, 1, 0.1}, {"buy@4"}},
+        {"never rearmed", 4, 1.5, 0.5, {10_px, 10_px, 10_px, 6_px, 2_px, 1_px, 1_px, 1_px, 0.1_px}, {"buy@4"}},
     });
 }
 
@@ -332,7 +336,7 @@ TEST(MeanReversionLatch, ANeutralBarRearmsTheSameSide) {
     // buys again at bar 8, where [6 6 6 2] has z = -1.7320508.
     expect_labels({
         {"band rearm", 4, 1.5, 0.5, kFixture, {"buy@4", "buy@6", "sell@7"}},
-        {"constant-window rearm", 4, 1.5, 0.5, {10, 10, 10, 6, 6, 6, 6, 2}, {"buy@4", "buy@8"}},
+        {"constant-window rearm", 4, 1.5, 0.5, units({10, 10, 10, 6, 6, 6, 6, 2}), {"buy@4", "buy@8"}},
     });
 }
 
@@ -341,8 +345,8 @@ TEST(MeanReversionLatch, OppositeExtremesFlipDirectlyWithNoNeutralBarBetween) {
     // [10 10 10 6 30]: bar 5 [10 10 6 30] has mean 14, variance 100, z = +1.7056057.
     // [10 10 10 14 2]: bar 5 [10 10 14 2] has mean 9, variance 19, z = -1.6059101.
     expect_labels({
-        {"down to up", 4, 1.5, 0.5, {10, 10, 10, 6, 30}, {"buy@4", "sell@5"}},
-        {"up to down", 4, 1.5, 0.5, {10, 10, 10, 14, 2}, {"sell@4", "buy@5"}},
+        {"down to up", 4, 1.5, 0.5, units({10, 10, 10, 6, 30}), {"buy@4", "sell@5"}},
+        {"up to down", 4, 1.5, 0.5, units({10, 10, 10, 14, 2}), {"sell@4", "buy@5"}},
     });
 }
 
@@ -350,35 +354,40 @@ TEST(MeanReversionLatch, OppositeExtremesFlipDirectlyWithNoNeutralBarBetween) {
 
 TEST(MeanReversionConstantWindow, EmitsNothingWhateverTheLevel) {
     expect_labels({
-        {"flat at 5", 4, 1.5, 0.5, {5, 5, 5, 5, 5, 5, 5, 5}, {}},
-        {"flat at 100.1, no exact binary form", 4, 1.5, 0.5, Closes(12, 100.1), {}},
-        {"flat at a tiny price", 3, 1.0, 0.5, Closes(9, 1.0e-250), {}},
-        {"flat at an enormous price", 3, 1.0, 0.5, Closes(9, 1.0e300), {}},
+        {"flat at 5", 4, 1.5, 0.5, units({5, 5, 5, 5, 5, 5, 5, 5}), {}},
+        {"flat at 100.1", 4, 1.5, 0.5, Closes(12, 100.1_px), {}},
+        {"flat at the smallest price, one micro", 3, 1.0, 0.5, Closes(9, micros(1)), {}},
+        {"flat at the largest price, INT64_MAX millionths", 3, 1.0, 0.5, Closes(9, kMaxPrice), {}},
     });
 }
 
 TEST(MeanReversionConstantWindow, ThirtyTenthsDoNotLookLikeADeviation) {
-    // 0.1 summed thirty times is not 3.0 in binary, so a naive pass finds tiny
-    // nonzero deviations and divides noise by noise. Thirty equal closes must stay
-    // silent, and keep doing so as a ring that has turned several times.
+    // 0.1 is exactly 100'000 micros, so thirty of them have a deviation of exactly 0 (with
+    // doubles, 0.1 summed thirty times is not 3.0 and a naive pass divides noise by noise).
+    // Thirty equal closes must stay silent, and keep doing so as a ring that has turned
+    // several times.
     Harness h{make_config(30, 1.5, 0.5)};
-    h.feed_closes(Closes(200, 0.1));
+    h.feed_closes(Closes(200, 0.1_px));
     EXPECT_TRUE(h.signals.empty());
 
     // A real move afterwards is still seen: one close of 0.2 among 29 of 0.1 has
     // z = +sqrt(29) = 5.385 >= 1.5.
-    h.feed_closes({0.2}, "AAPL", 1000);
+    h.feed_closes({0.2_px}, "AAPL", 1000);
     EXPECT_EQ(h.labels(), (Labels{"sell@1000"}));
 }
 
-TEST(MeanReversionConstantWindow, AGapOfAFewUlpsIsStillConstant) {
-    // 100 and the next double above it differ by 1.4e-14, a relative 1.4e-16, far
-    // inside the 1e-12 tolerance: the window is constant, so it neither signals nor
-    // reads that one close as a +1.7 deviation. 100.001 (1e-5 relative) is real.
-    const double next_up = std::nextafter(100.0, 200.0);
+TEST(MeanReversionConstantWindow, ASpreadBelowOnePartInATrillionOfTheMeanIsStillConstant) {
+    // A window is constant when its deviation is at most 1e-12 of its mean. One micro
+    // (1e-6) higher in a window of four has a deviation of 0.433 micros, so:
+    //   at 100 (1e8 micros) the ratio is 4.3e-9: a real deviation, z = +sqrt(3) = 1.73 >= 1.5;
+    //   at 2,000,000 (2e12 micros) the ratio is 2.2e-13: below the tolerance, no deviation,
+    //   so it neither signals nor reads that one close as a +1.7 deviation.
+    // 100.001 (1e-5 relative) is real.
     expect_labels({
-        {"one close an ulp higher", 4, 1.5, 0.5, {100.0, 100.0, 100.0, next_up}, {}},
-        {"one close a thousandth higher", 4, 1.5, 0.5, {100.0, 100.0, 100.0, 100.001}, {"sell@4"}},
+        {"one micro higher at 100 is real", 4, 1.5, 0.5, {100_px, 100_px, 100_px, 100.000001_px}, {"sell@4"}},
+        {"one micro higher at two million is constant", 4, 1.5, 0.5,
+         {2000000_px, 2000000_px, 2000000_px, 2000000.000001_px}, {}},
+        {"one close a thousandth higher", 4, 1.5, 0.5, {100_px, 100_px, 100_px, 100.001_px}, {"sell@4"}},
     });
 }
 
@@ -390,7 +399,7 @@ TEST(MeanReversionWindow, ACloseThatHasLeftTheWindowNoLongerCounts) {
     // z = (6 - 8.667)/1.8856 = -1.4142 <= -1.2: Buy, with a mean that no longer
     // contains the 1000. If it were still counted the window would be [1000 10 6].
     Harness h{make_config(3, 1.2, 0.5)};
-    h.feed_closes({1000, 10, 10, 6});
+    h.feed_closes(units({1000, 10, 10, 6}));
     EXPECT_EQ(h.labels(), (Labels{"buy@4"}));
     ASSERT_EQ(h.signals.size(), 1u);
     EXPECT_NEAR(number(h.signals[0], "mean"), 26.0 / 3.0, 1e-12);
@@ -404,7 +413,7 @@ TEST(MeanReversionWindow, ARingThatHasTurnedUsesOnlyTheLastLookbackCloses) {
     // variance (4+4+4+36)/4 = 12, z = -6/3.4641016 = -1.7320508: a second Buy whose
     // statistics contain nothing older than bar 9.
     Harness h{make_config()};
-    h.feed_closes({50, 60, 70, 80, 20, 20, 20, 20, 20, 20, 20, 12});
+    h.feed_closes(units({50, 60, 70, 80, 20, 20, 20, 20, 20, 20, 20, 12}));
     EXPECT_EQ(h.labels(), (Labels{"buy@5", "buy@12"}));
     ASSERT_EQ(h.signals.size(), 2u);
     EXPECT_NEAR(number(h.signals[1], "mean"), 18.0, 1e-12);
@@ -415,7 +424,7 @@ TEST(MeanReversionSymbols, AreIndependentWhenInterleaved) {
     // AAPL runs the fixture; MSFT runs [5 5 5 5 9] (constant, then a jump: its first
     // full window is [5 5 5 5], and bar 5 [5 5 5 9] is z = +1.7320508, a Sell).
     // Interleaved bar by bar at the same minutes, each must give what it would alone.
-    const Closes msft{5, 5, 5, 5, 9};
+    const Closes msft = units({5, 5, 5, 5, 9});
     Harness alone_aapl{make_config(4, 1.5, 0.5, {"AAPL", "MSFT"})};
     alone_aapl.feed_closes(kFixture, "AAPL");
     Harness alone_msft{make_config(4, 1.5, 0.5, {"AAPL", "MSFT"})};
@@ -439,8 +448,8 @@ TEST(MeanReversionSymbols, OneSymbolsLatchAndClockNeverConstrainAnother) {
     // AAPL is LowerExtreme after bar 4; MSFT, fed after it with earlier timestamps
     // than AAPL's last, still starts Neutral and buys on its own first extreme.
     Harness h{make_config(4, 1.5, 0.5, {"AAPL", "MSFT"})};
-    h.feed_closes({10, 10, 10, 6}, "AAPL", 100);
-    h.feed_closes({10, 10, 10, 6}, "MSFT", 1);
+    h.feed_closes(units({10, 10, 10, 6}), "AAPL", 100);
+    h.feed_closes(units({10, 10, 10, 6}), "MSFT", 1);
     EXPECT_EQ(h.labels("AAPL"), (Labels{"buy@103"}));
     EXPECT_EQ(h.labels("MSFT"), (Labels{"buy@4"}));
 }
@@ -449,14 +458,14 @@ TEST(MeanReversionSymbols, OneSymbolsLatchAndClockNeverConstrainAnother) {
 
 TEST(MeanReversionSignals, CarryTheRequestFieldsAndLeaveTheEnginesFieldsAlone) {
     MeanReversionConfig cfg = make_config();
-    cfg.requested_quantity  = 25.0;
+    cfg.requested_quantity  = 25;
     Harness h{cfg};
     h.feed_closes(kFixture);
     ASSERT_EQ(h.signals.size(), 3u);
 
     for (const domain::TradeSignal& signal : h.signals) {
         EXPECT_EQ(signal.symbol, "AAPL");
-        EXPECT_EQ(signal.requested_quantity, std::optional<double>{25.0});
+        EXPECT_EQ(signal.requested_quantity, std::optional<common::Quantity>{25});
         EXPECT_EQ(signal.order_type, std::optional<domain::OrderType>{domain::OrderType::Market});
         EXPECT_FALSE(signal.target_exposure.has_value());
         EXPECT_FALSE(signal.limit_price.has_value());
@@ -496,4 +505,20 @@ TEST(MeanReversionSignals, CarryExactlyTheDocumentedMetadata) {
     EXPECT_EQ(h.signals[0].metadata.at("mean"), "9");
     EXPECT_LT(number(h.signals[0], "z_score"), 0.0);
     EXPECT_GT(number(h.signals[2], "z_score"), 0.0);
+}
+
+TEST(MeanReversionSignals, TheCloseInTheMetadataIsTheExactDecimalOfTheIntegerPrice) {
+    // Lookback 2, entry 1: the second bar is the first full window and |z| is exactly 1.
+    // The close is written from the integer (150'020'000 micros), never through a double.
+    MeanReversionConfig cfg = make_config(2, 1.0, 0.5);
+    Harness h{cfg};
+    h.feed_closes({100_px, 150.02_px});
+    ASSERT_EQ(h.signals.size(), 1u);
+    EXPECT_EQ(h.signals[0].side, SignalSide::Sell);
+    EXPECT_EQ(h.signals[0].metadata.at("close"), "150.02");
+
+    Harness micro{cfg};
+    micro.feed_closes({100_px, 100.000001_px});   // one micro above
+    ASSERT_EQ(micro.signals.size(), 1u);
+    EXPECT_EQ(micro.signals[0].metadata.at("close"), "100.000001");
 }

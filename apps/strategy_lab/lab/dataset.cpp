@@ -2,8 +2,7 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
-#include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -13,8 +12,8 @@
 #include <utility>
 
 #include "lab/errors.hpp"
-#include "lab/numbers.hpp"
 #include "lab/paths.hpp"
+#include "trading_engine/common/decimal_text.hpp"
 #include "lab/sha256.hpp"
 #include "lab/timestamp.hpp"
 #include "lab/utf8.hpp"
@@ -247,33 +246,49 @@ private:
             bad(kType, "type " + quote(cell[kType]) + " is not supported; this tool accepts 'bar' and 'trade'");
         }
 
-        // price: finite and strictly positive, never repaired
-        const auto read_number = [&](Col column, double minimum, bool strictly_greater,
-                                     std::optional<double>& out) {
+        // price / open / high / low / volume: plain decimal text read EXACTLY into an integer
+        // (a Price as whole millionths, volume as whole shares). No floating point is involved, so
+        // nothing is rounded: a value with too many decimals or too large is refused, never
+        // repaired. `out` holds the integer; a price becomes a common::Decimal further down.
+        const auto read_number = [&](Col column, bool is_price, bool strictly_positive,
+                                     std::optional<std::int64_t>& out) {
             if (cell[column].empty()) {
                 return;
             }
-            double value = 0.0;
-            std::string why;
             const std::string name{dataset_columns()[column].name};
-            if (!parse_double_text(cell[column], value, why)) {
-                bad(column, name + " " + quote(cell[column]) + " " + why);
-            } else if (!std::isfinite(value)) {
-                bad(column, name + " " + quote(cell[column]) + " must be a finite number");
-            } else if (strictly_greater ? !(value > minimum) : !(value >= minimum)) {
-                bad(column, name + " " + quote(cell[column]) + " must be " +
-                                (strictly_greater ? "greater than " : "at least ") +
-                                (minimum == 0.0 ? "0" : std::to_string(minimum)));
+            const std::string shown = name + " " + quote(cell[column]) + " ";
+            std::string_view digits = cell[column];
+            const bool negative     = digits.front() == '-';
+            if (negative) {
+                digits.remove_prefix(1);
+            }
+            std::int64_t value = 0;
+            const common::DecimalStatus status =
+                common::parse_scaled(digits, is_price ? common::kDecimalPlaces : 0, value);
+            if (status == common::DecimalStatus::Ok && negative) {
+                bad(column, shown + "must be " + (strictly_positive ? "greater than 0" : "at least 0"));
+            } else if (status == common::DecimalStatus::TooManyDecimals) {
+                bad(column, shown + (is_price ? "has more than " + std::to_string(common::kDecimalPlaces) +
+                                                    " decimal places (a price is exact to 1e-6)"
+                                              : "must be a whole number"));
+            } else if (status == common::DecimalStatus::OutOfRange) {
+                bad(column, shown + "is too large to represent exactly");
+            } else if (status != common::DecimalStatus::Ok) {
+                bad(column, shown + "is not a plain decimal number (digits with an optional point; no "
+                                    "exponent, nan or inf)");
+            } else if (strictly_positive && value == 0) {
+                bad(column, shown + "must be greater than 0");
             } else {
                 out = value;
             }
         };
 
-        std::optional<double> price, open, high, low, volume;
+        std::optional<std::int64_t> price, open, high, low;   // whole millionths
+        std::optional<common::Quantity> volume;
         if (cell[kPrice].empty()) {
-            bad(kPrice, "price is required (a finite number greater than 0)");
+            bad(kPrice, "price is required (a decimal number greater than 0)");
         } else {
-            read_number(kPrice, 0.0, true, price);
+            read_number(kPrice, true, true, price);
         }
         const bool is_bar = type.has_value() && *type == domain::MarketEventType::Bar;
         for (const Col column : {kOpen, kHigh, kLow, kVolume}) {
@@ -284,10 +299,10 @@ private:
                 bad(column, std::string{dataset_columns()[column].name} + " is only allowed on bar rows");
                 continue;
             }
-            if (column == kOpen) read_number(kOpen, 0.0, true, open);
-            if (column == kHigh) read_number(kHigh, 0.0, true, high);
-            if (column == kLow) read_number(kLow, 0.0, true, low);
-            if (column == kVolume) read_number(kVolume, 0.0, false, volume);
+            if (column == kOpen) read_number(kOpen, true, true, open);
+            if (column == kHigh) read_number(kHigh, true, true, high);
+            if (column == kLow) read_number(kLow, true, true, low);
+            if (column == kVolume) read_number(kVolume, false, false, volume);
         }
         if (price.has_value()) {
             if (low.has_value() && *low > *price) {
@@ -351,10 +366,14 @@ private:
         row.event.exchange_time   = time;
         row.event.ingest_time     = time;
         row.event.type            = *type;
-        row.event.price           = price;
-        row.event.open            = open;
-        row.event.high            = high;
-        row.event.low             = low;
+        const auto as_price = [](const std::optional<std::int64_t>& micros) -> std::optional<common::Price> {
+            return micros.has_value() ? std::optional<common::Price>{common::Price::from_micros(*micros)}
+                                      : std::nullopt;
+        };
+        row.event.price           = as_price(price);
+        row.event.open            = as_price(open);
+        row.event.high            = as_price(high);
+        row.event.low             = as_price(low);
         row.event.volume          = volume;
         row.event.sequence        = ++order.rows;
         rows_.push_back(std::move(row));
@@ -409,11 +428,12 @@ const std::vector<DatasetColumn>& dataset_columns() {
         {"symbol", true, "Instrument symbol, 1-32 printable ASCII characters; matched exactly and case-sensitively."},
         {"exchange_time", true, "UTC, YYYY-MM-DDTHH:MM:SS[.f{1,9}]Z, 1970-2261; no offsets."},
         {"type", true, "'bar' or 'trade'. Only bars feed the reference strategies; trades show them being ignored."},
-        {"price", true, "Finite and greater than 0. For a bar this is the close."},
-        {"open", false, "Bars only: finite, greater than 0, within [low, high] with the close."},
-        {"high", false, "Bars only: finite, greater than 0, at least the open and the close."},
-        {"low", false, "Bars only: finite, greater than 0, at most the open and the close."},
-        {"volume", false, "Bars only: finite, at least 0."},
+        {"price", true, "A plain decimal greater than 0 with at most 6 decimal places (read exactly into an integer "
+                        "count of 1e-6; no exponent, nan or inf). For a bar this is the close."},
+        {"open", false, "Bars only: a plain decimal greater than 0 (at most 6 decimals), within [low, high] with the close."},
+        {"high", false, "Bars only: a plain decimal greater than 0 (at most 6 decimals), at least the open and the close."},
+        {"low", false, "Bars only: a plain decimal greater than 0 (at most 6 decimals), at most the open and the close."},
+        {"volume", false, "Bars only: a whole number of shares, at least 0."},
     };
     return columns;
 }

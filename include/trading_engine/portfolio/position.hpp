@@ -19,9 +19,9 @@ namespace trading_engine::portfolio {
 struct Position {
     common::Symbol   symbol{};
     common::Quantity quantity{0};       // signed: > 0 long, < 0 short, 0 flat
-    common::Price    average_cost{0};   // cost basis per unit for the open qty
-    common::Money    realized_pnl{0};   // locked in by closing trades
-    common::Money    unrealized_pnl{0}; // mark-to-market on the open qty
+    common::Price    average_cost{};   // cost basis per unit for the open qty
+    common::Money    realized_pnl{};   // locked in by closing trades
+    common::Money    unrealized_pnl{}; // mark-to-market on the open qty
 
     [[nodiscard]] bool is_flat() const noexcept { return quantity == 0; }
 

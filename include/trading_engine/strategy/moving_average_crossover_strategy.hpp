@@ -25,9 +25,9 @@
 //   * Everything else is IGNORED, and an ignored event changes nothing: not the
 //     last timestamp, not the history, not the averages, not the crossover
 //     state. That covers a symbol outside the allowlist, any other event type, a
-//     missing / non-finite / non-positive close, a close above max_close (see
-//     "Floating point") and an exchange_time that is not later than the last
-//     accepted bar's for that symbol (a duplicate, a replay, an older bar).
+//     missing or non-positive close, a close above max_close (see "Numbers") and
+//     an exchange_time that is not later than the last accepted bar's for that
+//     symbol (a duplicate, a replay, an older bar).
 //
 //  Crossover rules. short and long are the averages of the last short_window
 //  and long_window accepted closes, each including the current bar.
@@ -44,27 +44,32 @@
 //      above is one (signalled on the bar that is above).
 //   5. Staying on one side never repeats a signal.
 //
-//  Floating point (common::Price is a provisional double, OQ#11)
-//   * The two rolling sums are Neumaier-compensated, so the rounding error of
-//     one update does not pile up over the thousands of updates of a long run.
-//     Do not build this file with -ffast-math or /fp:fast: reassociation
-//     would silently cancel the compensation.
-//   * The averages are EQUAL when |short - long| <= 1e-12 * max(short, long).
-//     Mathematically equal averages are rarely bit-equal (0.1 + 0.2 differs from
-//     0.15 + 0.15), and without this a tie would be read as a one-ulp "cross"
-//     and fire a false signal. A gap below one part in 10^12 of the price is
-//     rounding noise; any real move is far larger. The tolerance is fixed, not a
-//     configuration option.
-//   * No non-finite value can enter the state. A close larger than
-//     max_close = DBL_MAX / (2 * (long_window + 1)) is ignored like any other
-//     invalid bar, which keeps every rolling sum, average and gap finite.
+//  Numbers (common::Price is common::Decimal, an exact int64 count of millionths; see
+//  common/decimal.hpp)
+//   * Closes and both rolling sums are Decimals (integers underneath), so every sum is
+//     EXACT: nothing is compensated, nothing drifts over a long run and no rounding can
+//     reach a decision.
+//   * The averages are compared exactly, without dividing, by cross-multiplication:
+//         short_sum * long_window   versus   long_sum * short_window
+//     Equal means equal. There is no tolerance (the one a floating-point version
+//     needs, so that 0.1 + 0.2 versus 0.15 + 0.15 is not read as a "cross", has no
+//     job here).
+//   * Overflow. Decimal arithmetic is unchecked, so the bound is enforced here: a close
+//     above max_close = INT64_MAX / long_window^2 millionths is ignored like any other
+//     invalid bar (reason price_above_max_close), which keeps every sum and both
+//     products inside int64. For the default 5/20 windows that is about 2.3 * 10^16
+//     millionths, i.e. 23 billion currency units. Construction is refused if long_window
+//     is so large that max_close would be under one currency unit.
+//   * short_sma and long_sma are DERIVED real numbers (sum / (window * 10^6), in
+//     currency units) used only to report and for the signal metadata. They never
+//     feed back into a decision or become a Price.
 //
 //  Signals. Each one carries the event's symbol, side Buy or Sell, the
 //  configured requested_quantity, order_type Market, and metadata:
 //    trigger      "short_crossed_above_long" (Buy) | "short_crossed_below_long" (Sell)
 //    short_window, long_window   the configured sizes, in bars
-//    short_sma, long_sma         both averages on the signalling bar (shortest
-//                                text that reads back as the exact double)
+//    short_sma, long_sma         both averages on the signalling bar, in currency
+//                                units (shortest text that reads back as the double)
 //  target_exposure, limit_price and confidence stay unset. id, created_at and
 //  strategy_id are left for StrategyEngine, which owns them (see ISignalSink);
 //  the engine takes strategy_id from id(). The crossover state is committed
@@ -125,11 +130,11 @@ struct MovingAverageCrossoverConfig {
     std::size_t short_window{5};
     std::size_t long_window{20};
 
-    // Shares requested on every signal. A whole number: finite and positive,
-    // never rounded (1.5 is rejected, not turned into 1 or 2). Whole shares are
-    // this strategy's local choice, not a project-wide numeric policy (see
-    // docs/adr/0002-strategy-risk-signal-contract.md, section 8, still Proposed).
-    common::Quantity requested_quantity{1.0};
+    // Shares requested on every signal: a positive whole number (Quantity is an
+    // integer count, so a fraction cannot even be written). Whole shares follow the
+    // proposed v1 policy (docs/adr/0002-strategy-risk-signal-contract.md, section 8,
+    // still Proposed).
+    common::Quantity requested_quantity{1};
 
     // The symbols to trade, matched exactly (case-sensitive) against
     // MarketEvent::symbol. No default: it must be non-empty, contain no empty
@@ -167,17 +172,6 @@ private:
     // The last established nonzero sign of (short - long).
     enum class Relation : std::uint8_t { ShortBelowLong, ShortAboveLong };
 
-    // A running total plus the low-order bits each addition dropped (Neumaier's
-    // variant of Kahan summation). value() is the total, accurate to a few ulps
-    // however many terms were added and removed.
-    struct RollingSum {
-        double total{0.0};
-        double lost{0.0};
-
-        void add(double term) noexcept;
-        [[nodiscard]] double value() const noexcept { return total + lost; }
-    };
-
     // Per-symbol state, created for every allowlisted symbol up front.
     struct SymbolState {
         // The last min(accepted, long_window) closes. Oldest first while it
@@ -186,8 +180,8 @@ private:
         std::vector<common::Price> closes{};
         std::size_t                next{0};
 
-        RollingSum short_sum{};   // sum of the last short_window closes
-        RollingSum long_sum{};    // sum of the last long_window closes
+        common::Price short_sum{};   // sum of the last short_window closes, exact
+        common::Price long_sum{};    // sum of the last long_window closes, exact
 
         std::optional<common::Timestamp> last_time{};   // exchange_time of the last accepted bar
         std::optional<Relation>          relation{};    // empty until a baseline is established
@@ -200,9 +194,11 @@ private:
     // `state` untouched.
     void accept_close(SymbolState& state, common::Price close);
 
-    // Empty when the averages are equal within the tolerance.
-    [[nodiscard]] static std::optional<Relation> relate(double short_average,
-                                                        double long_average) noexcept;
+    // The exact sign of (short average - long average); empty when they are equal.
+    [[nodiscard]] std::optional<Relation> relate(const SymbolState& state) const noexcept;
+
+    // A sum of `window` closes as a derived real average in currency units.
+    [[nodiscard]] static double average(common::Price sum, std::size_t window) noexcept;
 
     [[nodiscard]] domain::TradeSignal make_signal(const domain::MarketEvent& event, Relation now,
                                                   double short_average, double long_average) const;
@@ -220,7 +216,7 @@ private:
                           double long_average) noexcept;
 
     MovingAverageCrossoverConfig config_;
-    double max_close_;   // largest close accepted; see "Floating point"
+    common::Price max_close_;   // largest close accepted; see "Numbers"
     std::unordered_map<common::Symbol, SymbolState> states_{};
     ObserverSlot diagnostics_{};
 };

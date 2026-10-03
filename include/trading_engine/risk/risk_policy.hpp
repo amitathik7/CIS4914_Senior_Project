@@ -28,7 +28,7 @@ namespace trading_engine::risk {
 struct RiskContext {
     config::RiskLimits limits{};
     std::uint32_t      open_order_count{0};
-    common::Money       realized_pnl_today{0};
+    common::Money       realized_pnl_today{};
     common::Timestamp   as_of{};
     // TODO: reference prices for notional math, per-symbol/strategy overrides,
     //       pending (not-yet-filled) exposure.

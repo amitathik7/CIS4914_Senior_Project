@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "config_checks.hpp"
+#include "trading_engine/common/decimal.hpp"
+#include "trading_engine/common/decimal_text.hpp"
 
 namespace trading_engine::strategy {
 
@@ -17,9 +20,9 @@ constexpr std::string_view kName = "MeanReversionStrategy";
 using detail::format_number;
 
 // A window is CONSTANT when its standard deviation is at most this fraction of
-// its mean. That is about 4,500 times a double's rounding step: far above the
-// noise of a sum of equal closes, far below any deviation worth acting on. Fixed
-// on purpose; see "Floating point" in the header.
+// its mean: a spread under one part in 10^12 (one micro at a price of about a
+// million currency units) is treated as no deviation. Fixed on purpose; see
+// "Numbers" in the header.
 constexpr double kNegligibleVariation = 1e-12;
 
 [[noreturn]] void reject(const std::string& problem) {
@@ -53,7 +56,8 @@ MeanReversionConfig validated(MeanReversionConfig config) {
     return config;
 }
 
-// What one full window says about its newest close.
+// What one full window says about its newest close. All DERIVED real numbers: mean and
+// standard_deviation are in currency units, z is a pure ratio.
 struct Measurement {
     double mean{};
     double standard_deviation{};
@@ -62,27 +66,26 @@ struct Measurement {
 };
 
 // Two-pass mean, population standard deviation and z of `current` over `closes`
-// (which includes `current`). Every close is finite and positive. Empty only if a
-// result would be non-finite, which the scaling below is meant to rule out for finite
-// input (a guard; see "Failure" in the header).
+// (which includes `current`). Every close is a positive Decimal, an integer count of millionths.
+// Empty only if a result would be non-finite, which no int64 input can cause (a
+// guard; see "Failure" in the header).
+//
+// Everything is measured as an OFFSET from `current`, and each offset is taken in exact int64
+// arithmetic BEFORE it becomes a double. Converting the closes themselves would round every
+// close above 2^53 millionths (about 9 * 10^9 currency units) to a multiple of 2, 4, ... 1024,
+// so distinct prices could land on the same double and z would carry an error of up to ~10^-5.
+// Both closes are positive int64, so their difference never overflows, and an offset is exact
+// in a double up to 2^53 whatever the price level; the precision is relative to the spread, not
+// to the price. z does not depend on the origin, so nothing is lost by moving it.
 std::optional<Measurement> measure(const std::vector<common::Price>& closes,
                                    common::Price current) {
     const auto count = static_cast<double>(closes.size());
+    const std::int64_t origin = current.micros();
 
-    // Scale by 2^-exponent so the largest close lies in [0.5, 1). The power of
-    // two is exact, so no rounding is added, and every scaled value is in
-    // [0, 1): sums stay below `count` and squared deviations below 1, however
-    // large the real prices are. (A close more than 2^1000 times smaller than
-    // the window's largest underflows towards 0, which is invisible next to it.)
-    const double largest = *std::max_element(closes.begin(), closes.end());
-    int exponent = 0;
-    std::frexp(largest, &exponent);
-    const auto scaled = [exponent](double close) { return std::ldexp(close, -exponent); };
-
-    // Pass 1: a first estimate of the mean.
+    // Pass 1: a first estimate of the mean offset, in millionths.
     double sum = 0.0;
-    for (const double close : closes) {
-        sum += scaled(close);
+    for (const common::Price close : closes) {
+        sum += static_cast<double>(close.micros() - origin);
     }
     const double first_mean = sum / count;
 
@@ -92,37 +95,31 @@ std::optional<Measurement> measure(const std::vector<common::Price>& closes,
     // algorithm, which does not suffer the cancellation of E[x^2] - E[x]^2.
     double deviation_sum         = 0.0;
     double squared_deviation_sum = 0.0;
-    for (const double close : closes) {
-        const double deviation = scaled(close) - first_mean;
+    for (const common::Price close : closes) {
+        const double deviation = static_cast<double>(close.micros() - origin) - first_mean;
         deviation_sum += deviation;
         squared_deviation_sum += deviation * deviation;
     }
-    const double correction = deviation_sum / count;
-    // A mean never exceeds the largest value. Rounding could in principle lift the
-    // computed one a rounding step above it, and rescaling that past a largest close
-    // of DBL_MAX would overflow. So cap it: exact in real arithmetic, and it keeps a
-    // constant window of huge closes a constant window rather than a "failure".
-    const double mean       = std::min(first_mean + correction, scaled(largest));
-    const double variance   = std::max(0.0, (squared_deviation_sum - deviation_sum * correction) / count);
-    const double spread     = std::sqrt(variance);
+    const double correction  = deviation_sum / count;
+    const double mean_offset = first_mean + correction;   // the mean's distance from `current`
+    const double variance    = std::max(0.0, (squared_deviation_sum - deviation_sum * correction) / count);
+    const double spread      = std::sqrt(variance);
+    const double mean        = static_cast<double>(origin) + mean_offset;   // for reporting and the tolerance
     if (!std::isfinite(mean) || !std::isfinite(spread)) {
         return std::nullopt;
     }
 
     Measurement result;
-    // mean >= 0.5 / count > 0, because the largest scaled close is at least 0.5.
+    // mean > 0: every close is a positive integer.
     result.constant = spread <= kNegligibleVariation * mean;
     if (!result.constant) {
-        result.z = (scaled(current) - mean) / spread;
+        result.z = (0.0 - mean_offset) / spread;   // current's own offset is exactly 0; (0.0 - x) keeps +0 for a mean on the close
         if (!std::isfinite(result.z)) {
             return std::nullopt;
         }
     }
-    result.mean               = std::ldexp(mean, exponent);        // <= the largest close
-    result.standard_deviation = std::ldexp(spread, exponent);   // < the largest close
-    if (!std::isfinite(result.mean) || !std::isfinite(result.standard_deviation)) {
-        return std::nullopt;
-    }
+    result.mean               = mean / static_cast<double>(common::Decimal::kScale);
+    result.standard_deviation = spread / static_cast<double>(common::Decimal::kScale);
     return result;
 }
 
@@ -173,8 +170,8 @@ void MeanReversionStrategy::on_market_event(const domain::MarketEvent& event, IS
         report_ignored(event, &state, BarReason::PriceAbsent);
         return;
     }
-    const double close = *event.price;
-    if (!std::isfinite(close) || close <= 0.0) {
+    const common::Price close = *event.price;
+    if (close <= common::Price{}) {
         report_ignored(event, &state, BarReason::PriceInvalid);
         return;
     }
@@ -258,7 +255,7 @@ domain::TradeSignal MeanReversionStrategy::make_signal(const domain::MarketEvent
     signal.metadata = {
         {"trigger", buy ? "z_score_at_or_below_lower_entry" : "z_score_at_or_above_upper_entry"},
         {"lookback", std::to_string(config_.lookback)},
-        {"close", format_number(*event.price)},
+        {"close", common::format_decimal(*event.price)},
         {"mean", format_number(mean)},
         {"standard_deviation", format_number(standard_deviation)},
         {"z_score", format_number(z)},

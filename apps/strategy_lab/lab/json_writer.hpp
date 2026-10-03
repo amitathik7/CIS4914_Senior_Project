@@ -10,10 +10,13 @@
 //   * Strings must be valid UTF-8 (std::invalid_argument otherwise). `"`, `\` and every
 //     control character below 0x20, plus DEL and U+2028 / U+2029, are escaped; the rest
 //     is written as is.
-//   * Numbers are written with std::to_chars: the shortest text that reads back as the
-//     exact same double, independent of any locale (global C++ locale or setlocale).
-//     NaN and infinity cannot be written (std::domain_error): JSON has no spelling for
-//     them, and callers say "unavailable" explicitly instead.
+//   * A derived statistic is written with std::to_chars: the shortest text that reads
+//     back as the exact same double, independent of any locale (global C++ locale or
+//     setlocale). NaN and infinity cannot be written (std::domain_error): JSON has no
+//     spelling for them, and callers say "unavailable" explicitly instead.
+//   * Money, price and quantity are exact integers underneath (common::Decimal, Quantity)
+//     and are never written through a double: integer() / unsigned_integer() for counts,
+//     scaled_number() for a price.
 //   * Misuse (a value with no key inside an object, a key inside an array, closing the
 //     wrong container, a second root value, reading an incomplete document) throws
 //     std::logic_error instead of producing broken JSON.
@@ -47,6 +50,12 @@ public:
     JsonWriter& integer(std::int64_t value);
     JsonWriter& unsigned_integer(std::uint64_t value);
     JsonWriter& number(double value);
+
+    // An EXACT decimal number: `scaled` / 10^decimals, written digit for digit with no
+    // floating point (150'020'000 at 6 decimals is 150.02, 3'000'000 is 3). This is how a
+    // Price / Money (a common::Decimal, whole millionths) is written, so the text is exactly
+    // the stored integer.
+    JsonWriter& scaled_number(std::int64_t scaled, int decimals);
 
     // key + value in one call.
     JsonWriter& field(std::string_view name, std::string_view value) { return key(name).string(value); }

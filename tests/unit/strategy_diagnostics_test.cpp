@@ -70,9 +70,9 @@ TEST(StrategyDiagnosticsSma, EveryBarOfTheWorkedExampleIsReportedWithItsNumbersA
     Sink sink;
     sma.set_observer(&collector);
 
-    const std::vector<double> closes{3, 2, 1, 2, 3, 4, 3, 2, 1};
+    const std::vector<common::Price> closes = units({3, 2, 1, 2, 3, 4, 3, 2, 1});
     long long minute = 0;
-    for (const double close : closes) {
+    for (const common::Price close : closes) {
         sma.on_market_event(event_at("AAPL", close, ++minute), sink);
     }
 
@@ -119,7 +119,7 @@ TEST(StrategyDiagnosticsSma, EqualAveragesAreReportedAsEqualAndNeverEstablishABa
     sma.set_observer(&collector);
 
     long long minute = 0;
-    for (const double close : {5.0, 5.0, 5.0, 5.0}) {
+    for (const common::Price close : units({5, 5, 5, 5})) {
         sma.on_market_event(event_at("AAPL", close, ++minute), sink);
     }
     ASSERT_EQ(collector.all.size(), 4u);
@@ -141,7 +141,7 @@ TEST(StrategyDiagnosticsSma, EveryIgnoreReasonIsReportedAndLeavesTheWindowAlone)
     sma.set_observer(&collector);
 
     // One accepted bar first, so "unchanged" has a window fill of 1 to be unchanged.
-    sma.on_market_event(event_at("AAPL", 10.0, 100), sink);
+    sma.on_market_event(event_at("AAPL", 10_px, 100), sink);
 
     struct Case {
         domain::MarketEvent event;
@@ -149,18 +149,18 @@ TEST(StrategyDiagnosticsSma, EveryIgnoreReasonIsReportedAndLeavesTheWindowAlone)
         bool                has_window;
     };
     const std::vector<Case> cases{
-        {event_at("AAPL", 10.0, 101, domain::MarketEventType::Trade), BarReason::NotABar, false},
-        {event_at("MSFT", 10.0, 101), BarReason::SymbolNotAllowlisted, false},
-        {event_at("aapl", 10.0, 101), BarReason::SymbolNotAllowlisted, false},
+        {event_at("AAPL", 10_px, 101, domain::MarketEventType::Trade), BarReason::NotABar, false},
+        {event_at("MSFT", 10_px, 101), BarReason::SymbolNotAllowlisted, false},
+        {event_at("aapl", 10_px, 101), BarReason::SymbolNotAllowlisted, false},
         {event_at("AAPL", std::nullopt, 101), BarReason::PriceAbsent, true},
-        {event_at("AAPL", kNaN, 101), BarReason::PriceInvalid, true},
-        {event_at("AAPL", kInf, 101), BarReason::PriceInvalid, true},
-        {event_at("AAPL", -kInf, 101), BarReason::PriceInvalid, true},
-        {event_at("AAPL", 0.0, 101), BarReason::PriceInvalid, true},
-        {event_at("AAPL", -1.0, 101), BarReason::PriceInvalid, true},
-        {event_at("AAPL", kMax, 101), BarReason::PriceAboveMaxClose, true},
-        {event_at("AAPL", 11.0, 100), BarReason::TimeNotAfterLastAccepted, true},   // duplicate
-        {event_at("AAPL", 11.0, 99), BarReason::TimeNotAfterLastAccepted, true},    // older
+        {event_at("AAPL", kMinPrice, 101), BarReason::PriceInvalid, true},
+        {event_at("AAPL", -kMaxPrice, 101), BarReason::PriceInvalid, true},
+        {event_at("AAPL", common::Price{}, 101), BarReason::PriceInvalid, true},
+        {event_at("AAPL", -1_px, 101), BarReason::PriceInvalid, true},
+        {event_at("AAPL", micros(-1), 101), BarReason::PriceInvalid, true},   // minus one millionth
+        {event_at("AAPL", kMaxPrice, 101), BarReason::PriceAboveMaxClose, true},
+        {event_at("AAPL", 11_px, 100), BarReason::TimeNotAfterLastAccepted, true},   // duplicate
+        {event_at("AAPL", 11_px, 99), BarReason::TimeNotAfterLastAccepted, true},    // older
     };
     for (const Case& each : cases) {
         sma.on_market_event(each.event, sink);
@@ -201,13 +201,13 @@ struct MrBar {
     const char*           after;
 };
 
-void expect_mr_bars(const std::vector<double>& closes, const std::vector<MrBar>& expected) {
+void expect_mr_bars(const std::vector<common::Price>& closes, const std::vector<MrBar>& expected) {
     strategy::MeanReversionStrategy mr{mr_config(4, 1.5, 0.5)};
     Collector collector;
     Sink sink;
     mr.set_observer(&collector);
     long long minute = 0;
-    for (const double close : closes) {
+    for (const common::Price close : closes) {
         mr.on_market_event(event_at("AAPL", close, ++minute), sink);
     }
 
@@ -251,7 +251,7 @@ TEST(StrategyDiagnosticsMeanReversion, EveryBarOfTheRearmWorkedExampleIsReported
     //   bar 5: 10 10 6 9    mean 8.75   var 2.6875   close-mean 0.25   -> z  0.152  rearm
     //   bar 6: 10 6 9 2     mean 6.75   var 9.6875   close-mean -4.75  -> z -1.526  Buy
     //   bar 7: 6 9 2 30     mean 11.75  var 117.1875 close-mean 18.25  -> z  1.686  Sell (flip)
-    expect_mr_bars({10, 10, 10, 6, 9, 2, 30},
+    expect_mr_bars(units({10, 10, 10, 6, 9, 2, 30}),
         {
             {BarReason::WarmingUp, BarAction::None, 1, std::nullopt, std::nullopt, std::nullopt, "neutral", "neutral"},
             {BarReason::WarmingUp, BarAction::None, 2, std::nullopt, std::nullopt, std::nullopt, "neutral", "neutral"},
@@ -272,7 +272,7 @@ TEST(StrategyDiagnosticsMeanReversion, SuppressionAndTheConstantWindowAreReporte
     //   bar 8  2 1 1 1      mean 1.25  var 0.1875  dev -0.25  z -0.577 between
     //   bar 9  1 1 1 1      constant: no z, the latch rearms
     //   bar 10 1 1 1 10     mean 3.25  var 15.1875 dev 6.75   z  1.732 Sell
-    expect_mr_bars({10, 10, 10, 6, 2, 1, 1, 1, 1, 10},
+    expect_mr_bars(units({10, 10, 10, 6, 2, 1, 1, 1, 1, 10}),
         {
             {BarReason::WarmingUp, BarAction::None, 1, std::nullopt, std::nullopt, std::nullopt, "neutral", "neutral"},
             {BarReason::WarmingUp, BarAction::None, 2, std::nullopt, std::nullopt, std::nullopt, "neutral", "neutral"},
@@ -287,23 +287,23 @@ TEST(StrategyDiagnosticsMeanReversion, SuppressionAndTheConstantWindowAreReporte
         });
 }
 
-TEST(StrategyDiagnosticsMeanReversion, EveryIgnoreReasonIsReportedAndAnyFiniteCloseIsAccepted) {
+TEST(StrategyDiagnosticsMeanReversion, EveryIgnoreReasonIsReportedAndAnyPositiveCloseIsAccepted) {
     strategy::MeanReversionStrategy mr{mr_config(4, 1.5, 0.5)};
     Collector collector;
     Sink sink;
     mr.set_observer(&collector);
-    mr.on_market_event(event_at("AAPL", 10.0, 100), sink);
+    mr.on_market_event(event_at("AAPL", 10_px, 100), sink);
 
     const std::vector<std::pair<domain::MarketEvent, BarReason>> cases{
-        {event_at("AAPL", 10.0, 101, domain::MarketEventType::Quote), BarReason::NotABar},
-        {event_at("MSFT", 10.0, 101), BarReason::SymbolNotAllowlisted},
+        {event_at("AAPL", 10_px, 101, domain::MarketEventType::Quote), BarReason::NotABar},
+        {event_at("MSFT", 10_px, 101), BarReason::SymbolNotAllowlisted},
         {event_at("AAPL", std::nullopt, 101), BarReason::PriceAbsent},
-        {event_at("AAPL", kNaN, 101), BarReason::PriceInvalid},
-        {event_at("AAPL", -kInf, 101), BarReason::PriceInvalid},
-        {event_at("AAPL", 0.0, 101), BarReason::PriceInvalid},
-        {event_at("AAPL", -2.0, 101), BarReason::PriceInvalid},
-        {event_at("AAPL", 11.0, 100), BarReason::TimeNotAfterLastAccepted},
-        {event_at("AAPL", 11.0, 50), BarReason::TimeNotAfterLastAccepted},
+        {event_at("AAPL", kMinPrice, 101), BarReason::PriceInvalid},
+        {event_at("AAPL", -kMaxPrice, 101), BarReason::PriceInvalid},
+        {event_at("AAPL", common::Price{}, 101), BarReason::PriceInvalid},
+        {event_at("AAPL", -2_px, 101), BarReason::PriceInvalid},
+        {event_at("AAPL", 11_px, 100), BarReason::TimeNotAfterLastAccepted},
+        {event_at("AAPL", 11_px, 50), BarReason::TimeNotAfterLastAccepted},
     };
     for (const auto& each : cases) {
         mr.on_market_event(each.first, sink);
@@ -314,8 +314,8 @@ TEST(StrategyDiagnosticsMeanReversion, EveryIgnoreReasonIsReportedAndAnyFiniteCl
         EXPECT_EQ(collector.all[i + 1].verdict, BarVerdict::Ignored);
     }
 
-    // The mean-reversion strategy has no input ceiling: DBL_MAX is an accepted close.
-    mr.on_market_event(event_at("AAPL", kMax, 101), sink);
+    // The mean-reversion strategy has no input ceiling: INT64_MAX is an accepted close.
+    mr.on_market_event(event_at("AAPL", kMaxPrice, 101), sink);
     EXPECT_EQ(collector.all.back().reason, BarReason::WarmingUp);
     EXPECT_EQ(collector.all.back().window_fill, std::optional<std::size_t>{2});
     EXPECT_TRUE(sink.signals.empty());
@@ -362,8 +362,8 @@ void expect_snapshots_agree_with_signals(Strategy& strategy,
 }
 
 std::vector<domain::MarketEvent> two_symbol_stream() {
-    const std::vector<double> aapl{3, 2, 1, 2, 3, 4, 3, 2, 1};
-    const std::vector<double> msft{10, 10, 10, 6, 9, 2, 30, 30, 30};
+    const std::vector<common::Price> aapl = units({3, 2, 1, 2, 3, 4, 3, 2, 1});
+    const std::vector<common::Price> msft = units({10, 10, 10, 6, 9, 2, 30, 30, 30});
     std::vector<domain::MarketEvent> events;
     for (std::size_t i = 0; i < aapl.size(); ++i) {
         events.push_back(event_at("AAPL", aapl[i], static_cast<long long>(i) + 1));
