@@ -32,69 +32,74 @@
 #include "trading_engine/domain/order.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
 
-namespace trading_engine::events {
+namespace trading_engine::events
+{
 
-enum class EventType : std::uint8_t {
-    MarketData = 0,
-    Signal,
-    Order,
-    Fill
-    // TODO: PortfolioUpdate, Control (shutdown/flush), Timer, Error.
-};
+    enum class EventType : std::uint8_t
+    {
+        MarketData = 0,
+        Signal,
+        Order,
+        Fill
+        // TODO: PortfolioUpdate, Control (shutdown/flush), Timer, Error.
+    };
 
-// PROVISIONAL envelope. A closed std::variant keeps the scaffold dependency-free
-// and lets consumers std::visit. If the payload set grows large or needs to be
-// extended by plugins, revisit (type-erased Event, or per-type queues).
-using EventPayload =
-    std::variant<domain::MarketEvent, domain::TradeSignal, domain::Order, domain::Fill>;
+    // PROVISIONAL envelope. A closed std::variant keeps the scaffold dependency-free
+    // and lets consumers std::visit. If the payload set grows large or needs to be
+    // extended by plugins, revisit (type-erased Event, or per-type queues).
+    using EventPayload =
+        std::variant<domain::MarketEvent, domain::TradeSignal, domain::Order, domain::Fill>;
 
-struct Event {
-    EventType         type{EventType::MarketData};
-    common::Timestamp enqueued_at{};   // UTC, set by the bus on publish
-    std::uint64_t     sequence{0};     // bus-global monotonic counter
-    EventPayload      payload{};
-};
+    struct Event
+    {
+        EventType type{EventType::MarketData};
+        common::Timestamp enqueued_at{}; // UTC, set by the bus on publish
+        std::uint64_t sequence{0};       // bus-global monotonic counter
+        EventPayload payload{};
+    };
 
-using EventHandler = std::function<void(const Event&)>;
+    using EventHandler = std::function<void(const Event &)>;
 
-class IEventBus {
-public:
-    virtual ~IEventBus();
+    class IEventBus
+    {
+    public:
+        virtual ~IEventBus();
 
-    // Producer side. Non-blocking contract is TBD (depends on backpressure
-    // policy). Returns false if the event was dropped/rejected.
-    virtual bool publish(Event event) = 0;
+        // Producer side. Non-blocking contract is TBD (depends on backpressure
+        // policy). Returns false if the event was dropped/rejected.
+        virtual bool publish(Event event) = 0;
 
-    // Consumer side. Handlers are invoked on bus worker threads (future).
-    virtual common::SubscriptionId subscribe(EventType type, EventHandler handler) = 0;
-    virtual void unsubscribe(common::SubscriptionId id) = 0;
+        // Consumer side. Handlers are invoked on bus worker threads (future).
+        virtual common::SubscriptionId subscribe(EventType type, EventHandler handler) = 0;
+        virtual void unsubscribe(common::SubscriptionId id) = 0;
 
-    // Lifecycle.
-    virtual void start() = 0;
-    virtual void request_shutdown() = 0;
-    virtual void wait_until_drained() = 0;
+        // Lifecycle.
+        virtual void start() = 0;
+        virtual void request_shutdown() = 0;
+        virtual void wait_until_drained() = 0;
 
-    // Observability.
-    [[nodiscard]] virtual std::size_t depth() const = 0;
-};
+        // Observability.
+        [[nodiscard]] virtual std::size_t depth() const = 0;
+    };
 
-// In-process implementation placeholder. Every method throws
-// common::NotImplemented until the queue and threading model are chosen.
-class InProcessEventBus final : public IEventBus {
-public:
-    InProcessEventBus();
-    ~InProcessEventBus() override;
+    // In-process implementation placeholder. Every method throws
+    // common::NotImplemented until the queue and threading model are chosen.
+    class InProcessEventBus final : public IEventBus
+    {
+    public:
+        InProcessEventBus();
+        ~InProcessEventBus() override;
 
-    bool publish(Event event) override;
-    common::SubscriptionId subscribe(EventType type, EventHandler handler) override;
-    void unsubscribe(common::SubscriptionId id) override;
-    void start() override;
-    void request_shutdown() override;
-    void wait_until_drained() override;
-    [[nodiscard]] std::size_t depth() const override;
+        bool publish(Event event) override;
+        common::SubscriptionId subscribe(EventType type, EventHandler handler) override;
+        void unsubscribe(common::SubscriptionId id) override;
+        void start() override;
+        void request_shutdown() override;
+        void wait_until_drained() override;
+        [[nodiscard]] std::size_t depth() const override;
 
-    // TODO: capacity, per-type ring buffers, worker-thread pool, drop counters,
-    //       high-water-mark metric wired to SystemMetrics.
-};
+        // TODO: capacity, per-type ring buffers, worker-thread pool, drop counters,
+        //       high-water-mark metric wired to SystemMetrics.
+    };
 
-}  // namespace trading_engine::events
+} // namespace trading_engine::events
