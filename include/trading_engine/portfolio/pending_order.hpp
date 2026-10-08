@@ -44,9 +44,8 @@ struct PendingOrder {
 
     // Cash held against the remaining quantity. Buys only: a pending sell
     // reserves no cash, it commits remaining_quantity against the position
-    // instead (ADR 0005 section 4). How much a market buy reserves is still
-    // open.
-    common::Money     reserved_cash{0};
+    // instead (ADR 0005 section 4).
+    common::Money     reserved_cash{};
 };
 
 }  // namespace trading_engine::portfolio

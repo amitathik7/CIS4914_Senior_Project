@@ -63,16 +63,16 @@ struct Fill {
     // Kept gross so it stays comparable with market prices for slippage
     // analysis. Cash impact is computed as:
     //     cash_delta = -(filled_quantity * fill_price) - fees
-    common::Price     fill_price{0};
+    common::Price     fill_price{};
 
     // Commissions + exchange fees for THIS fill, >= 0. Always reduces cash,
     // on buys and sells alike. Omitted from the issue #4 field list, but the
     // cash math above is wrong without it.
-    common::Money     fees{0};
+    common::Money     fees{};
 
     // fill_price - reference_price (modelled). INFORMATIONAL / derived: it is
     // already embedded in fill_price and must NOT be applied to cash again.
-    common::Price     slippage{0};
+    common::Price     slippage{};
 
     common::Timestamp filled_at{};          // UTC
 

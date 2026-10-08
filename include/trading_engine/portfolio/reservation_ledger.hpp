@@ -27,7 +27,7 @@
 //  the write side -- the check and the hold happen under one lock, or the
 //  window it exists to close reopens. This is only possible because the
 //  RiskManager and the PortfolioManager live in one process (see that ADR's
-//  section 5 on synchronous reads). The scaffold implements none of it.
+//  section 5 on synchronous reads).
 // -----------------------------------------------------------------------------
 
 #include <optional>
@@ -40,28 +40,28 @@ namespace trading_engine::portfolio {
 
 struct ReservationResult {
     bool          granted{false};
-    common::Money held{0};                // cash actually held; 0 when refused
-    common::Money buying_power_after{0};  // for the reject reason / metrics
+    common::Money held{};                // cash actually held; 0 when refused
+    common::Money buying_power_after{};  // for the reject reason / metrics
 };
 
 class IReservationLedger {
 public:
     virtual ~IReservationLedger();
 
-    // Check buying power and hold against it, atomically. NOT IMPLEMENTED.
+    // Check buying power and hold against it, atomically.
     //
     // Keyed by SignalId because at approval time no Order exists yet. The hold
     // is attached to the order when that order's submission event arrives,
     // matched on domain::Order::origin_signal.
     //
-    // The PORTFOLIO MANAGER sizes the hold, not the caller: a limit order
-    // holds quantity * limit_price plus estimated fees, while a market order
-    // holds against the last mark price plus a buffer. Pricing knowledge (last
-    // mark, fee config) already lives here. How big the market buffer should
-    // be is still open -- see the ADR.
+    // The PORTFOLIO MANAGER sizes the hold, not the caller: a limit buy holds
+    // quantity * limit_price plus estimated fees; a market buy holds the last
+    // mark plus a buffer (5% by default) plus fees, and is refused if the
+    // symbol has no mark yet.
     //
-    // A sell holds no cash; it commits `quantity` against the position so the
-    // same shares cannot be sold twice.
+    // A sell holds no cash; it commits `quantity` against the position, and
+    // is refused beyond the shares held and not already committed (no
+    // short selling at approval). A non-positive quantity is refused.
     [[nodiscard]] virtual ReservationResult hold_for_signal(
         common::SignalId signal,
         const common::Symbol& symbol,
@@ -69,7 +69,7 @@ public:
         common::Quantity quantity,
         std::optional<common::Price> limit_price) = 0;
 
-    // Release a hold whose signal never became an order. NOT IMPLEMENTED.
+    // Release a hold whose signal never became an order.
     //
     // The ordinary paths do not need this: a rejected order still carries
     // origin_signal, so apply_order_update() releases the hold even when the

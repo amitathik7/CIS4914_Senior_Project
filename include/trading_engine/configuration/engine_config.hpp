@@ -60,10 +60,10 @@ struct PostgresConfig {
 // Initial numbers are placeholders for the team to argue about
 // (see docs/OPEN_QUESTIONS.md -- "risk limits").
 struct RiskLimits {
-    common::Money    max_gross_exposure{100'000.0};
-    common::Money    max_position_notional{25'000.0};
-    common::Quantity max_order_quantity{1'000.0};
-    common::Money    max_daily_loss{5'000.0};
+    common::Money    max_gross_exposure{common::Money::from_units(100'000)};
+    common::Money    max_position_notional{common::Money::from_units(25'000)};
+    common::Quantity max_order_quantity{1'000};
+    common::Money    max_daily_loss{common::Money::from_units(5'000)};
     std::uint32_t    max_open_orders{50};
 
     // TODO: per-symbol and per-strategy overrides, concentration limits,
@@ -72,8 +72,8 @@ struct RiskLimits {
 
 // --- Simulation / execution assumptions ------------------------------
 struct FeeModelConfig {
-    common::Money per_share{0.0};
-    common::Money per_trade{0.0};
+    common::Money per_share{};
+    common::Money per_trade{};
     double        bps{0.0};             // fraction of notional, in basis points
 };
 
@@ -83,7 +83,7 @@ struct LatencyConfig {
 };
 
 struct SimulationConfig {
-    common::Money  starting_cash{100'000.0};
+    common::Money  starting_cash{common::Money::from_units(100'000)};
     double         replay_speed{0.0};   // 0 == as fast as possible; 1 == realtime
     bool           deterministic{true}; // drive time from a ManualClock
     FeeModelConfig fees{};

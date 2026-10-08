@@ -15,6 +15,8 @@
 #include <string>
 #include <string_view>
 
+#include "trading_engine/common/decimal.hpp"
+
 namespace trading_engine::common {
 
 // --- Time ------------------------------------------------------------------
@@ -28,14 +30,11 @@ using Duration  = std::chrono::nanoseconds;
 [[nodiscard]] constexpr Timestamp epoch() noexcept { return Timestamp{}; }
 
 // --- Money / price / quantity -------------------------------------------
-// PROVISIONAL: double is a placeholder. Real money math needs a fixed-point or
-// integer-minor-unit representation to avoid rounding drift. See
-// docs/OPEN_QUESTIONS.md ("execution assumptions" / precision).
-// TODO: replace with a Decimal type; keep the alias name stable so call sites
-//       do not churn.
-using Money    = double;   // account currency, whole units (e.g. USD)
-using Price    = double;   // price per unit of the instrument
-using Quantity = double;   // signed where direction matters (negative = short)
+// Fixed-point, agreed by the team (OQ#11). Money and Price are exact to 10^-6
+// (see decimal.hpp); Quantity is a whole number of shares.
+using Money    = Decimal;       // account currency (e.g. USD)
+using Price    = Decimal;       // price per unit of the instrument
+using Quantity = std::int64_t;  // whole shares; signed where direction matters (negative = short)
 
 // --- Instrument identity -----------------------------------------------
 // TODO: intern symbols to a small integer id for cache-friendly hot paths;
