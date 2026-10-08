@@ -68,6 +68,7 @@ apps/trading_engine_main.cpp   thin executable (build confirmation only)
 apps/strategy_lab/        optional strategy replay + diagnostics tool (off by default)
 tests/                    unit/ (default), integration/ (opt-in), fixtures/, support/ (test doubles)
 python/visualization/     plot_performance.py outline + requirements.txt
+web/                      engine console (React + TypeScript); runs on a demo engine until the API exists
 ```
 
 ## Prerequisites
@@ -127,6 +128,16 @@ Filter by component label (`common`, `domain`, `strategy`, `reference_strategies
 ctest --test-dir build -L common
 ctest --test-dir build -L reference_strategies   # both strategies, alone and in the engine
 ```
+
+## Web console
+
+```bash
+cd web && pnpm install && pnpm dev     # http://127.0.0.1:5173
+```
+
+Runs against an in-browser demo engine (clearly labelled) until the engine
+serves the API in [ADR 0006](docs/adr/0006-web-frontend-api-contract.md). See
+[`web/README.md`](web/README.md).
 
 ## Python visualization (syntax check only for now)
 

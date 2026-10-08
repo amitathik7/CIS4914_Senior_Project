@@ -1,4 +1,4 @@
-"""The Strategy Lab's one dark palette.
+"""The Strategy Lab's one dark palette, shared with the web console (web/src/styles/global.css).
 
 Streamlit's own theme (`.streamlit/config.toml`), the custom CSS below and the Plotly charts (`charts.py`) all take their
 colours from these constants. `tests/test_theme.py` checks that the config file agrees with them and that every text/background
@@ -12,27 +12,27 @@ from __future__ import annotations
 
 from string import Template
 
-BACKGROUND = "#0E1117"         # page
-SURFACE = "#161B22"            # sidebar, cards, chart plotting area
-SURFACE_RAISED = "#1F2630"     # hover labels, raised controls
-BORDER = "#30363D"
-GRID = "#262D38"
-AXIS = "#3A4350"
-TEXT = "#E6EDF3"
-TEXT_MUTED = "#A8B3C2"
-ACCENT = "#60A5FA"
-ACCENT_STRONG = "#2563EB"      # filled primary button: white text on it stays readable
-BUY = "#4ADE80"
-SELL = "#FB7185"
-WARN = "#FBBF24"
+BACKGROUND = "#131A22"         # page
+SURFACE = "#18212B"            # sidebar, cards, chart plotting area
+SURFACE_RAISED = "#1E2833"     # hover labels, raised controls
+BORDER = "#283442"
+GRID = "#222C38"
+AXIS = "#364557"
+TEXT = "#E2E8EF"
+TEXT_MUTED = "#A3B1C1"
+ACCENT = "#8EA2FF"
+ACCENT_STRONG = "#4C5FD6"      # filled primary button: white text on it stays readable
+BUY = "#3CC48F"
+SELL = "#F06B62"
+WARN = "#E5B454"
 
 # Chart roles (drawing choices; every plotted value comes from the replay tool).
-PRICE = "#CBD5E1"
+PRICE = "#C9D3DF"
 SHORT_SMA = ACCENT
 LONG_SMA = WARN
-MEAN = "#2DD4BF"
+MEAN = "#6FC6E8"
 ZSCORE = "#C4B5FD"
-MEMBER_A = "#60A5FA"
+MEMBER_A = "#8EA2FF"
 MEMBER_B = "#F0ABFC"
 
 
