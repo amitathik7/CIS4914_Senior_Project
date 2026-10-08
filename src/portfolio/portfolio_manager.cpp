@@ -13,10 +13,18 @@ PortfolioManager::PortfolioManager(common::RunId run_id,
 
 PortfolioManager::~PortfolioManager() = default;
 
-void PortfolioManager::apply(const domain::Fill& /*fill*/) {
-    // TODO: adjust cash by -(qty * price) - fees, update position quantity and
+bool PortfolioManager::apply(const domain::Fill& /*fill*/) {
+    // TODO: reject already-seen Fill::id (idempotency, see ADR 0004), then
+    //       adjust cash by -(qty * price) - fees, update position quantity and
     //       average cost, realise P&L on reducing trades, refresh exposure.
     throw common::NotImplemented("PortfolioManager::apply");
+}
+
+bool PortfolioManager::apply_order_update(const domain::Order& /*order*/) {
+    // TODO: per ADR 0004 section 7 -- reserve on Working, release on
+    //       Rejected / Cancelled / Expired, ignore fill-driven statuses, and
+    //       stay idempotent by state keyed on Order::id.
+    throw common::NotImplemented("PortfolioManager::apply_order_update");
 }
 
 void PortfolioManager::mark(const domain::MarketEvent& /*event*/) {

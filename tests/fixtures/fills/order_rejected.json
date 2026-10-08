@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "message_type": "order_status",
+  "order_id": 3307,
+  "run_id": 12,
+  "origin_signal": 1045,
+  "strategy_id": "sma_crossover",
+  "symbol": "AAPL",
+  "side": "buy",
+  "order_type": "limit",
+  "quantity": 100,
+  "limit_price": 149500000,
+  "order_status": "rejected",
+  "reject_reason": "no market context for symbol",
+  "filled_quantity": 0,
+  "created_at": "2026-09-16T14:34:00.000000000Z",
+  "updated_at": "2026-09-16T14:34:00.000000000Z"
+}
