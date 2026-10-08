@@ -8,6 +8,7 @@ and its consequences. Format: lightweight [MADR](https://adr.github.io/madr/).
 | [0001](0001-provisional-architecture.md) | Provisional architecture for the simulated trading engine | Proposed / Provisional |
 | 0003 | *(reserved)* Transport: Kafka, superseding ADR 0001 item 12 | Not yet written |
 | [0004](0004-execution-portfolio-fill-contract.md) | Execution Simulator → Portfolio Manager fill contract | Proposed |
+| [0005](0005-portfolio-risk-query-contract.md) | Portfolio Manager → Risk Manager query contract | Proposed |
 
 > **0002 is missing from this table on purpose.** "Strategy Engine → Risk
 > Manager signal contract" (issue #3) lives on an unmerged branch; linking it
