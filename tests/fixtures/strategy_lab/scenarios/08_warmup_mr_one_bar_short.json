@@ -1,0 +1,33 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "warmup_mr_one_bar_short",
+  "title": "Warm-up boundary: the identical spike is invisible one bar short of a full window",
+  "purpose": "Lookback 7 on 6 bars: the window is never full, so the spike that signalled at lookback 6 is not seen.",
+  "covers": ["warmup", "insufficient_data"],
+  "dataset": {
+    "path": "datasets/warmup_boundary.csv",
+    "sha256_lf": "9879fbaddf67a95d82dbe621586bfa322006a27d273bc9ce58e51d7f3d2b5624"
+  },
+  "strategies": [
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_7", "lookback": "7", "entry_threshold": "2", "rearm_threshold": "0.5", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/strategies/mean_reversion.md section 4; docs/STRATEGY_LAB.md section 12"],
+    "derivation": [
+      "lookback 7 needs 7 accepted bars; the dataset has 6, so all six events warm up (fill 1..6 of 7) and nothing can signal"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayWarmup.TheFirstFullWindowMayAlreadySignalForMeanReversionButNeverBefore (the lookback-7 half)"
+    ]
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": ["fewer_bars_than_warmup"],
+    "signals": [],
+    "events": [
+      {"strategy": "mr_7", "event_range": [0, 5], "verdict": "warming_up", "reason": "warming_up", "action": "none", "window_size": 7, "unavailable": {"mean": "warming_up", "z_score": "warming_up"}},
+      {"strategy": "mr_7", "event_index": 5, "window_fill": 6}
+    ]
+  }
+}

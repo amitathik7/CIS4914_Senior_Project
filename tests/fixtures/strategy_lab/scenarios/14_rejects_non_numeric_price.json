@@ -1,0 +1,36 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "rejects_non_numeric_price",
+  "title": "A price that is not a number rejects the whole dataset",
+  "purpose": "The loader validates and never repairs: a bad value is an error naming its line and column, not a skipped or zeroed row.",
+  "covers": ["dataset_rejection"],
+  "dataset": {
+    "path": "invalid/bad_price_text.csv",
+    "sha256_lf": "97525e6805956573e2c3d0ebc7426269d626242e759e32f6e55fc4812546ad56"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_2_3", "short_window": "2", "long_window": "3", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/STRATEGY_LAB.md section 7 (dataset CSV rules) and section 6 (exit status 3)"],
+    "derivation": [
+      "line 1 is the header; line 3 (the second data row) has the price 'abc'",
+      "docs/STRATEGY_LAB.md section 7: price must be a finite number greater than 0; every refusal names a line and a column",
+      "so one problem is expected: line 3, column price, and the run is refused (exit status 3, dataset error)"
+    ],
+    "cross_checks": [
+      "tests/strategy_lab/test_cli_contract.py (invalid prices and row-specific errors name their lines)"
+    ]
+  },
+  "expect": {
+    "outcome": "rejected",
+    "exit_status": 3,
+    "error_code": "dataset_error",
+    "message_contains": [],
+    "problems": [
+      {"line": 3, "column": "price"}
+    ],
+    "total_problems": 1
+  }
+}

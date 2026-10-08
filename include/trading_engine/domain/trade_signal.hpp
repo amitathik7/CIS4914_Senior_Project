@@ -18,6 +18,7 @@
 
 #include "trading_engine/common/identifiers.hpp"
 #include "trading_engine/common/types.hpp"
+#include "trading_engine/domain/order.hpp"
 
 namespace trading_engine::domain {
 
@@ -47,6 +48,19 @@ struct TradeSignal {
     // core domain must not depend on a particular JSON library.
     // TODO: consider a small variant value type if typed metadata is needed.
     std::map<std::string, std::string> metadata{};
+
+    // --- Order-shape hint --------------------------------------------------
+    // PROPOSED by docs/adr/0002-strategy-risk-signal-contract.md (status:
+    // Proposed, not Accepted). Only meaningful alongside `requested_quantity`
+    // -- an exposure-based signal (target_exposure set instead) has no order
+    // shape and should leave both fields below empty, exactly like every
+    // signal built before this pair existed.
+    //
+    // No component reads these two fields yet (StrategyEngine, RiskManager,
+    // and ExecutionSimulator are all still common::NotImplemented), so right
+    // now "absent" and "ignored" are the same outcome.
+    std::optional<OrderType>     order_type{};
+    std::optional<common::Price> limit_price{};  // set iff order_type == Limit; enforced later, not here
 
     // TODO: time-in-force / expiry, target price band, urgency, parent
     //       portfolio-construction batch id, per-signal risk overrides.

@@ -1,0 +1,48 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "mr_rearm_and_flip",
+  "title": "Mean reversion: Buy, re-arm, Buy again, then a direct flip to Sell",
+  "purpose": "Entry thresholds are inclusive; the latch is re-armed by a bar inside the re-arm band; a direct flip from one extreme to the other signals at once.",
+  "covers": ["mr_threshold", "mr_rearm"],
+  "dataset": {
+    "path": "datasets/mr_rearm.csv",
+    "sha256_lf": "e37c7ffd16aed38d1494aa4ba204999dcda930d4199b4f205fb2a1194f986ba8"
+  },
+  "strategies": [
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_4", "lookback": "4", "entry_threshold": "1.5", "rearm_threshold": "0.5", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/strategies/mean_reversion.md section 4 (the latch) and section 6 (worked example)"],
+    "derivation": [
+      "closes 10 10 10 6 9 2 30; lookback 4 (population variance), entry 1.5, re-arm 0.5",
+      "bar 4: window 10 10 10 6, mean 9, variance 3, z = -3/sqrt(3) = -sqrt(3) = -1.732 <= -1.5: Buy (event_index 3)",
+      "bar 5: window 10 10 6 9, mean 35/4, variance 43/16, z = 1/sqrt(43) = 0.1525, |z| <= 0.5: inside the re-arm band, latch neutral",
+      "bar 6: window 10 6 9 2, mean 27/4, variance 155/16, z = -1.5261 <= -1.5 and latch neutral: Buy (event_index 5)",
+      "bar 7: window 6 9 2 30, mean 47/4, variance 1875/16, z = 1.6859 >= 1.5 and latch lower: direct flip, Sell (event_index 6)"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayMeanReversion.TheDocumentedFixtureBuysRearmsBuysAndFlipsToSell",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case mr_rearm.csv)"
+    ]
+  },
+  "tolerances": {
+    "irrational_double": {"abs_tol": "1e-12", "why": "irrational value, rounded to 17 significant digits; the C++ computes it in IEEE double (about 1e-16 relative), so a few ulps of a value below 40 is about 1e-14. 1e-12 leaves two orders of margin and is far below any difference that could change a decision here"}
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "mr_4", "event_index": 3, "symbol": "AAPL", "side": "buy", "signal_id": 1},
+      {"strategy": "mr_4", "event_index": 5, "symbol": "AAPL", "side": "buy", "signal_id": 2},
+      {"strategy": "mr_4", "event_index": 6, "symbol": "AAPL", "side": "sell", "signal_id": 3}
+    ],
+    "events": [
+      {"strategy": "mr_4", "event_range": [0, 2], "verdict": "warming_up", "reason": "warming_up", "action": "none", "unavailable": {"mean": "warming_up", "z_score": "warming_up"}},
+      {"strategy": "mr_4", "event_index": 3, "verdict": "evaluated", "reason": "entry_buy", "action": "buy", "window_fill": 4, "window_size": 4, "indicators": {"mean": {"exact": "9"}, "standard_deviation": {"approx": "1.7320508075688773", "tolerance": "irrational_double"}, "z_score": {"approx": "-1.7320508075688773", "tolerance": "irrational_double"}}},
+      {"strategy": "mr_4", "event_index": 4, "verdict": "evaluated", "reason": "inside_rearm_band", "action": "none", "indicators": {"mean": {"exact": "35/4"}, "z_score": {"approx": "0.15249857033260467", "tolerance": "irrational_double"}}},
+      {"strategy": "mr_4", "event_index": 5, "verdict": "evaluated", "reason": "entry_buy", "action": "buy", "indicators": {"mean": {"exact": "27/4"}, "z_score": {"approx": "-1.5261167249147478", "tolerance": "irrational_double"}}},
+      {"strategy": "mr_4", "event_index": 6, "verdict": "evaluated", "reason": "entry_sell", "action": "sell", "indicators": {"mean": {"exact": "47/4"}, "z_score": {"approx": "1.6858627860337072", "tolerance": "irrational_double"}}}
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "rejects_equal_sma_windows",
+  "title": "Equal SMA windows are rejected by the strategy itself",
+  "purpose": "The lab only parses text into types; the strategy's constructor is the authority, and its refusal reaches the user verbatim.",
+  "covers": ["config_rejection"],
+  "dataset": {
+    "path": "datasets/sma_crossover.csv",
+    "sha256_lf": "70634f7ac4a2d233a7188108d6ba7ba9a3c93bf407c38e99d87daacaa75c5e8a"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_3_3", "short_window": "3", "long_window": "3", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": [
+      "docs/STRATEGY_LAB.md section 8 (short_window: at least 1, below long_window) and section 6 (exit status 2)"
+    ],
+    "derivation": [
+      "short_window 3 is not below long_window 3, which breaks the documented rule",
+      "so the configuration is refused before any replay: exit status 2, a configuration error naming both parameters"
+    ],
+    "cross_checks": [
+      "tests/strategy_lab/test_cli_contract.py: every failure class has its status (config_error, status 2)"
+    ]
+  },
+  "expect": {
+    "outcome": "rejected",
+    "exit_status": 2,
+    "error_code": "config_error",
+    "message_contains": ["long_window", "short_window"],
+    "problems": [
+      {"where": "strategies[0]"}
+    ],
+    "total_problems": 1
+  }
+}

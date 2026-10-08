@@ -6,20 +6,14 @@ and its consequences. Format: lightweight [MADR](https://adr.github.io/madr/).
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-provisional-architecture.md) | Provisional architecture for the simulated trading engine | Proposed / Provisional |
+| [0002](0002-strategy-risk-signal-contract.md) | Strategy Engine → Risk Manager signal contract (draft JSON shape) | Proposed |
 | 0003 | *(reserved)* Transport: Kafka, superseding ADR 0001 item 12 | Not yet written |
 | [0004](0004-execution-portfolio-fill-contract.md) | Execution Simulator → Portfolio Manager fill contract | Proposed |
 | [0005](0005-portfolio-risk-query-contract.md) | Portfolio Manager → Risk Manager query contract | Proposed |
 
-> **0002 is missing from this table on purpose.** "Strategy Engine → Risk
-> Manager signal contract" (issue #3) lives on an unmerged branch; linking it
-> from `main` would be a broken link. It takes the 0002 slot on merge.
->
 > **0003 is reserved, not written.** The team's decision to move the pipeline
 > onto Kafka supersedes ADR 0001 item 12 and is not yet recorded anywhere.
 > ADR 0004 depends on it.
->
-> *Merge note:* the ADR 0002 branch edits this same table, so expect a
-> conflict here. Resolution is to keep all rows.
 
 ## Adding one
 

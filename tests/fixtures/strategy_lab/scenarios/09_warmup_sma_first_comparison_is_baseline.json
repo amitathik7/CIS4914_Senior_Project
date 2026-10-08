@@ -1,0 +1,35 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "warmup_sma_first_comparison_is_baseline",
+  "title": "Warm-up boundary: the crossover swallows its first comparison, however dramatic",
+  "purpose": "SMA 2/6 on the spike series: the first full window has short far above long, but that is only the baseline, never a signal.",
+  "covers": ["warmup", "sma_baseline"],
+  "dataset": {
+    "path": "datasets/warmup_boundary.csv",
+    "sha256_lf": "9879fbaddf67a95d82dbe621586bfa322006a27d273bc9ce58e51d7f3d2b5624"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_2_6", "short_window": "2", "long_window": "6", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/strategies/moving_average_crossover.md section 4 (baseline)"],
+    "derivation": [
+      "closes 10 10 10 10 10 100; short 2, long 6: the long window fills on bar 6 (event_index 5)",
+      "bar 6: short (10+100)/2 = 55, long (50+100)/6 = 25, short above long: recorded as the baseline, silent; no later bar exists"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayWarmup.TheCrossoverSwallowsItsFirstComparisonEvenWhenItIsDramatic",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case warmup_boundary.csv)"
+    ]
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [],
+    "events": [
+      {"strategy": "sma_2_6", "event_range": [0, 4], "verdict": "warming_up", "reason": "warming_up", "action": "none"},
+      {"strategy": "sma_2_6", "event_index": 5, "verdict": "evaluated", "reason": "baseline_established", "action": "none", "window_fill": 6, "indicators": {"short_sma": {"exact": "55"}, "long_sma": {"exact": "25"}, "short_minus_long": {"exact": "30"}}}
+    ]
+  }
+}

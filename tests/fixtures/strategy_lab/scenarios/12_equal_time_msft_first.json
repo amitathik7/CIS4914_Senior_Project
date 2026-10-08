@@ -1,0 +1,42 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "equal_time_msft_first",
+  "title": "Equal timestamps: the file lists MSFT first, so MSFT gets the first id",
+  "purpose": "Rows with the same exchange_time replay in the order the file lists them (a lab-only policy), so signal ids follow the file, not the alphabet.",
+  "covers": ["equal_time_ordering", "interleaving"],
+  "dataset": {
+    "path": "datasets/tie_msft_first.csv",
+    "sha256_lf": "b3739b4c89189d5bc4781eaa01e6ce9b0bdd6620c8bbae34070484bb0ee8f411"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "s", "short_window": "1", "long_window": "2", "symbols": "AAPL,MSFT"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/STRATEGY_LAB.md section 7 (ties) and section 10"],
+    "derivation": [
+      "closes 1 2 1 for both symbols, one row of each per minute, MSFT listed first at every timestamp",
+      "crossover 1/2: bar 2 is a baseline for each symbol; bar 3 (event_index 4 and 5, one shared timestamp 14:32) makes both Sell",
+      "the file lists MSFT first, so MSFT Sell is event_index 4 with id 1 and AAPL Sell is event_index 5 with id 2"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayTies.SignalsOnTheSameTimestampFollowTheFilesOrderNotTheAlphabet"
+    ]
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "s", "event_index": 4, "symbol": "MSFT", "side": "sell", "signal_id": 1},
+      {"strategy": "s", "event_index": 5, "symbol": "AAPL", "side": "sell", "signal_id": 2}
+    ],
+    "events": [
+      {"strategy": "s", "event_index": 0, "symbol": "MSFT", "exchange_time": "2026-01-05T14:30:00.000000000Z"},
+      {"strategy": "s", "event_index": 1, "symbol": "AAPL", "exchange_time": "2026-01-05T14:30:00.000000000Z"},
+      {"strategy": "s", "event_index": 2, "symbol": "MSFT", "reason": "baseline_established"},
+      {"strategy": "s", "event_index": 3, "symbol": "AAPL", "reason": "baseline_established"},
+      {"strategy": "s", "event_index": 4, "symbol": "MSFT", "exchange_time": "2026-01-05T14:32:00.000000000Z", "reason": "crossover_sell", "action": "sell"},
+      {"strategy": "s", "event_index": 5, "symbol": "AAPL", "exchange_time": "2026-01-05T14:32:00.000000000Z", "reason": "crossover_sell", "action": "sell"}
+    ]
+  }
+}

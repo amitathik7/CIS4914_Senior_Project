@@ -1,7 +1,8 @@
 # Data Flow
 
-> Status: **planned**. Sequence of responsibilities the scaffold is built
-> around. No stage is implemented yet.
+> Status: **planned**, except the `StrategyEngine` stage, which is implemented and
+> tested against a test bus (see [`STRATEGIES.md`](STRATEGIES.md)). Every other stage
+> below is still a stub, so no signal has flowed through a real pipeline.
 
 Two entry points feed one identical downstream pipeline: a **live** WebSocket
 feed and a **historical replay**. Everything after "Market Data Service" is the
@@ -18,7 +19,8 @@ raw source data
         · (optional) IMarketDataRepository.store(event)
         · bus.publish(Event{MarketData, event})
   → EventBus  ── MarketData ──▶ StrategyEngine.on_market_event(event)
-        · route to interested IStrategy instances
+        · deliver to every registered IStrategy (no symbol routing yet: each ignores
+          what it does not trade; a symbol-interest index is planned)
         · each strategy may emit 0..n domain::TradeSignal via ISignalSink
         · StrategyEngine stamps SignalId + created_at, bus.publish(Event{Signal})
   → EventBus  ── Signal ──▶ RiskManager

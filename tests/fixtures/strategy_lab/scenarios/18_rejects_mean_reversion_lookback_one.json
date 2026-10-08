@@ -1,0 +1,34 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "rejects_mean_reversion_lookback_one",
+  "title": "A mean-reversion lookback of 1 is rejected by the strategy itself",
+  "purpose": "A one-bar window has no spread to measure; the documented minimum is 2.",
+  "covers": ["config_rejection"],
+  "dataset": {
+    "path": "datasets/mr_rearm.csv",
+    "sha256_lf": "e37c7ffd16aed38d1494aa4ba204999dcda930d4199b4f205fb2a1194f986ba8"
+  },
+  "strategies": [
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_1", "lookback": "1", "entry_threshold": "2", "rearm_threshold": "0.5", "symbols": "AAPL"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": ["docs/STRATEGY_LAB.md section 8 (lookback: at least 2) and section 6 (exit status 2)"],
+    "derivation": [
+      "lookback 1 is below the documented minimum of 2: refused before any replay (exit status 2, configuration error naming lookback)"
+    ],
+    "cross_checks": [
+      "tests/strategy_lab/test_cli_contract.py: test_the_strategys_own_words_reach_both_streams (lookback=1)"
+    ]
+  },
+  "expect": {
+    "outcome": "rejected",
+    "exit_status": 2,
+    "error_code": "config_error",
+    "message_contains": ["lookback"],
+    "problems": [
+      {"where": "strategies[0]"}
+    ],
+    "total_problems": 1
+  }
+}

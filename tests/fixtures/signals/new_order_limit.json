@@ -1,0 +1,11 @@
+{
+  "message_type": "new_order",
+  "signal_id": 1043,
+  "strategy_id": "sma_crossover",
+  "symbol": "AAPL",
+  "side": "sell",
+  "order_type": "limit",
+  "quantity": 50,
+  "price": 152.75,
+  "created_at": "2026-09-16T14:33:10.000000000Z"
+}

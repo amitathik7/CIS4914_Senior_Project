@@ -1,0 +1,41 @@
+# Strategy Lab (local demo). Streamlit reads this file when started from this directory (run_lab.ps1 does that).
+
+[server]
+# Local only: never listen on a network interface.
+address = "127.0.0.1"
+port = 8501
+# Matches strategy_lab_ui.datasets.MAX_UPLOAD_BYTES (8 MiB).
+maxUploadSize = 8
+enableXsrfProtection = true
+
+[browser]
+# No usage statistics are sent.
+gatherUsageStats = false
+serverAddress = "127.0.0.1"
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+# The Strategy Lab is dark by default, for every view and every new browser session (this block pins the theme, so the
+# operating system's light/dark preference does not change it). The values mirror strategy_lab_ui/theme.py; the tests
+# check they agree and that every text/background pair is readable.
+base = "dark"
+primaryColor = "#60A5FA"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#161B22"
+textColor = "#E6EDF3"
+linkColor = "#60A5FA"
+borderColor = "#30363D"
+showWidgetBorder = true
+font = "sans serif"
+greenColor = "#4ADE80"
+redColor = "#FB7185"
+orangeColor = "#FBBF24"
+yellowColor = "#FBBF24"
+blueColor = "#60A5FA"
+grayColor = "#A8B3C2"
+
+[theme.sidebar]
+backgroundColor = "#161B22"
+secondaryBackgroundColor = "#0E1117"

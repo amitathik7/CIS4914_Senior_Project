@@ -20,6 +20,8 @@ add_library(trading_engine_core STATIC
     market_data/market_data_service.cpp
     strategy/strategy.cpp
     strategy/strategy_engine.cpp
+    strategy/moving_average_crossover_strategy.cpp
+    strategy/mean_reversion_strategy.cpp
     risk/risk_policy.cpp
     risk/risk_manager.cpp
     execution/fill_model.cpp

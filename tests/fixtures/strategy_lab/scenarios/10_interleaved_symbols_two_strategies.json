@@ -1,0 +1,57 @@
+{
+  "schema": "strategy_lab.scenario/1",
+  "id": "interleaved_symbols_two_strategies",
+  "title": "Two symbols interleaved, two strategies: eight signals, ids in publish order",
+  "purpose": "Each symbol is decided on its own; on one event the strategies act in registration order (the crossover first).",
+  "covers": ["interleaving", "multi_strategy", "signal_ids"],
+  "dataset": {
+    "path": "datasets/two_symbols_interleaved.csv",
+    "sha256_lf": "bfc96199ecb7aedb21b186ec13ad1cf481ed54f3e19dec2d7ce10148e18b12a0"
+  },
+  "strategies": [
+    {"kind": "sma_crossover", "params": {"strategy_id": "sma_2_3", "short_window": "2", "long_window": "3", "symbols": "AAPL,MSFT"}},
+    {"kind": "mean_reversion", "params": {"strategy_id": "mr_4", "lookback": "4", "entry_threshold": "1.2", "rearm_threshold": "0.5", "symbols": "AAPL,MSFT"}}
+  ],
+  "provenance": {
+    "derived_by": "by hand, from the strategy document and the fixture bars; not copied from any run of the tool",
+    "sources": [
+      "docs/strategies/moving_average_crossover.md section 4",
+      "docs/strategies/mean_reversion.md section 4",
+      "docs/STRATEGY_LAB.md section 10 (replay order, signal ids)"
+    ],
+    "derivation": [
+      "file rows alternate AAPL, MSFT per minute m: AAPL is event_index 2(m-1), MSFT is 2(m-1)+1",
+      "AAPL 3 2 1 2 3 4 3 2 1 and MSFT 10 10 10 6 9 2 30 30 30 are worked separately (the other symbol's rows never touch a window)",
+      "crossover 2/3: AAPL Buy minute 5 (event 8), Sell minute 8 (event 14); MSFT equal on minute 3, baseline below on minute 4, Buy minute 7 (event 13)",
+      "reversion 4, entry 1.2: AAPL Sell minute 5 (z 1.414, event 8), Buy minute 8 (z -1.414, event 14); MSFT Buy minute 4 (z -1.732, event 7), Buy minute 6 (z -1.526, event 11), Sell minute 7 (z 1.686, event 13)",
+      "published in file order, and within an event in registration order (crossover, then reversion): ids 1..8 as listed"
+    ],
+    "cross_checks": [
+      "tests/unit/strategy_lab_replay_test.cpp: LabReplayCombined.BothStrategiesOnTwoInterleavedSymbolsPublishEightSignalsInRegistrationOrder",
+      "tests/strategy_lab/test_reference_agreement.py (exact-rational reference model, case two_symbols_interleaved.csv)"
+    ]
+  },
+  "tolerances": {
+    "irrational_double": {"abs_tol": "1e-12", "why": "irrational value, rounded to 17 significant digits; the C++ computes it in IEEE double (about 1e-16 relative), so a few ulps of a value below 40 is about 1e-14. 1e-12 leaves two orders of margin and is far below any difference that could change a decision here"}
+  },
+  "expect": {
+    "outcome": "result",
+    "warnings": [],
+    "signals": [
+      {"strategy": "mr_4", "event_index": 7, "symbol": "MSFT", "side": "buy", "signal_id": 1},
+      {"strategy": "sma_2_3", "event_index": 8, "symbol": "AAPL", "side": "buy", "signal_id": 2},
+      {"strategy": "mr_4", "event_index": 8, "symbol": "AAPL", "side": "sell", "signal_id": 3},
+      {"strategy": "mr_4", "event_index": 11, "symbol": "MSFT", "side": "buy", "signal_id": 4},
+      {"strategy": "sma_2_3", "event_index": 13, "symbol": "MSFT", "side": "buy", "signal_id": 5},
+      {"strategy": "mr_4", "event_index": 13, "symbol": "MSFT", "side": "sell", "signal_id": 6},
+      {"strategy": "sma_2_3", "event_index": 14, "symbol": "AAPL", "side": "sell", "signal_id": 7},
+      {"strategy": "mr_4", "event_index": 14, "symbol": "AAPL", "side": "buy", "signal_id": 8}
+    ],
+    "events": [
+      {"strategy": "sma_2_3", "event_index": 5, "symbol": "MSFT", "verdict": "evaluated", "reason": "averages_equal", "action": "none"},
+      {"strategy": "mr_4", "event_index": 7, "symbol": "MSFT", "verdict": "evaluated", "reason": "entry_buy", "action": "buy", "indicators": {"z_score": {"approx": "-1.7320508075688773", "tolerance": "irrational_double"}}},
+      {"strategy": "sma_2_3", "event_index": 8, "symbol": "AAPL", "reason": "crossover_buy", "action": "buy"},
+      {"strategy": "mr_4", "event_index": 8, "symbol": "AAPL", "reason": "entry_sell", "action": "sell"}
+    ]
+  }
+}
