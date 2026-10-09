@@ -27,17 +27,19 @@ the constants agree and that every text/background pair meets WCAG 2 contrast. T
 
 | Role | Colour | Role | Colour |
 |---|---|---|---|
-| Page | `#0E1117` | Primary text | `#E6EDF3` |
-| Sidebar, cards, plot area | `#161B22` | Secondary text | `#A8B3C2` |
-| Raised (hover labels, selected pill) | `#1F2630` | Accent, primary button fill | `#60A5FA` |
-| Border / chart grid | `#30363D` / `#262D38` | Buy / Sell / Warning | `#4ADE80` / `#FB7185` / `#FBBF24` |
+| Page | `#131A22` | Primary text | `#E2E8EF` |
+| Sidebar, cards, plot area | `#18212B` | Secondary text | `#A3B1C1` |
+| Raised (hover labels, selected pill) | `#1E2833` | Accent, primary button fill | `#8EA2FF` |
+| Border / chart grid | `#283442` / `#222C38` | Buy / Sell / Warning | `#3CC48F` / `#F06B62` / `#E5B454` |
 
-* **Primary button.** White on the accent measured **2.54:1**, so the filled button carries dark text on the accent (**7.43:1**).
+The palette is shared with the web console's dark theme (`web/src/styles/global.css`).
+
+* **Primary button.** White on the accent measures **2.40:1**, so the filled button carries dark text on the accent (**7.31:1**).
 * **Sticky action bar** (Restore defaults / Run ...): drawn in the sidebar colour with a top border and shadow, pinned at the bottom of the
   scrolling panel; scrolled to its end, the last widget sits above it (checked at 1024x768 and 1440x900).
 * **Charts** (Plotly `plotly_dark`, no Streamlit theme): backgrounds, axes, grid, legend, hover labels and toolbar follow the palette. Buy is a green
   triangle-up labelled "Buy", Sell a rose triangle-down labelled "Sell" (shape and text, never colour alone); warming-up bars are open circles,
-  ignored bars an x, trade rows open diamonds; the short average is a solid blue line, the long average dashed amber, the rolling mean dash-dot teal,
+  ignored bars an x, trade rows open diamonds; the short average is a solid blue line, the long average dashed amber, the rolling mean dash-dot cyan,
   the z-score violet with markers; entry thresholds dashed amber and re-arm thresholds dotted grey, each labelled; the selected event has a white ring.
 * **Keyboard focus:** a 2px accent outline on buttons, inputs, selects, tabs, the slider and links (every focusable control tried showed it).
 * **Starting it elsewhere:** Streamlit reads `.streamlit/config.toml` from the directory it is started in. `run_lab.ps1` starts it from

@@ -10,6 +10,7 @@ and its consequences. Format: lightweight [MADR](https://adr.github.io/madr/).
 | 0003 | *(reserved)* Transport: Kafka, superseding ADR 0001 item 12 | Not yet written |
 | [0004](0004-execution-portfolio-fill-contract.md) | Execution Simulator → Portfolio Manager fill contract | Proposed |
 | [0005](0005-portfolio-risk-query-contract.md) | Portfolio Manager → Risk Manager query contract | Proposed |
+| [0006](0006-web-frontend-api-contract.md) | Engine → web console API contract | Proposed |
 
 > **0003 is reserved, not written.** The team's decision to move the pipeline
 > onto Kafka supersedes ADR 0001 item 12 and is not yet recorded anywhere.
