@@ -1,0 +1,353 @@
+/* Strategies section. Uses only the console's tokens (global.css), so both themes work without changes here. */
+
+/* ---- layout: a compact configuration panel beside the main area, stacked when narrow --------------------- */
+
+.lab {
+  display: grid;
+  grid-template-columns: minmax(300px, 344px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.lab-main { scroll-margin-top: calc(var(--topbar-height) + 14px); }
+
+.lab-side,
+.lab-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.lab-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(250px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .lab,
+  .lab-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---- the configuration panel ----------------------------------------------------------------------------- */
+
+.lab-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.lab-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.lab-section:last-child {
+  padding-bottom: 0;
+}
+
+.lab-section-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.kind-list {
+  display: grid;
+  gap: 6px;
+}
+
+.kind-option {
+  display: grid;
+  gap: 2px;
+  padding: 8px 11px;
+  text-align: left;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.kind-option:hover:not(:disabled) { background: var(--surface-hover); }
+.kind-option[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+.kind-option:disabled { opacity: 0.6; cursor: not-allowed; }
+.kind-option strong { font-weight: 500; }
+.kind-option small { color: var(--text-3); font-size: var(--fs-xs); }
+
+.lab-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lab-wide { grid-column: 1 / -1; }
+
+@media (max-width: 420px) {
+  .lab-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
+.lab-unit { color: var(--text-3); }
+
+.lab-help {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.lab-help[data-tone="warn"] { color: var(--warn); }
+
+.lab-ok {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: var(--fs-sm);
+  color: var(--up);
+}
+
+.lab-ok svg { flex: none; align-self: center; }
+
+.lab-dataset {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--fs-sm);
+}
+
+.lab-chips {
+  align-items: center;
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+}
+
+.lab-chips .chip-toggle { height: 24px; padding: 0 9px; }
+
+.lab-details > summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.lab-code {
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lab-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.lab-rules li::marker { color: var(--text-3); }
+
+/* ---- presets menu ------------------------------------------------------------------------------------------- */
+
+.menu-wrap { position: relative; }
+
+.lab-menu {
+  top: 34px;
+  right: 0;
+  width: 360px;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+}
+
+.lab-preset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+/* ---- result header ------------------------------------------------------------------------------------------ */
+
+.lab-status {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.lab-status-sub {
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.lab-stale {
+  padding: 9px 12px;
+  border-radius: var(--radius-control);
+  background: var(--warn-soft);
+  font-size: var(--fs-sm);
+}
+
+.lab-stale p + p { margin-top: 2px; }
+
+/* ---- chart and controls ------------------------------------------------------------------------------------- */
+
+.lab-chart-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.lab-symbol { min-width: 0; }
+
+.lab-symbol-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: var(--fs-sm);
+}
+
+.lab-chart {
+  position: relative;
+  width: 100%;
+  contain: inline-size; /* the SVG is sized from this box, so it must not hold the box open when the window narrows */
+  border-radius: var(--radius-control);
+  touch-action: pan-y;
+}
+
+.lab-chart svg { display: block; }
+
+.lab-chart-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  pointer-events: none;
+}
+
+.lab-tip {
+  transform: translate(-50%, calc(-100% - 12px));
+  display: grid;
+  gap: 1px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.lab-tip[data-below="true"] { transform: translate(-50%, 16px); }
+
+.lab-axis-note { font-size: var(--fs-xs); }
+
+.lab-controls {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lab-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lab-slider-row {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) minmax(110px, auto);
+  gap: 12px;
+  align-items: center;
+  font-size: var(--fs-sm);
+}
+
+.lab-slider {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.lab-position-text { text-align: right; white-space: nowrap; }
+
+@media (max-width: 560px) {
+  .lab-slider-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .lab-slider-row label { grid-column: 1 / -1; }
+}
+
+/* ---- inspector and counters --------------------------------------------------------------------------------- */
+
+.inspect-why {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.inspect-why[data-tone="up"] { border-left-color: var(--up); background: var(--up-soft); }
+.inspect-why[data-tone="down"] { border-left-color: var(--down); background: var(--down-soft); }
+.inspect-why[data-tone="warn"] { border-left-color: var(--warn); background: var(--warn-soft); }
+.inspect-why[data-tone="accent"] { border-left-color: var(--accent); background: var(--accent-soft); }
+.inspect-why p { font-size: var(--fs-sm); }
+
+.lab-figs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: -14px -16px;
+}
+
+.lab-figs .figure {
+  border-left: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+}
+
+.lab-figs .figure:nth-child(3n + 1) { border-left: 0; }
+.lab-figs .figure:nth-child(-n + 3) { border-top: 0; }
+
+/* ---- tables and exports -------------------------------------------------------------------------------------- */
+
+.table.lab-mini th,
+.table.lab-mini td {
+  height: 30px;
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+}
+
+.table td.wrap,
+.table dd.wrap,
+dd.wrap,
+p.wrap {
+  white-space: normal;
+}
+
+.lab-exports {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-xs);
+}
+
+.lab-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}

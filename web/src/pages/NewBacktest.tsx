@@ -1,10 +1,11 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { EngineApiError } from "../api/client";
 import type { BacktestRequest, StrategyConfig } from "../api/contract";
 import { IconPlus, IconX } from "../components/icons";
 import { Notice, Panel, Segmented } from "../components/ui";
 import { useEngine } from "../state/engine";
+import { CARRIES_TEXT, destinationText, isCarried, NOT_CARRIED_TEXT, PLAIN_DECIMAL, type CarriedStrategy } from "../strategies/backtestHandoff";
 
 type Kind = StrategyConfig["kind"];
 
@@ -43,13 +44,23 @@ function Field({ label, hint, error, children, prefix }: { label: string; hint?:
   );
 }
 
+// A strategy carried over from the Strategies section: every setting arrives as the text that was typed there.
+function fromCarried(c: CarriedStrategy): StrategyDraft {
+  return {
+    key: nextKey++, kind: c.kind, strategy_id: c.strategy_id, symbols: c.symbols, quantity: c.quantity,
+    short_window: c.short_window ?? "5", long_window: c.long_window ?? "20", lookback: c.lookback ?? "20", entry: c.entry ?? "2", rearm: c.rearm ?? "0.5",
+  };
+}
+
 const int = (v: string) => (/^\d+$/.test(v.trim()) ? Number(v) : NaN);
-const num = (v: string) => (/^-?\d*\.?\d+$/.test(v.trim()) ? Number(v) : NaN);
+const num = (v: string) => (PLAIN_DECIMAL.test(v.trim()) ? Number(v) : NaN);
 const dec = (v: string) => v.trim().replace(/,/g, "");
 
 export function NewBacktest() {
   const { client, info, refreshRuns } = useEngine();
   const navigate = useNavigate();
+  const location = useLocation();
+  const handoff = isCarried(location.state) ? location.state : undefined;
   const coverage = info?.market_data;
   const symbols = coverage?.symbols ?? [];
   const last = coverage?.last_session ?? "";
@@ -57,7 +68,7 @@ export function NewBacktest() {
   const [name, setName] = useState("");
   const [start, setStart] = useState("2026-09-21");
   const [end, setEnd] = useState("2026-09-25");
-  const [strategies, setStrategies] = useState<StrategyDraft[]>(() => [draft("sma_crossover", [], "AAPL")]);
+  const [strategies, setStrategies] = useState<StrategyDraft[]>(() => [handoff ? fromCarried(handoff.fromStrategies) : draft("sma_crossover", [], "AAPL")]);
   const [cash, setCash] = useState("100000");
   const [slippage, setSlippage] = useState("1");
   const [perShare, setPerShare] = useState("0.0035");
@@ -135,6 +146,17 @@ export function NewBacktest() {
         </div>
       </div>
 
+      {handoff && (
+        <div style={{ marginBottom: 14 }}>
+          <Notice tone="warn">
+            <div className="stack" style={{ gap: 6 }}>
+              <span><b>Prefilled from Strategies:</b> {handoff.label}{handoff.basis ? ` (${handoff.basis})` : ""}. Nothing has been started: review the form, then press Run backtest.</span>
+              <span><b>{destinationText(info?.data_source, handoff.dataset)}</b></span>
+              <span>{CARRIES_TEXT} {NOT_CARRIED_TEXT}</span>
+            </div>
+          </Notice>
+        </div>
+      )}
       {error && <div style={{ marginBottom: 14 }}><Notice tone="down">{error.message}</Notice></div>}
 
       <Panel>

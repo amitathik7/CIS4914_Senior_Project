@@ -5,12 +5,13 @@ import { day, period, time } from "../lib/format";
 import { useEngine, useRunResource } from "../state/engine";
 import { setTheme, useTheme } from "../state/theme";
 import {
-  IconBacktests, IconChevronDown, IconMoon, IconOrders, IconOverview, IconReport, IconRisk, IconSun, IconSystem,
+  IconBacktests, IconChevronDown, IconMoon, IconOrders, IconOverview, IconReport, IconRisk, IconStrategies, IconSun, IconSystem,
 } from "./icons";
 import { Badge, RunStatusBadge } from "./ui";
 
 const RUN_PAGES = [
   { path: "overview", label: "Overview", icon: IconOverview },
+  { path: "strategies", label: "Strategies", icon: IconStrategies },
   { path: "orders", label: "Orders", icon: IconOrders },
   { path: "risk", label: "Risk", icon: IconRisk },
   { path: "report", label: "Report", icon: IconReport },
@@ -51,7 +52,7 @@ function Nav() {
       <div className="nav-group">
         <div className="nav-heading">This run</div>
         {RUN_PAGES.map(({ path, label, icon: Icon }) => (
-          <NavLink key={path} to={target ? `/runs/${target}/${path}` : "/"} className="nav-link">
+          <NavLink key={path} to={target ? `/runs/${target}/${path}` : path === "strategies" ? "/strategies" : "/"} className="nav-link">
             <Icon />
             {label}
           </NavLink>
@@ -101,7 +102,7 @@ function RunSwitcher() {
 
   const choose = (run: RunSummary) => {
     setOpen(false);
-    const page = /^\/runs\/[^/]+\/(\w+)/.exec(location.pathname)?.[1] ?? "overview";
+    const page = /^\/runs\/[^/]+\/(\w+(?:\/\w+)*)/.exec(location.pathname)?.[1] ?? "overview";
     navigate(`/runs/${run.run_id}/${page}`);
   };
 

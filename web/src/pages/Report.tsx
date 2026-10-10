@@ -6,9 +6,10 @@ import { TimeChart } from "../components/charts/TimeChart";
 import { DataTable, type Column } from "../components/DataTable";
 import { IconDownload } from "../components/icons";
 import { useCurrentRun } from "../components/Shell";
-import { Empty, Figure, Loading, Notice, Panel, toneOf, toneOfNumber } from "../components/ui";
+import { Empty, Figure, Loading, Notice, Panel, toneOf } from "../components/ui";
 import { formatDecimal, money, price, toNumber } from "../lib/decimal";
-import { date, dateTime, int, percent, period, ratioText, time } from "../lib/format";
+import { date, dateTime, int, percent, period, time } from "../lib/format";
+import { reportFigures } from "../lib/reportFigures";
 import { useEngine, useRunResource } from "../state/engine";
 import { drawdownLine, equityLine } from "./chartData";
 
@@ -167,17 +168,9 @@ export function Report() {
 
       {r ? (
         <div className="figures">
-          <Figure lead label="Total return" value={<span className={toneOfNumber(r.total_return)}>{percent(r.total_return)}</span>} sub={`ending ${money(r.ending_equity)}`} />
-          <Figure label="Max drawdown" value={percent(r.max_drawdown)} sub="peak to trough" />
-          <Figure label="Volatility" value={percent(r.volatility, 1, false)} sub="annualised" />
-          <Figure label="Sharpe" value={ratioText(r.sharpe)} sub={r.sharpe !== undefined ? "from daily returns" : "needs 3+ sessions"} />
-          <Figure
-            label="Profit factor"
-            value={r.profit_factor !== undefined ? ratioText(r.profit_factor) : "—"}
-            sub={r.profit_factor_status === "no_losing_trades" ? "no losing trades" : r.profit_factor_status === "no_trades" ? "no closed trades" : "gross win / gross loss"}
-          />
-          <Figure label="Trades" value={int(r.trade_count)} sub={r.win_rate !== undefined ? `${percent(r.win_rate, 0, false)} winners` : "closed round trips"} />
-          <Figure label="Fees" value={money(r.fees_paid)} />
+          {reportFigures(r).map((f) => (
+            <Figure key={f.key} lead={f.lead} label={f.label} value={f.tone ? <span className={f.tone}>{f.value}</span> : f.value} sub={f.sub} />
+          ))}
         </div>
       ) : (
         <div className="figures"><Loading height={58} /></div>

@@ -273,10 +273,15 @@ def _raise_for_status(result: ProcessResult) -> None:
 
 def describe(runner: Runner, timeout: float = CATALOG_TIMEOUT_S) -> Catalog:
     """Ask the tool what it can run. Also proves the file really is the lab's replay tool."""
+    return describe_with_output(runner, timeout)[0]
+
+
+def describe_with_output(runner: Runner, timeout: float = CATALOG_TIMEOUT_S) -> tuple[Catalog, bytes]:
+    """`describe`, plus the tool's stdout exactly as written (for a gateway that passes the catalog on unchanged)."""
     result = run_process(runner, ["describe"], timeout=timeout)
     try:
         _raise_for_status(result)
-        return parse_catalog(strict_loads(result.stdout))
+        return parse_catalog(strict_loads(result.stdout)), result.stdout
     except LabUiError as error:
         error.stderr = error.stderr or result.stderr
         if error.kind in ("malformed_output", "unsupported_schema", "invalid_structure", "unexpected_exit"):
