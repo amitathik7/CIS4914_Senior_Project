@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from support import dumps, ev, make_document, real_runner
 
@@ -74,10 +75,34 @@ class FakeRunnerTests(unittest.TestCase):
         self.assertEqual(info["args"][0], "echo")
 
     def test_the_directory_is_removed_even_when_the_run_fails(self):
-        with self.assertRaises(LabUiError):
-            bridge.run_process(self.runner, ["sleep"], timeout=0.5)
-        leftovers = [p for p in Path(tempfile.gettempdir()).glob("strategy_lab_ui_*") if p.is_dir()]
-        self.assertEqual(leftovers, [])
+        # Only the directory THIS run made is judged. The system temp directory may hold matching ones that are not ours (left by an
+        # earlier crash, or made right now by a lab or gateway that is running), so the run gets a private base with an unrelated
+        # directory of the same kind planted beside it, and that one must survive untouched.
+        made: list[str] = []
+        make = tempfile.TemporaryDirectory
+
+        def spy(*args, **kwargs):
+            directory = make(*args, **kwargs)
+            made.append(directory.name)
+            return directory
+
+        with tempfile.TemporaryDirectory(prefix="bridge_test_base_") as base:
+            unrelated = Path(base) / "strategy_lab_ui_unrelated"
+            unrelated.mkdir()
+            (unrelated / "keep.txt").write_text("not made by the run", encoding="utf-8")
+            saved = tempfile.tempdir
+            tempfile.tempdir = base
+            try:
+                with mock.patch.object(tempfile, "TemporaryDirectory", spy):
+                    with self.assertRaises(LabUiError):
+                        bridge.run_process(self.runner, ["sleep"], timeout=0.5)
+            finally:
+                tempfile.tempdir = saved
+            self.assertEqual(len(made), 1, "the run should have made exactly one directory")
+            self.assertEqual(Path(made[0]).parent, Path(base))
+            self.assertFalse(Path(made[0]).exists(), "the run's own directory was not cleaned up")
+            self.assertEqual(sorted(p.name for p in Path(base).iterdir()), ["strategy_lab_ui_unrelated"])
+            self.assertEqual((unrelated / "keep.txt").read_text(encoding="utf-8"), "not made by the run")
 
     def test_the_command_is_an_argument_list_with_no_shell(self):
         hostile = "A & calc.exe | echo pwned > out.txt"

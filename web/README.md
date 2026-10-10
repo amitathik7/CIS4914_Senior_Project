@@ -36,8 +36,24 @@ Other scripts: `pnpm build` (type-check + production bundle in `dist/`),
 | `src/mock/` | The demo engine: seeded market data, strategies, risk, fills, portfolio, telemetry |
 | `src/state/` | Client context, per-run data hooks that refresh on stream events, theme |
 | `src/components/` | Shell, pipeline strip, tables, charts, badges |
-| `src/pages/` | Overview, Orders (and the order trace), Risk, Report, System, Backtests, New backtest |
+| `src/pages/` | Overview, Strategies (Configure, Explore, Compare, Advanced), Orders (and the order trace), Risk, Report, System, Backtests, New backtest |
+| `src/strategies/`, `src/components/strategies/` | The Strategies section: replay of the real C++ strategies through the lab gateway, see below |
+| `src/lib/losslessJson.ts`, `src/lib/exactTime.ts` | A JSON reader that keeps numbers as text, and exact (nanosecond) exchange-time display |
 | `src/lib/decimal.ts` | Exact decimal text, the same representation as `common::Decimal` |
+
+## Strategies (real engine)
+
+The Strategies page configures one of the two reference strategies, replays recorded bars through the **real C++ strategy engine**
+(not the demo engine), and **compares** two configurations (A and B) over one dataset. An Advanced area runs the Lab's scenario checks of the executable. A browser cannot start a native program, so it talks to a small local gateway:
+
+```bash
+python python/strategy_lab/lab_gateway.py     # or: pnpm lab   (needs the replay tool built, docs/STRATEGY_LAB.md section 4)
+pnpm dev                                      # /lab is proxied to http://127.0.0.1:8765 (LAB_GATEWAY overrides)
+```
+
+Without the gateway the page says so at the Run button; everything else works. Compare is signal-only: financial figures need the Backtests pipeline (see the doc). What is real, what is a fixture and what is demo, the
+numeric rules and the gateway contract are in [docs/STRATEGIES_CONSOLE.md](../docs/STRATEGIES_CONSOLE.md). Vite restarts a running dev
+server when `vite.config.ts` changes; if `/lab` is still not proxied, restart it.
 
 ## The demo engine
 
