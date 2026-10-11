@@ -7,14 +7,14 @@ and its consequences. Format: lightweight [MADR](https://adr.github.io/madr/).
 |---|-------|--------|
 | [0001](0001-provisional-architecture.md) | Provisional architecture for the simulated trading engine | Proposed / Provisional |
 | [0002](0002-strategy-risk-signal-contract.md) | Strategy Engine → Risk Manager signal contract (draft JSON shape) | Proposed |
-| 0003 | *(reserved)* Transport: Kafka, superseding ADR 0001 item 12 | Not yet written |
+| [0003](0003-kafka-transport.md) | Kafka transport for the event-driven pipeline | Proposed |
 | [0004](0004-execution-portfolio-fill-contract.md) | Execution Simulator → Portfolio Manager fill contract | Proposed |
 | [0005](0005-portfolio-risk-query-contract.md) | Portfolio Manager → Risk Manager query contract | Proposed |
 | [0006](0006-web-frontend-api-contract.md) | Engine → web console API contract | Proposed |
 
-> **0003 is reserved, not written.** The team's decision to move the pipeline
-> onto Kafka supersedes ADR 0001 item 12 and is not yet recorded anywhere.
-> ADR 0004 depends on it.
+> **0003 now records the proposed Kafka transport direction.** It supersedes
+> ADR 0001 item 12 if accepted. The implementation details and final transport
+> configuration remain subject to team review.
 
 ## Adding one
 
