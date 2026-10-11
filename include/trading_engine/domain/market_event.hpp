@@ -52,13 +52,17 @@ namespace trading_engine::domain
         std::optional<common::Price> high{};
         std::optional<common::Price> low{};
 
-        std::optional<common::Quantity> size{};   // size of this trade/quote level
-        std::optional<common::Quantity> volume{}; // cumulative or bar volume
+        std::optional<common::Quantity> size{};     // trade size
+        std::optional<common::Quantity> bid_size{}; // quantity available at bid
+        std::optional<common::Quantity> ask_size{}; // quantity available at ask
+        std::optional<common::Quantity> volume{};   // cumulative or bar volume
+
+        std::optional<common::Duration> bar_interval{}; // duration represented by a bar
 
         std::uint64_t sequence{0}; // per-symbol monotonic sequence, gap-detectable
 
-        // TODO: venue/feed id, bid_size/ask_size, bar interval, condition flags,
-        //       tick direction, and a "revision" marker for corrected prints.
+        // TODO: venue/feed id, condition flags, tick direction,
+        //       and a "revision" marker for corrected prints.
     };
 
 } // namespace trading_engine::domain

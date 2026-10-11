@@ -15,6 +15,7 @@ trading_engine_add_component_test(common
 # none of these types enforce invariants yet.
 trading_engine_add_component_test(domain
     domain_fill_test.cpp
+    domain_market_event_test.cpp
     domain_trade_signal_test.cpp)
 
 # The IPortfolioView read seam (ADR 0005) via a fake, and PortfolioManager
@@ -102,6 +103,11 @@ endif()
 # MarketDataService validation and publishing.
 trading_engine_add_component_test(market_data
     market_data_service_test.cpp)
+
+# Kafka MarketEvent serialization and deserialization.
+trading_engine_add_component_test(kafka_codec
+    market_event_codec_test.cpp)
+target_link_libraries(te_test_kafka_codec PRIVATE trading_engine::kafka_adapter)
 
 # TODO(team): add one call per component as behaviour lands, e.g.
 #   trading_engine_add_component_test(risk        risk_manager_test.cpp)

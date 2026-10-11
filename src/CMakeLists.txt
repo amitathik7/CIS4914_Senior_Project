@@ -68,6 +68,34 @@ set_target_properties(trading_engine_alpaca_adapter PROPERTIES
 # TODO(alpaca): find_package(OpenSSL); FetchContent websocketpp / Boost.Beast;
 #               a JSON library -- all PRIVATE to this target.
 
+# Kafka event transport adapter.
+
+include(FetchContent)
+
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(nlohmann_json)
+add_library(trading_engine_kafka_adapter STATIC
+    events/kafka/market_event_codec.cpp)
+add_library(trading_engine::kafka_adapter ALIAS trading_engine_kafka_adapter)
+
+target_link_libraries(trading_engine_kafka_adapter
+    PUBLIC trading_engine_core
+    PRIVATE nlohmann_json::nlohmann_json)
+
+target_compile_features(trading_engine_kafka_adapter PUBLIC cxx_std_20)
+trading_engine_set_warnings(trading_engine_kafka_adapter)
+
+set_target_properties(trading_engine_kafka_adapter PROPERTIES
+    FOLDER "trading_engine/adapters"
+    POSITION_INDEPENDENT_CODE ON)
+
+# TODO(kafka): add the Kafka client PRIVATE to this target.
+
 # PostgreSQL persistence adapter (future: libpq / libpqxx).
 add_library(trading_engine_postgres_adapter STATIC
     persistence/postgres_repository.cpp)
