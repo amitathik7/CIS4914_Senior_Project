@@ -34,6 +34,25 @@ trading_engine_add_component_test(support
     support_recording_event_bus_test.cpp)
 target_link_libraries(te_test_support PRIVATE trading_engine::test_support)
 
+# The two IEventBus implementations, the wire format, and the pipeline wired
+# through each bus. These tests use threads (the buses' dispatchers).
+trading_engine_add_component_test(events
+    common_timestamp_text_test.cpp
+    events_codec_test.cpp
+    events_in_process_bus_test.cpp
+    events_topic_bus_test.cpp
+    portfolio_bus_bridge_test.cpp
+    pipeline_test.cpp)
+target_link_libraries(te_test_events PRIVATE trading_engine::test_support)
+
+# The Kafka adapter, against librdkafka's in-process mock cluster: no broker
+# needed. Set TE_KAFKA_BOOTSTRAP=host:port to also run against a real one.
+if(TARGET trading_engine_kafka_adapter)
+    trading_engine_add_component_test(kafka
+        kafka_transport_test.cpp)
+    target_link_libraries(te_test_kafka PRIVATE trading_engine::kafka_adapter trading_engine::test_support)
+endif()
+
 # StrategyEngine behaviour (real engine, RecordingEventBus, FakeStrategy). The
 # reference strategies have their own component, below.
 trading_engine_add_component_test(strategy

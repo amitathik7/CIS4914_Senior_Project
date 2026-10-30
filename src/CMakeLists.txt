@@ -13,9 +13,14 @@
 # -----------------------------------------------------------------------------
 add_library(trading_engine_core STATIC
     common/clock.cpp
+    common/timestamp_text.cpp
     domain/domain.cpp
     configuration/engine_config.cpp
     events/event_bus.cpp
+    events/event_codec.cpp
+    events/json.cpp
+    events/message_transport.cpp
+    events/topic_event_bus.cpp
     market_data/market_data_source.cpp
     market_data/market_data_service.cpp
     strategy/strategy.cpp
@@ -27,10 +32,12 @@ add_library(trading_engine_core STATIC
     execution/fill_model.cpp
     execution/execution_simulator.cpp
     portfolio/portfolio_manager.cpp
+    portfolio/portfolio_bus_bridge.cpp
     persistence/repositories.cpp
     analytics/performance_analyzer.cpp
     analytics/system_metrics.cpp
     backtesting/historical_replay.cpp
+    app/pipeline.cpp
     app/trading_engine.cpp)
 add_library(trading_engine::core ALIAS trading_engine_core)
 
@@ -39,6 +46,9 @@ target_include_directories(trading_engine_core PUBLIC
     $<BUILD_INTERFACE:${TRADING_ENGINE_GENERATED_INCLUDE_DIR}>)
 
 target_compile_features(trading_engine_core PUBLIC cxx_std_20)
+# The event buses run a dispatcher thread.
+find_package(Threads REQUIRED)
+target_link_libraries(trading_engine_core PUBLIC Threads::Threads)
 trading_engine_set_warnings(trading_engine_core)
 set_target_properties(trading_engine_core PROPERTIES
     FOLDER "trading_engine"
@@ -79,3 +89,39 @@ set_target_properties(trading_engine_postgres_adapter PROPERTIES
     FOLDER "trading_engine/adapters"
     POSITION_INDEPENDENT_CODE ON)
 # TODO(postgres): find_package(PostgreSQL) or FetchContent libpqxx -- PRIVATE.
+
+# Kafka event-bus adapter (librdkafka) -- OPTIONAL, -DTRADING_ENGINE_WITH_KAFKA=ON.
+# Implements events::IMessageTransport for events::TopicEventBus. librdkafka is
+# found as a CMake package (vcpkg: `vcpkg install librdkafka`, target
+# RdKafka::rdkafka) or through pkg-config (apt: librdkafka-dev, brew: librdkafka)
+# and linked PRIVATE, so it never becomes a dependency of the core.
+if(TRADING_ENGINE_WITH_KAFKA)
+    add_library(trading_engine_kafka_adapter STATIC
+        kafka/rdkafka_transport.cpp)
+    add_library(trading_engine::kafka_adapter ALIAS trading_engine_kafka_adapter)
+    target_link_libraries(trading_engine_kafka_adapter PUBLIC trading_engine_core)
+    target_compile_features(trading_engine_kafka_adapter PUBLIC cxx_std_20)
+    trading_engine_set_warnings(trading_engine_kafka_adapter)
+    set_target_properties(trading_engine_kafka_adapter PROPERTIES
+        FOLDER "trading_engine/adapters"
+        POSITION_INDEPENDENT_CODE ON)
+
+    find_package(RdKafka CONFIG QUIET)
+    if(TARGET RdKafka::rdkafka)
+        message(STATUS "librdkafka: using CMake package (${RdKafka_DIR})")
+        target_link_libraries(trading_engine_kafka_adapter PRIVATE RdKafka::rdkafka)
+    else()
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(RDKAFKA IMPORTED_TARGET rdkafka)
+        endif()
+        if(NOT RDKAFKA_FOUND)
+            message(FATAL_ERROR
+                "TRADING_ENGINE_WITH_KAFKA=ON but librdkafka was not found. Install it "
+                "(vcpkg install librdkafka / apt install librdkafka-dev / brew install "
+                "librdkafka) or configure with -DTRADING_ENGINE_WITH_KAFKA=OFF.")
+        endif()
+        message(STATUS "librdkafka: using pkg-config (${RDKAFKA_VERSION})")
+        target_link_libraries(trading_engine_kafka_adapter PRIVATE PkgConfig::RDKAFKA)
+    endif()
+endif()

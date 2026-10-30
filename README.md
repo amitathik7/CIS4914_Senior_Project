@@ -13,9 +13,11 @@ concurrency, modularity, testing, latency, and throughput.
 
 This repository is mostly **structure, not behaviour**. It configures, builds, and
 tests cleanly. Apart from the strategy layer below, every real operation is a stub that
-throws `NotImplemented`. The strategy layer is implemented and tested **only against
-test doubles**: no production event bus, market-data service, risk manager, execution
-simulator or run loop exists yet, so nothing has run end to end. See
+throws `NotImplemented`. The strategy layer, the portfolio manager, a minimal
+market-data service and the **event bus (in-process and Kafka)** are real, and
+`trading_engine run` wires them together ([`docs/EVENT_BUS.md`](docs/EVENT_BUS.md)).
+Risk, execution and analytics are still stubs, so a run ends at the strategies'
+signals: nothing is ordered or filled yet. See
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), and
 [`docs/STRATEGIES.md`](docs/STRATEGIES.md) for the strategy documentation.
 
@@ -28,8 +30,10 @@ simulator or run loop exists yet, so nothing has run end to end. See
 | `IClock`/`ManualClock`, strong ids + generator, enum `to_string`, `default_config()` | ✅ real + tested |
 | `StrategyEngine` (registration, lifecycle, routing, signal stamping, failure isolation) | ✅ real + tested against a test bus and `ManualClock` ([docs](docs/STRATEGIES.md)) |
 | Reference strategies: moving-average crossover, rolling z-score mean reversion | ✅ real + tested ([crossover](docs/strategies/moving_average_crossover.md), [mean reversion](docs/strategies/mean_reversion.md)) |
-| Market data, event bus, risk, execution, portfolio, persistence, analytics | ⛔ stubs (`NotImplemented`) |
-| Alpaca connectivity, PostgreSQL, threading/queue, Python charts | ⛔ not started |
+| Event bus: `InProcessEventBus` (bounded queue, dispatcher thread) and `TopicEventBus` over Kafka | ✅ real + tested, incl. against librdkafka's mock cluster ([docs](docs/EVENT_BUS.md), [ADR 0003](docs/adr/0003-kafka-transport.md)) |
+| `PortfolioManager` (+ `PortfolioBusBridge`), `MarketDataService` MVP | ✅ real + tested, connected through the bus (`app::Pipeline`) |
+| Risk, execution, persistence, analytics, historical replay | ⛔ stubs (`NotImplemented`) |
+| Alpaca connectivity, PostgreSQL, Python charts | ⛔ not started |
 
 No external network or database connectivity is implemented anywhere in this
 scaffold.

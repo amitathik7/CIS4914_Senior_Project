@@ -7,7 +7,6 @@
 #include "trading_engine/analytics/performance_analyzer.hpp"
 #include "trading_engine/common/errors.hpp"
 #include "trading_engine/configuration/engine_config.hpp"
-#include "trading_engine/events/event_bus.hpp"
 
 namespace tec  = trading_engine::common;
 namespace tcfg = trading_engine::config;
@@ -27,12 +26,6 @@ TEST(ScaffoldContract, ConfigFileLoadingIsNotFakedButThrows) {
     EXPECT_THROW(tcfg::validate(tcfg::default_config()), tec::NotImplemented);
 }
 
-TEST(ScaffoldContract, EventBusOperationsThrowNotImplemented) {
-    trading_engine::events::InProcessEventBus bus;
-    EXPECT_THROW(bus.start(), tec::NotImplemented);
-    EXPECT_THROW((void)bus.depth(), tec::NotImplemented);
-}
-
 TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {
     const trading_engine::analytics::PerformanceAnalyzer analyzer;
     EXPECT_THROW((void)analyzer.analyze({}, {}), tec::NotImplemented);
@@ -40,11 +33,12 @@ TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {
 
 TEST(ScaffoldContract, NotImplementedCarriesTheCallSiteInItsMessage) {
     try {
-        trading_engine::events::InProcessEventBus{}.start();
+        const trading_engine::analytics::PerformanceAnalyzer analyzer;
+        (void)analyzer.analyze({}, {});
         FAIL() << "expected common::NotImplemented";
     } catch (const tec::NotImplemented& e) {
         const std::string_view what{e.what()};
-        EXPECT_NE(what.find("InProcessEventBus::start"), std::string_view::npos);
+        EXPECT_NE(what.find("PerformanceAnalyzer::analyze"), std::string_view::npos);
         EXPECT_NE(what.find("not implemented"), std::string_view::npos);
     }
 }

@@ -281,7 +281,11 @@ TEST(LabCliExitStatus, AnArgumentThatIsNotValidUtf8IsAUsageErrorWhoseDocumentIsS
 class ResponseFiles : public ::testing::Test {
 protected:
     void SetUp() override {
-        dir_ = std::filesystem::temp_directory_path() / "strategy_lab_cli_test_args";
+        // One directory per test: ctest -j runs each test in its own process, and a shared
+        // directory let one test's TearDown delete another's files mid-run.
+        dir_ = std::filesystem::temp_directory_path() /
+               ("strategy_lab_cli_test_args_" +
+                std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()));
         std::filesystem::create_directories(dir_);
     }
     void TearDown() override { std::filesystem::remove_all(dir_); }

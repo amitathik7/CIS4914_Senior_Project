@@ -172,9 +172,11 @@ unsubscribe behaviour when that bus exists.
 
 ## 5. Not yet integrated
 
-- **Run only against a test bus.** The production `InProcessEventBus`,
-  `MarketDataService`, `RiskManager`, execution, portfolio accounting and the
-  application run loops are not implemented. Nothing here has run in a full pipeline.
+- **Partly integrated.** The engine and both strategies now run on the real
+  `InProcessEventBus` and on the Kafka `TopicEventBus` behind `MarketDataService`
+  (`app::Pipeline`, [`EVENT_BUS.md`](EVENT_BUS.md)), and publish the same signals as
+  on the test bus. `RiskManager`, execution and the application run loops are still
+  not implemented, so no signal becomes an order yet.
 - **No routing index.** The engine delivers every event to every strategy, and each
   discards most of them. A symbol-interest declaration on `IStrategy` is a TODO.
 - **Silent ignoring.** An ignored event leaves no counter or log line. That waits

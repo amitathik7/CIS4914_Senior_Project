@@ -18,6 +18,13 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - **Owner:** strategy + market-data leads · **By:** M1
 
 ## 2. Queue and threading model
+> **Proposed answer: [ADR 0003](adr/0003-kafka-transport.md)** - `IEventBus` stays the
+> component-facing seam, with Kafka behind it as an adapter (`TopicEventBus` +
+> `RdKafkaTransport`) and a bounded in-process bus (one deque + mutex/condvar,
+> one dispatcher thread, `std::variant` payload) for tests and deterministic
+> backtests. Also answers OQ#3 for v1 (Block by default, Reject optional; drain
+> accepts handler publishes). The original note follows.
+>
 > **Superseded in part, pending an ADR.** The team has decided to move the
 > pipeline onto **Kafka**, making every component boundary cross-process. That
 > reverses ADR 0001 item 12 ("in-process, single-node engine. No distribution,
