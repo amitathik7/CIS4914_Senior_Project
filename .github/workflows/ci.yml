@@ -1,0 +1,164 @@
+# Builds and tests every part of the repo on each push and pull request.
+#
+#   engine-linux    C++ build with the Kafka adapter and the Strategy Lab tools, full ctest
+#                   (the Kafka tests use librdkafka's in-process mock cluster: no broker needed)
+#   engine-windows  the same C++ build with MSVC (Kafka off, as the default Windows build)
+#   web             console typecheck, vitest (including the real-engine tests) and production build
+#   python          engine gateway and Strategy Lab UI unittest suites, against the real executable
+#
+# Reproduce a job locally by running the commands in its `run:` steps from the repo root.
+name: CI
+
+on:
+  push:
+    branches: [main, jordan]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  engine-linux:
+    name: C++ (Linux, GCC, Kafka mock)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build librdkafka-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DTRADING_ENGINE_WITH_KAFKA=ON
+          -DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4
+
+      - name: Upload the Strategy Lab tools for the web and Python jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-lab-linux
+          path: |
+            build/bin/strategy_lab_replay
+            build/bin/strategy_lab_backtest
+            build/bin/trading_engine
+          retention-days: 3
+
+  engine-windows:
+    name: C++ (Windows, MSVC)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Configure
+        run: cmake --preset vs2022 -DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON
+
+      - name: Build
+        run: cmake --build --preset vs2022-debug --parallel
+
+      - name: Test
+        run: ctest --preset vs2022-debug --parallel 4
+
+  web:
+    name: Web console
+    runs-on: ubuntu-24.04
+    needs: engine-linux
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: strategy-lab-linux
+          path: ${{ runner.temp }}/strategy-lab
+
+      - name: Make the downloaded tools executable
+        run: chmod +x "$RUNNER_TEMP"/strategy-lab/*
+
+      # The real-engine tests start the Python gateway with `python`.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+        env:
+          STRATEGY_LAB_EXE: ${{ runner.temp }}/strategy-lab/strategy_lab_replay
+
+      - name: Build
+        run: pnpm exec vite build
+
+  python:
+    name: Python gateways
+    runs-on: ubuntu-24.04
+    needs: engine-linux
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: strategy-lab-linux
+          path: ${{ runner.temp }}/strategy-lab
+
+      - name: Make the downloaded tools executable
+        run: chmod +x "$RUNNER_TEMP"/strategy-lab/*
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: python/strategy_lab/requirements.txt
+
+      # Standard library only; the confluent-kafka test is skipped without TE_KAFKA_BOOTSTRAP.
+      - name: Engine gateway tests
+        working-directory: python/engine_gateway
+        run: python -m unittest discover -s tests
+
+      - name: Install the Strategy Lab UI dependencies
+        run: pip install -r python/strategy_lab/requirements.txt
+
+      - name: Strategy Lab UI tests
+        working-directory: python/strategy_lab
+        run: python -m unittest discover -s tests
+        env:
+          STRATEGY_LAB_EXE: ${{ runner.temp }}/strategy-lab/strategy_lab_replay

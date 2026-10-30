@@ -138,6 +138,15 @@ ctest --test-dir build -L common
 ctest --test-dir build -L reference_strategies   # both strategies, alone and in the engine
 ```
 
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to
+`main`/`jordan` and every pull request: the C++ build and full `ctest` on
+Linux/GCC (with the Kafka adapter, against librdkafka's mock cluster, and the
+Strategy Lab tools) and on Windows/MSVC, the web console's typecheck, tests and
+build, and the Python gateway suites. The web and Python jobs run their
+real-engine tests against the Linux job's `strategy_lab_replay`.
+
 ## Web console
 
 ```bash
