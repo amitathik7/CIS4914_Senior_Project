@@ -5,7 +5,8 @@
 !.env.*.example
 
 # Personal Claude Code configuration
-/.claude/
+/.claude/*
+!/.claude/skills/
 /CLAUDE.md
 
 # Personal AI agent configuration
