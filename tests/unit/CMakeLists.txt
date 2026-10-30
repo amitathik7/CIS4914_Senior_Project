@@ -77,6 +77,8 @@ trading_engine_add_component_test(reference_strategies
     mean_reversion_robustness_test.cpp
     mean_reversion_engine_test.cpp
     strategies_combined_engine_test.cpp
+    logistic_regression_strategy_test.cpp
+    logistic_regression_engine_test.cpp
     strategy_diagnostics_test.cpp
     strategy_diagnostics_invariance_test.cpp)
 target_link_libraries(te_test_reference_strategies PRIVATE trading_engine::test_support)

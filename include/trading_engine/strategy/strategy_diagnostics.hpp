@@ -96,7 +96,10 @@ enum class BarReason : std::uint8_t {
     EntrySell,
     ExcursionAlreadyRequested,
     InsideRearmBand,
-    BetweenBands
+    BetweenBands,
+
+    // Logistic regression (it also uses MeasurementFailed and the entry / band reasons above)
+    Training   // window full, but too few trained samples to act on a prediction
 };
 
 [[nodiscard]] constexpr std::string_view to_string(BarVerdict verdict) noexcept {
@@ -138,6 +141,7 @@ enum class BarReason : std::uint8_t {
         case BarReason::ExcursionAlreadyRequested: return "excursion_already_requested";
         case BarReason::InsideRearmBand:           return "inside_rearm_band";
         case BarReason::BetweenBands:              return "between_bands";
+        case BarReason::Training:                  return "training";
     }
     return "invalid";
 }
