@@ -104,7 +104,11 @@ as JSON numbers, quantities are integers, times are RFC 3339 UTC.
 
 ## 6. Not yet
 
-Source-driven `HistoricalReplay` (Alpaca / PostgreSQL), latency and partial fills, shorting, a
-kill switch and persistence of runs are open. Risk and execution on the live bus path
-(`trading_engine run`, any `--bus`) are wired by `app::OrderFlow`; see docs/EVENT_BUS.md. The demo Backtests page in the web console still runs the in-browser
-simulator; the Strategies > Backtest view is the real engine.
+Source-driven `HistoricalReplay` (Alpaca / PostgreSQL), order latency, the participation cap
+and partial fills, shorting, and persistence of runs are open. The kill switch exists
+(`RiskManager::set_kill_switch`, engaged from the console through `trading_engine serve`) but does
+not cancel working orders. Risk and execution on the live bus path (`trading_engine run`, any
+`--bus`) are wired by `app::OrderFlow`; see docs/EVENT_BUS.md. With `VITE_ENGINE_API` set, the web
+console's Backtests page and New backtest form run on the real engine through `trading_engine serve`
+([ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)); without it they use the in-browser demo simulator. The
+Strategies > Backtest view is always the real engine.

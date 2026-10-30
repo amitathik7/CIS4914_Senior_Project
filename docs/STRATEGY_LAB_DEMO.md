@@ -35,5 +35,5 @@ If the launcher refuses ("CANNOT START ...") it says what to do. The data are **
 
 * **Where is the decision made?** In `src/strategy/` (C++). Python parses the tool's JSON and draws it; every price, average, z-score, marker and reason on screen is a value the tool wrote.
 * **How do you know it is right?** Hand-derived scenarios (this walkthrough), an independent exact-rational reference model, the C++ unit tests, and 433 Python tests including a mutation check. Details and limits: [STRATEGY_LAB_COMPARE_VALIDATE.md](STRATEGY_LAB_COMPARE_VALIDATE.md) section 6.
-* **What is not claimed?** MSVC only; one browser checked; the synthetic fixtures are tiny; the ownership reviews listed in section 8 of that document have **not** happened; nothing is committed or pushed.
+* **What is not claimed?** MSVC only; one browser checked; the synthetic fixtures are tiny; the ownership reviews listed in section 8 of that document had **not** happened on 2026-10-02 (the code has since been committed on `jordan`).
 * **Something looks stale?** The banner names what changed; press the Run button. After rebuilding C++, press Run again (a different executable marks old results stale).

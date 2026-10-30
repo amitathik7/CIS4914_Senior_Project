@@ -1,5 +1,10 @@
 # Strategy Lab
 
+> Update (2026-10-30): the production bus, risk, execution and portfolio now exist. The lab's
+> `strategy_lab_backtest` tool runs them end to end with P&L ([BACKTESTING.md](BACKTESTING.md)), and
+> `train` / `sweep` fit the ML strategy ([STRATEGY_LAB_TRAINING.md](STRATEGY_LAB_TRAINING.md)). The replay
+> tool described below is still signal-only, and section 2 records the state it was first built against.
+>
 > Status (2026-10-02): the **C++ replay tool, its per-bar diagnostics, fixtures and tests are
 > implemented**, and so is the browser UI (Streamlit/Plotly): **Explore** (section 14), and **Compare**, **Validate** and a **dark theme**
 > ([STRATEGY_LAB_COMPARE_VALIDATE.md](STRATEGY_LAB_COMPARE_VALIDATE.md); a 5-minute walkthrough is in [STRATEGY_LAB_DEMO.md](STRATEGY_LAB_DEMO.md)).

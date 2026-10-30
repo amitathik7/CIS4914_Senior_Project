@@ -41,7 +41,7 @@ Other scripts: `pnpm build` (type-check + production bundle in `dist/`),
 | `src/mock/` | The demo engine: seeded market data, strategies, risk, fills, portfolio, telemetry |
 | `src/state/` | Client context, per-run data hooks that refresh on stream events, theme |
 | `src/components/` | Shell, pipeline strip, tables, charts, badges |
-| `src/pages/` | Overview, Strategies (Configure, Explore, Compare, Advanced), Orders (and the order trace), Risk, Report, System, Backtests, New backtest |
+| `src/pages/` | Overview, Strategies (Configure, Explore, Compare, Backtest, Advanced), Orders (and the order trace), Risk, Report, System, Backtests, New backtest |
 | `src/strategies/`, `src/components/strategies/` | The Strategies section: replay of the real C++ strategies through the lab gateway, see below |
 | `src/lib/losslessJson.ts`, `src/lib/exactTime.ts` | A JSON reader that keeps numbers as text, and exact (nanosecond) exchange-time display |
 | `src/lib/decimal.ts` | Exact decimal text, the same representation as `common::Decimal` |
@@ -63,7 +63,7 @@ server when `vite.config.ts` changes; if `/lab` is still not proxied, restart it
 ## The demo engine
 
 `src/mock/` serves the whole contract without a backend, so the console can be
-built and demonstrated before the engine's stages are wired together. It
+built and demonstrated without Kafka or the engine running. It
 follows the project's documented rules (the two reference strategies, the M6
 risk policies, cash reservation per ADR 0004), and its accounting is tested:
 equity minus starting cash equals realized plus unrealized P&L to the micro.

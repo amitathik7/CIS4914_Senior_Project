@@ -2,10 +2,10 @@
 
 > Status: the **StrategyEngine** and three strategies, a **moving-average
 > crossover**, a **rolling z-score mean reversion** and an **online logistic-regression
-> ML strategy**, are implemented and tested
-> **against test doubles only** (`RecordingEventBus`, `ManualClock`). The production
-> event bus, market-data service, risk manager, execution simulator, portfolio and
-> application run loops are not implemented, so nothing here has run in a pipeline.
+> ML strategy**, are implemented and tested against test doubles (`RecordingEventBus`,
+> `ManualClock`) and, since 2026-10-30, run in the full pipeline: production event bus
+> (in-process and Kafka), market-data service, risk, simulated execution and portfolio
+> ([`EVENT_BUS.md`](EVENT_BUS.md), [`BACKTESTING.md`](BACKTESTING.md)).
 >
 > **Nothing in the "local choices" tables is a team decision.**
 > [ADR 0002](adr/0002-strategy-risk-signal-contract.md) is still *Proposed* and
@@ -173,11 +173,13 @@ unsubscribe behaviour when that bus exists.
 
 ## 5. Not yet integrated
 
-- **Partly integrated.** The engine and both strategies now run on the real
+- **Integrated (2026-10-30).** The engine and its strategies run on the real
   `InProcessEventBus` and on the Kafka `TopicEventBus` behind `MarketDataService`
-  (`app::Pipeline`, [`EVENT_BUS.md`](EVENT_BUS.md)), and publish the same signals as
-  on the test bus. `RiskManager`, execution and the application run loops are still
-  not implemented, so no signal becomes an order yet.
+  (`app::Pipeline`, [`EVENT_BUS.md`](EVENT_BUS.md)), and every signal goes through
+  `RiskManager` and the `ExecutionSimulator` to the portfolio (`app::OrderFlow`,
+  `app::Backtest`). The web console's New backtest form offers the crossover and
+  mean reversion only; `ml_logistic` runs through `trading_engine run`, the Strategy
+  Lab and the Strategies > Backtest view.
 - **No routing index.** The engine delivers every event to every strategy, and each
   discards most of them. A symbol-interest declaration on `IStrategy` is a TODO.
 - **Silent ignoring.** An ignored event leaves no counter or log line. That waits

@@ -1,5 +1,10 @@
 # Strategies in the Engine console
 
+> Update (2026-10-30): this work is committed on `jordan` and runs in CI (Linux and Windows). The engine API now exists
+> ([ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)), and the **Backtest** view runs a configuration end to end through the real risk,
+> execution and portfolio code with P&L ([BACKTESTING.md](BACKTESTING.md)). Configure, Explore and Compare are still
+> signal-only. The status below and sections 7 and 10 record the state on 2026-10-10.
+>
 > Status (2026-10-10): **Configure**, **Explore**, **Compare** and the **Advanced** area (validation, traceability) are implemented in
 > `web/` and checked on this machine only (Windows 11, MSVC build of the replay tool, Chrome through the Playwright MCP and the Claude
 > app's built-in browser). An integration review on 2026-10-10 (section 9) fixed the findings listed there. Nothing is
@@ -131,7 +136,10 @@ CSV and the ZIP follow the Lab's own Compare formats (same column names where th
 
 ## 7. Financial comparison: what the backend can and cannot do
 
-**Determination (checked in the source and in the browser):** the existing backend **cannot** produce comparable execution or portfolio results.
+> Note (2026-10-30): this determination predates the engine gateway and `strategy_lab_backtest`. Financial results for one
+> configuration now come from the **Backtest** view; Compare itself is still signal-only.
+
+**Determination (2026-10-10, checked in the source and in the browser):** the existing backend **cannot** produce comparable execution or portfolio results.
 `TradingEngine::run_backtest`, `HistoricalReplay::run` and `RiskManager::start/check` throw `NotImplemented`, `apps/trading_engine_main.cpp` only proves linking, and nothing in the repository serves the
 ADR 0006 engine API. The Console's **Backtests** therefore run on its **in-browser demo simulator** over its own synthetic market data, not over the Lab dataset, and say so ("Demo data").
 
@@ -184,6 +192,10 @@ Checked and found sound (no change): the alignment check (dataset SHA-256, clock
 Targeted mutation check of this review's web fixes: 15 deliberate defects, 14 killed; the survivor (a table column's `sort:` left as raw text) is wiring that node-only tests cannot reach and was verified in the browser instead.
 
 ## 10. Limitations
+
+> Note (2026-10-30): this section records the review as it was done. Since then the engine API
+> exists (engine gateway, [ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)), the Strategies > Backtest view runs risk,
+> execution and portfolio with P&L ([BACKTESTING.md](BACKTESTING.md)), and CI runs GCC on Linux too.
 
 * **MSVC and Windows only** were available: GCC/Clang and POSIX were not run. Chrome (Playwright) was the only browser; no screen reader was used (the charts have text alternatives and the controls are keyboard-operable, which is not the same as tested).
 * **No financial comparison** (section 7). The recorded-run inspector reads the Console's engine API, which today means the in-browser demo simulator; it was exercised only against that. Nothing was run against a real engine API because none exists here.

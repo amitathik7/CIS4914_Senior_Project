@@ -9,42 +9,46 @@ concurrency, modularity, testing, latency, and throughput.
 
 ---
 
-## Status: scaffold (M0), strategy layer started
+## Status (2026-10-30, week 9 of 15)
 
-This repository is mostly **structure, not behaviour**. It configures, builds, and
-tests cleanly. Apart from the strategy layer below, every real operation is a stub that
-throws `NotImplemented`. The strategy layer, the portfolio manager, a minimal
-market-data service and the **event bus (in-process and Kafka)** are real, and
-`trading_engine run` wires them together ([`docs/EVENT_BUS.md`](docs/EVENT_BUS.md)).
-A full deterministic **backtest** (strategy -> risk -> simulated execution ->
-portfolio -> analytics) runs through `app::Backtest`, the `strategy_lab_backtest`
-tool and the web console's Strategies > Backtest view
-([`docs/BACKTESTING.md`](docs/BACKTESTING.md)); `trading_engine run` goes from bars
-to fills on any bus, and `trading_engine serve` runs backtests that the web console
-starts, stops and kill-switches over Kafka
-([ADR 0007](docs/adr/0007-engine-command-channel.md)). See
-[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), and
-[`docs/STRATEGIES.md`](docs/STRATEGIES.md) for the strategy documentation.
+The engine runs a full **simulated backtest end to end**: CSV bars ->
+`MarketDataService` -> event bus (in-process or Kafka) -> `StrategyEngine` (three
+strategies) -> `RiskManager` -> `ExecutionSimulator` -> `PortfolioManager` ->
+`PerformanceAnalyzer`. `trading_engine run` does this once from the command line
+([`docs/EVENT_BUS.md`](docs/EVENT_BUS.md)); `trading_engine serve` runs backtests that
+the web console starts, stops and kill-switches over Kafka
+([ADR 0007](docs/adr/0007-engine-command-channel.md)); `app::Backtest` and the
+`strategy_lab_backtest` tool run the same stages in one process
+([`docs/BACKTESTING.md`](docs/BACKTESTING.md)). CI builds and tests everything on
+Linux and Windows on every push and pull request.
+
+Market data comes only from recorded CSV files. Alpaca (historical and live),
+PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
+`HistoricalReplay` and the Python charts are still stubs that throw
+`NotImplemented`. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+for the milestone-by-milestone status.
 
 | Area | State |
 |---|---|
-| CMake build (core lib + adapters + thin exe) | ✅ builds |
-| Component headers: responsibilities, interfaces, ownership/threading notes, TODOs | ✅ written |
-| Domain value types (`MarketEvent`, `TradeSignal`, `Order`, `Fill`, `Position`, `PortfolioSnapshot`, `PerformanceReport`) | ✅ defined |
-| GoogleTest wiring + smoke/contract/unit tests | ✅ passing |
-| `IClock`/`ManualClock`, strong ids + generator, enum `to_string`, `default_config()` | ✅ real + tested |
-| `StrategyEngine` (registration, lifecycle, routing, signal stamping, failure isolation) | ✅ real + tested against a test bus and `ManualClock` ([docs](docs/STRATEGIES.md)) |
-| Reference strategies: moving-average crossover, rolling z-score mean reversion | ✅ real + tested ([crossover](docs/strategies/moving_average_crossover.md), [mean reversion](docs/strategies/mean_reversion.md)) |
+| CMake build (core lib + adapters + executables), presets | ✅ builds on Linux/GCC and Windows/MSVC |
+| Domain value types, `common::Decimal` fixed-point money, `IClock`/`ManualClock`, ids | ✅ real + tested |
 | Event bus: `InProcessEventBus` (bounded queue, dispatcher thread) and `TopicEventBus` over Kafka | ✅ real + tested, incl. against librdkafka's mock cluster ([docs](docs/EVENT_BUS.md), [ADR 0003](docs/adr/0003-kafka-transport.md)) |
-| `PortfolioManager` (+ `PortfolioBusBridge`), `MarketDataService` MVP | ✅ real + tested, connected through the bus (`app::Pipeline`) |
-| Engine gateway: the web console's API served from the Kafka topics | ✅ real + tested ([docs](docs/ENGINE_GATEWAY.md)) |
-| Command channel: `trading_engine serve`, console backtests, stop, kill switch, run settings on `<prefix>.run` | ✅ real + tested ([ADR 0007](docs/adr/0007-engine-command-channel.md)) |
-| Backtest: `RiskManager` + 5 starter policies, `NaiveFillModel`, `ExecutionSimulator`, `PerformanceAnalyzer`, `app::Backtest` | ✅ real + tested ([docs](docs/BACKTESTING.md)) |
-| Persistence, `HistoricalReplay` (source-driven), config loading | ⛔ stubs (`NotImplemented`) |
-| Alpaca connectivity, PostgreSQL, Python charts | ⛔ not started |
+| `MarketDataService` (validation, `ingest_time`, per-symbol sequence) fed from CSV bars | ✅ real + tested; no Alpaca or database source yet |
+| `StrategyEngine` + three strategies: moving-average crossover, mean reversion, online logistic regression (ML) | ✅ real + tested ([docs](docs/STRATEGIES.md)) |
+| `RiskManager` + 5 starter policies, buying power, no short selling, kill switch | ✅ real + tested |
+| `NaiveFillModel` + `ExecutionSimulator` (fills at the next bar's open, slippage, fees) | ✅ real + tested; latency, participation cap and partial fills are not modelled yet |
+| `PortfolioManager` (+ `PortfolioBusBridge`, reservation ledger) | ✅ real + tested |
+| `PerformanceAnalyzer` (return, volatility, drawdown, Sharpe, profit factor, trades) | ✅ real + tested |
+| `trading_engine run` / `serve`, `app::Backtest`, `app::OrderFlow` | ✅ real + tested |
+| Engine gateway (console API from the Kafka topics) and command channel (New backtest, Stop, kill switch) | ✅ real + tested ([docs](docs/ENGINE_GATEWAY.md)) |
+| Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
+| CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
+| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
+| Alpaca historical + live sources, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
+| Benchmarks, `docs/PERFORMANCE.md`, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
-No external network or database connectivity is implemented anywhere in this
-scaffold.
+The only network code is the optional Kafka adapter (librdkafka). There is no
+Alpaca or PostgreSQL connectivity yet.
 
 ## Architecture at a glance
 
@@ -73,14 +77,18 @@ CMakePresets.json         convenience configure/build/test presets
 cmake/                    CompilerWarnings, Dependencies (GoogleTest), version.hpp.in
 config/                   config.example.json (no secrets) + notes
 database/migrations/      001_initial_schema.sql  (commented OUTLINE, no-op)
-docs/                     ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, OPEN_QUESTIONS, STRATEGIES, strategies/, adr/
+docker-compose.kafka.yml  a single-node Kafka broker for local runs
+docs/                     ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, EVENT_BUS, BACKTESTING, ENGINE_GATEWAY,
+                          STRATEGIES, STRATEGY_LAB*, OPEN_QUESTIONS, strategies/, adr/
 include/trading_engine/   public headers, by component
-src/                      implementation (strategy layer) and stubs (the rest), by component
-apps/trading_engine_main.cpp   thin executable (build confirmation only)
+src/                      implementation by component (a few remaining stubs listed above)
+apps/trading_engine_main.cpp   the trading_engine executable (`run`, `serve`)
 apps/strategy_lab/        optional strategy replay + diagnostics tool (off by default)
 tests/                    unit/ (default), integration/ (opt-in), fixtures/, support/ (test doubles)
+python/engine_gateway/    serves the console's API from the Kafka topics
+python/strategy_lab/      Strategy Lab gateway and Streamlit UI
 python/visualization/     plot_performance.py outline + requirements.txt
-web/                      engine console (React + TypeScript); runs on a demo engine until the API exists
+web/                      engine console (React + TypeScript); real engine via the gateway, or an in-browser demo engine
 ```
 
 ## Prerequisites
@@ -90,9 +98,11 @@ web/                      engine console (React + TypeScript); runs on a demo en
 | CMake | ≥ 3.21 | |
 | C++ compiler | C++20 | MSVC 19.3x (VS 2022), GCC ≥ 11, or Clang ≥ 14 |
 | Git | any recent | GoogleTest is fetched at a pinned tag on first configure (needs network), unless a system GoogleTest is installed |
-| Python | ≥ 3.10 | only for `python/visualization/` (later milestones) |
-| PostgreSQL | 14+ | **not needed for the scaffold**; later milestones |
-| Alpaca account | — | **not needed for the scaffold**; paper account later |
+| Python | ≥ 3.10 | the engine gateway and Strategy Lab (`python/`) |
+| Node.js + pnpm | Node 22, pnpm 10 | the web console (`web/`) |
+| librdkafka + a Kafka broker | librdkafka 2.x; Kafka 3.7+ / 4.x | optional: `-DTRADING_ENGINE_WITH_KAFKA=ON` (vcpkg `librdkafka:x64-windows` on Windows); broker via `docker-compose.kafka.yml` |
+| PostgreSQL | 14+ | **not needed yet**: nothing connects to it (persistence is a later milestone) |
+| Alpaca account | — | **not needed yet**: market data comes from recorded CSV files; a paper account later |
 
 ## Build
 
@@ -121,11 +131,14 @@ Useful options: `-DBUILD_TESTING=OFF`, `-DTRADING_ENGINE_BUILD_APPS=OFF`,
 `-DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON` (the optional strategy replay tool, off by default; needs no
 GoogleTest or Python itself -- see [`docs/STRATEGY_LAB.md`](docs/STRATEGY_LAB.md)).
 
-Run the placeholder executable (prints a build-confirmation banner and exits):
+Run a backtest from the command line (prints build info and usage with no arguments):
 
 ```bash
-./build/bin/trading_engine
+./build/bin/trading_engine run --bars tests/fixtures/pipeline/demo_bars.csv
 ```
+
+`-DTRADING_ENGINE_WITH_KAFKA=ON` adds the Kafka bus (`--bus kafka`, `--bus kafka-mock`)
+and `trading_engine serve`, which the web console drives.
 
 ## Test
 
@@ -153,12 +166,20 @@ real-engine tests against the Linux job's `strategy_lab_replay`.
 ## Web console
 
 ```bash
-cd web && pnpm install && pnpm dev     # http://127.0.0.1:5173
+cd web && pnpm install && pnpm dev     # http://127.0.0.1:5173, in-browser demo engine
 ```
 
-Runs against an in-browser demo engine (clearly labelled) until the engine
-serves the API in [ADR 0006](docs/adr/0006-web-frontend-api-contract.md). See
-[`web/README.md`](web/README.md).
+On the real engine (Kafka build; full steps in [`docs/ENGINE_GATEWAY.md`](docs/ENGINE_GATEWAY.md)):
+
+```bash
+docker compose -f docker-compose.kafka.yml up -d
+python python/engine_gateway/serve.py
+./build/bin/trading_engine serve --bars tests/fixtures/pipeline/demo_bars.csv --pace-ms 50
+cd web && VITE_ENGINE_API=/api pnpm dev
+```
+
+The Strategies section also needs the Strategy Lab gateway (`cd web && pnpm lab`).
+See [`web/README.md`](web/README.md).
 
 ## Python visualization (syntax check only for now)
 
