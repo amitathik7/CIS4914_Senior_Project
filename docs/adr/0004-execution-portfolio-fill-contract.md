@@ -30,6 +30,18 @@
 > Drafted as a review starting point. The open-order decision in §7 and §8 is
 > settled by the team; everything else is still a proposal. See "Sign-off".
 
+> **Implementation status (2026-10-30; status unchanged, still Proposed until the
+> sign-offs below are ticked).** Built as proposed: `Fill` carries `status`
+> (the order's state after the fill, §5) and `sequence` (§9), `Order` carries
+> `reject_reason` (§6-§7), and `ExecutionSimulator` with `NaiveFillModel`
+> publishes an order's lifecycle events and its fills from one producer
+> (§11.2), including partial fills. `PortfolioManager` owns open orders and
+> reservations (§8) through `IReservationLedger`, applies rejections,
+> cancellations and expiries as releases (§7), and `PortfolioBusBridge`
+> consumes both message kinds from the bus. §12 is resolved: whole `int64`
+> shares and fixed-point `Decimal` prices and money. §11 runs on Kafka per
+> ADR 0003.
+
 ## Context
 
 Issue #4 asks for the shape of what the Execution Simulator hands the

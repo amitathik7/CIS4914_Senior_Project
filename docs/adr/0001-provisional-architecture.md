@@ -1,8 +1,17 @@
 # 1. Provisional architecture for the simulated trading engine
 
-- Status: **Proposed / Provisional** (scaffold only)
-- Date: 2026-08-31
-- Deciders: senior project team (to ratify)
+- Status: **Accepted** (2026-10-30), as amended by items 10 and 12 below
+- Date: 2026-08-31 (status updated 2026-10-30)
+- Deciders: senior project team
+
+> **Status note (2026-10-30).** Every component since has been built on this
+> scaffold: the target graph, GoogleTest per component, DI with
+> `TradingEngine`/`app::Pipeline` as composition roots, `IClock`, and the
+> adapter isolation (librdkafka now lives only in
+> `trading_engine_kafka_adapter`, ADR 0003). Two items changed and are marked
+> in place: item 10 (money is now the fixed-point `common::Decimal`) and
+> item 12 (superseded by ADR 0003). CI now runs on GitHub Actions
+> (`.github/workflows/ci.yml`) on Linux/GCC and Windows/MSVC.
 
 ## Context
 
@@ -42,6 +51,8 @@ be revisited; several are tracked in [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.
 5. **Compiler warnings** enabled per family: `/W4 /permissive-` (MSVC),
    `-Wall -Wextra -Wpedantic -Wshadow -Wconversion ...` (GCC/Clang). Not
    errors by default; a `TRADING_ENGINE_WARNINGS_AS_ERRORS` option for CI.
+   (CI does not turn it on yet: GCC 13 reports `-Wdangling-reference` and
+   `-Wrange-loop-construct` in the Strategy Lab tests. Fix those, then enable it.)
 
 6. **Dependency injection, no globals.** Components receive collaborators as
    constructor parameters (interface references / `shared_ptr`). `TradingEngine`
@@ -59,15 +70,18 @@ be revisited; several are tracked in [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.
    deterministic backtests. Timestamps are UTC `std::chrono` `system_clock`
    time points at nanosecond resolution.
 
-10. **Money/price/quantity are `double` aliases for now**, with a TODO to move
-    to a fixed-point / integer-minor-unit type (tracked in OPEN_QUESTIONS #11).
+10. ~~**Money/price/quantity are `double` aliases for now**, with a TODO to move
+    to a fixed-point / integer-minor-unit type (tracked in OPEN_QUESTIONS #11).~~
+    Done: `Money` and `Price` are `common::Decimal` (int64 millionths, exact
+    decimal text on the wire) and `Quantity` is `std::int64_t` whole shares
+    ([`common/types.hpp`](../../include/trading_engine/common/types.hpp)).
 
 11. **Honest placeholders.** Called-but-unimplemented code throws
     `common::NotImplemented`; nothing returns fabricated market, portfolio, or
     performance data. `main()` only confirms the build.
 
 12. ~~**In-process, single-node** engine. No distribution, no IPC.~~
-    Superseded by [ADR 0003](0003-kafka-transport.md) (Proposed): Kafka behind `IEventBus`.
+    Superseded by [ADR 0003](0003-kafka-transport.md): Kafka behind `IEventBus`.
 
 13. **`#pragma once`** for header guards (supported by all three target
     compilers).

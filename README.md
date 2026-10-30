@@ -19,8 +19,10 @@ market-data service and the **event bus (in-process and Kafka)** are real, and
 A full deterministic **backtest** (strategy -> risk -> simulated execution ->
 portfolio -> analytics) runs through `app::Backtest`, the `strategy_lab_backtest`
 tool and the web console's Strategies > Backtest view
-([`docs/BACKTESTING.md`](docs/BACKTESTING.md)); `trading_engine run` itself still
-ends at the signals. See
+([`docs/BACKTESTING.md`](docs/BACKTESTING.md)); `trading_engine run` goes from bars
+to fills on any bus, and `trading_engine serve` runs backtests that the web console
+starts, stops and kill-switches over Kafka
+([ADR 0007](docs/adr/0007-engine-command-channel.md)). See
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), and
 [`docs/STRATEGIES.md`](docs/STRATEGIES.md) for the strategy documentation.
 
@@ -35,7 +37,8 @@ ends at the signals. See
 | Reference strategies: moving-average crossover, rolling z-score mean reversion | ✅ real + tested ([crossover](docs/strategies/moving_average_crossover.md), [mean reversion](docs/strategies/mean_reversion.md)) |
 | Event bus: `InProcessEventBus` (bounded queue, dispatcher thread) and `TopicEventBus` over Kafka | ✅ real + tested, incl. against librdkafka's mock cluster ([docs](docs/EVENT_BUS.md), [ADR 0003](docs/adr/0003-kafka-transport.md)) |
 | `PortfolioManager` (+ `PortfolioBusBridge`), `MarketDataService` MVP | ✅ real + tested, connected through the bus (`app::Pipeline`) |
-| Engine gateway: the web console's API served from the Kafka topics | ✅ real + tested, read-only ([docs](docs/ENGINE_GATEWAY.md)) |
+| Engine gateway: the web console's API served from the Kafka topics | ✅ real + tested ([docs](docs/ENGINE_GATEWAY.md)) |
+| Command channel: `trading_engine serve`, console backtests, stop, kill switch, run settings on `<prefix>.run` | ✅ real + tested ([ADR 0007](docs/adr/0007-engine-command-channel.md)) |
 | Backtest: `RiskManager` + 5 starter policies, `NaiveFillModel`, `ExecutionSimulator`, `PerformanceAnalyzer`, `app::Backtest` | ✅ real + tested ([docs](docs/BACKTESTING.md)) |
 | Persistence, `HistoricalReplay` (source-driven), config loading | ⛔ stubs (`NotImplemented`) |
 | Alpaca connectivity, PostgreSQL, Python charts | ⛔ not started |
@@ -137,6 +140,15 @@ Filter by component label (`common`, `domain`, `strategy`, `reference_strategies
 ctest --test-dir build -L common
 ctest --test-dir build -L reference_strategies   # both strategies, alone and in the engine
 ```
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to
+`main`/`jordan` and every pull request: the C++ build and full `ctest` on
+Linux/GCC (with the Kafka adapter, against librdkafka's mock cluster, and the
+Strategy Lab tools) and on Windows/MSVC, the web console's typecheck, tests and
+build, and the Python gateway suites. The web and Python jobs run their
+real-engine tests against the Linux job's `strategy_lab_replay`.
 
 ## Web console
 

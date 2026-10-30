@@ -93,12 +93,14 @@ RiskDecision RiskManager::check(const domain::TradeSignal& signal) {
     const domain::PortfolioSnapshot snapshot = portfolio_.snapshot();
 
     RiskContext context;
+    KillSwitch kill;
     context.limits           = limits_;
     context.open_order_count = static_cast<std::uint32_t>(snapshot.pending_orders.size());
     context.as_of            = clock_.now();
     {
         const std::lock_guard lock{mutex_};
         context.reference_prices = prices_;
+        kill                     = kill_switch_;
         context.pnl_today        = snapshot.total_equity - session_start_equity_.value_or(snapshot.total_equity);
     }
     context.realized_pnl_today = context.pnl_today;
@@ -108,7 +110,15 @@ RiskDecision RiskManager::check(const domain::TradeSignal& signal) {
     const common::Quantity asked = signal.requested_quantity.value_or(0);
 
     std::vector<domain::RiskCheck> checks;
-    for (const auto& policy : policies_) {
+    if (kill.engaged) {
+        const std::string detail = kill.reason.empty() ? std::string{"kill switch engaged"}
+                                                       : "kill switch engaged: " + kill.reason;
+        record.decision = RiskDecision::deny(detail);
+        record.policy   = "kill_switch";
+        checks.push_back({"kill_switch", false, detail, {}, {}});
+    }
+    for (std::size_t i = 0; !kill.engaged && i < policies_.size(); ++i) {
+        const auto& policy = policies_[i];
         RiskDecision d = policy->evaluate(working, snapshot, context);
         checks.push_back({std::string(policy->name()), d.approved, d.reason, {}, {}});
         if (!d.approved) {
@@ -193,6 +203,22 @@ void RiskManager::add_policy(std::shared_ptr<IRiskPolicy> policy) {
             "RiskManager::add_policy: policy must not be null");
     }
     policies_.push_back(std::move(policy));
+}
+
+RiskManager::KillSwitch RiskManager::set_kill_switch(bool engaged, std::string reason) {
+    const common::Timestamp now = clock_.now();
+    const std::lock_guard lock{mutex_};
+    if (kill_switch_.engaged != engaged || !kill_switch_.changed_at) {
+        kill_switch_.changed_at = now;
+    }
+    kill_switch_.engaged = engaged;
+    kill_switch_.reason  = engaged ? std::move(reason) : std::string{};
+    return kill_switch_;
+}
+
+RiskManager::KillSwitch RiskManager::kill_switch() const {
+    const std::lock_guard lock{mutex_};
+    return kill_switch_;
 }
 
 std::vector<RiskRecord> RiskManager::decisions() const {

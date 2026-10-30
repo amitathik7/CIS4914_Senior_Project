@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import sources, wire
+from .commands import CommandSender, KafkaProduce
 from .read_model import RunDefaults, Store
 from .server import DEFAULT_ORIGINS, DEFAULT_PORT, Api, make_server
 
@@ -20,6 +21,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     source.add_argument("--replay", type=Path, metavar="FILE", help="read a --record file instead of Kafka")
     parser.add_argument("--topic-prefix", action="append", default=[], metavar="NAME",
                         help="only this run's topics (repeatable; default: every <prefix>.<type> topic on the cluster)")
+    parser.add_argument("--control-prefix", default=wire.CONTROL_PREFIX, metavar="NAME",
+                        help=f"the engines' command and heartbeat topics (default {wire.CONTROL_PREFIX})")
+    parser.add_argument("--read-only", action="store_true",
+                        help="never send commands: starting a backtest, stop and the kill switch are refused")
     parser.add_argument("--record", type=Path, metavar="FILE", help="also append every Kafka message to FILE (JSON lines)")
     parser.add_argument("--pace", type=float, default=0.0, metavar="SECONDS", help="with --replay: wait between messages")
     parser.add_argument("--starting-cash", default="100000", help="the run's starting cash (default the engine's, 100000)")
@@ -35,8 +40,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except wire.WireError:
         parser.error("--starting-cash must be decimal text, e.g. 100000 or 2500.50")
     store = Store(defaults)
+    commands = None
+    if not args.replay and not args.read_only:
+        try:
+            commands = CommandSender(KafkaProduce(args.brokers), args.control_prefix)
+        except ImportError:
+            pass                                             # KafkaSource below explains how to install it
     try:
-        server = make_server(Api(store), args.port, (*DEFAULT_ORIGINS, *args.allow_origin))
+        server = make_server(Api(store, commands=commands), args.port, (*DEFAULT_ORIGINS, *args.allow_origin))
     except OSError as error:
         print(f"Cannot listen on 127.0.0.1:{args.port}: {error}. Is the gateway already running? Try --port.",
               file=sys.stderr)
@@ -52,9 +63,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         threading.Thread(target=sources.replay, args=(args.replay, store, args.pace, stop), daemon=True).start()
         where = f"recording {args.replay}"
     else:
-        consumer = sources.KafkaSource(store, args.brokers, args.topic_prefix, recorder)
+        consumer = sources.KafkaSource(store, args.brokers, args.topic_prefix, recorder, args.control_prefix)
         consumer.start()
-        where = f"Kafka at {args.brokers}, topics {sources.topic_pattern(args.topic_prefix)}"
+        where = f"Kafka at {args.brokers}, topics {sources.topic_pattern(args.topic_prefix, args.control_prefix)}"
+        if commands is not None:
+            where += f"; commands to {commands.topic}"
 
     print(f"Engine gateway reading {where}\n"
           f"Listening on http://127.0.0.1:{args.port}/v1/ (console: VITE_ENGINE_API=/api pnpm dev). Ctrl+C stops it.",

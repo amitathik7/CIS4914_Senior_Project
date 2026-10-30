@@ -1,5 +1,7 @@
 // trading_engine -- runs the components that exist today, wired through one
-// event bus (docs/EVENT_BUS.md):
+// event bus (docs/EVENT_BUS.md), either once from the command line (`run`) or
+// as a long-running engine that takes commands from the console (`serve`,
+// docs/adr/0007-engine-command-channel.md):
 //
 //   CSV bars -> MarketDataService -> bus -> StrategyEngine -> bus (signals)
 //        -> RiskManager -> bus (risk decisions) -> ExecutionSimulator
@@ -15,8 +17,14 @@
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
 //                      [--cash N] [--risk on|off]
+//   trading_engine serve --bars FILE [--bars FILE...] [--bus kafka|kafka-mock]
+//                      [--brokers HOST:PORT] [--control-prefix NAME]
+//                      [--engine-id NAME] [--pace-ms N] [--heartbeat-ms N]
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -24,20 +32,20 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "bar_csv.hpp"
-#include "trading_engine/app/order_flow.hpp"
-#include "trading_engine/app/pipeline.hpp"
+#include "trading_engine/app/configured_run.hpp"
+#include "trading_engine/app/engine_service.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/decimal_text.hpp"
 #include "trading_engine/common/timestamp_text.hpp"
+#include "trading_engine/control/control_codec.hpp"
 #include "trading_engine/events/event_bus.hpp"
 #include "trading_engine/events/event_codec.hpp"
 #include "trading_engine/events/message_transport.hpp"
 #include "trading_engine/events/topic_event_bus.hpp"
-#include "trading_engine/strategy/mean_reversion_strategy.hpp"
-#include "trading_engine/strategy/moving_average_crossover_strategy.hpp"
 #include "trading_engine/version.hpp"
 
 #if defined(TRADING_ENGINE_HAVE_KAFKA)
@@ -65,9 +73,24 @@ constexpr const char* kUsage =
     "  --quantity N            shares requested per signal (default 1)\n"
     "  --cash N                starting cash in dollars (default 100000)\n"
     "  --risk on|off           run the starter risk policies (default on); buying\n"
-    "                          power and no-short-selling are always checked\n";
+    "                          power and no-short-selling are always checked\n"
+    "  With a topic bus, the run's settings are published on <prefix>.run.\n"
+    "\n"
+    "  trading_engine serve --bars FILE [options]\n"
+    "\n"
+    "  Waits for commands from the console (start a backtest, stop it, kill switch)\n"
+    "  on <control-prefix>.command and replays the recorded bars for each backtest.\n"
+    "  --bars FILE             recorded bars to offer (repeatable)\n"
+    "  --bus kafka|kafka-mock  (default kafka)\n"
+    "  --brokers HOST:PORT     Kafka bootstrap servers (default localhost:9092)\n"
+    "  --control-prefix NAME   command/heartbeat topics (default trading_engine.control)\n"
+    "  --engine-id NAME        this engine's id (default engine-<random>)\n"
+    "  --pace-ms N             pause N ms after each bar time, so a run can be watched\n"
+    "  --heartbeat-ms N        announce this engine every N ms (default 2000)\n";
 
 struct Options {
+    std::string command{"run"};
+    std::vector<std::string> bar_files;
     std::string bars;
     std::string bus{"inprocess"};
     std::string brokers{"localhost:9092"};
@@ -78,6 +101,11 @@ struct Options {
     common::Quantity quantity{1};
     std::int64_t cash{100'000};
     bool risk_policies{true};
+    // serve
+    std::string control_prefix{control::kDefaultControlPrefix};
+    std::string engine_id;
+    std::size_t pace_ms{0};
+    std::size_t heartbeat_ms{2000};
 };
 
 [[noreturn]] void usage_error(const std::string& message) {
@@ -99,6 +127,10 @@ std::size_t to_size(const std::string& text, const char* flag) {
 
 Options parse(int argc, char** argv) {
     Options o;
+    o.command = argv[1];
+    if (o.command == "serve") {
+        o.bus = "kafka";
+    }
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
         if (i + 1 >= argc) {
@@ -107,6 +139,15 @@ Options parse(int argc, char** argv) {
         const std::string value = argv[++i];
         if (flag == "--bars") {
             o.bars = value;
+            o.bar_files.push_back(value);
+        } else if (o.command == "serve" && flag == "--control-prefix") {
+            o.control_prefix = value;
+        } else if (o.command == "serve" && flag == "--engine-id") {
+            o.engine_id = value;
+        } else if (o.command == "serve" && flag == "--pace-ms") {
+            o.pace_ms = to_size(value, "--pace-ms");
+        } else if (o.command == "serve" && flag == "--heartbeat-ms") {
+            o.heartbeat_ms = std::max<std::size_t>(100, to_size(value, "--heartbeat-ms"));
         } else if (flag == "--bus") {
             o.bus = value;
         } else if (flag == "--brokers") {
@@ -136,7 +177,10 @@ Options parse(int argc, char** argv) {
         }
     }
     if (o.bars.empty()) {
-        usage_error("run needs --bars FILE");
+        usage_error(o.command + " needs --bars FILE");
+    }
+    if (o.command == "serve" && o.bus != "kafka" && o.bus != "kafka-mock") {
+        usage_error("serve needs --bus kafka or kafka-mock: the console reaches it through Kafka");
     }
     return o;
 }
@@ -156,6 +200,42 @@ struct BusStack {
     }
 };
 
+#if defined(TRADING_ENGINE_HAVE_KAFKA)
+// A Kafka transport for the topics under `prefix`. On the mock cluster, which
+// does not implement CreateTopics, the topics are made on it directly.
+std::unique_ptr<events::IMessageTransport> make_kafka_transport(const Options& o, const std::string& prefix,
+                                                                kafka::KafkaMockCluster* mock) {
+    kafka::KafkaTransportConfig config;
+    config.bootstrap_servers = o.brokers;
+    // A run drains the bus once per bar timestamp, so every hop's latency
+    // counts: don't let an idle fetch sit for librdkafka's 500 ms.
+    config.fetch_wait_max = std::chrono::milliseconds{10};
+    if (mock != nullptr) {
+        config.bootstrap_servers = mock->bootstrap_servers();
+        config.create_topics     = false;
+        std::vector<std::string> topics;
+        if (prefix == o.control_prefix && o.command == "serve") {
+            topics = {control::command_topic(prefix), control::engine_topic(prefix)};
+        } else {
+            for (const auto type : {events::EventType::MarketData, events::EventType::Signal,
+                                    events::EventType::Order, events::EventType::Fill,
+                                    events::EventType::RiskDecision}) {
+                topics.push_back(prefix + "." + std::string(events::to_string(type)));
+            }
+            topics.push_back(control::run_topic(prefix));
+        }
+        for (const auto& topic : topics) {
+            try {
+                mock->create_topic(topic, config.partitions);
+            } catch (const kafka::KafkaError&) {
+                // already there
+            }
+        }
+    }
+    return std::make_unique<kafka::RdKafkaTransport>(config);
+}
+#endif
+
 void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
     events::TopicEventBusOptions topic_options;
     topic_options.topic_prefix  = o.topic_prefix;
@@ -170,24 +250,10 @@ void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
         stack.transport = std::make_unique<events::InMemoryTransport>(stack.broker);
     } else if (o.bus == "kafka" || o.bus == "kafka-mock") {
 #if defined(TRADING_ENGINE_HAVE_KAFKA)
-        kafka::KafkaTransportConfig config;
-        config.bootstrap_servers = o.brokers;
-        // The run drains the bus once per bar timestamp, so every hop's
-        // latency counts: don't let an idle fetch sit for librdkafka's 500 ms.
-        config.fetch_wait_max = std::chrono::milliseconds{10};
         if (o.bus == "kafka-mock") {
-            stack.mock_cluster       = std::make_unique<kafka::KafkaMockCluster>();
-            config.bootstrap_servers = stack.mock_cluster->bootstrap_servers();
-            // The mock does not implement CreateTopics: make the topics on it directly.
-            config.create_topics = false;
-            for (const auto type : {events::EventType::MarketData, events::EventType::Signal,
-                                    events::EventType::Order, events::EventType::Fill,
-                                    events::EventType::RiskDecision}) {
-                stack.mock_cluster->create_topic(
-                    o.topic_prefix + "." + std::string(events::to_string(type)), config.partitions);
-            }
+            stack.mock_cluster = std::make_unique<kafka::KafkaMockCluster>();
         }
-        stack.transport = std::make_unique<kafka::RdKafkaTransport>(config);
+        stack.transport = make_kafka_transport(o, o.topic_prefix, stack.mock_cluster.get());
 #else
         usage_error("this build has no Kafka support; reconfigure with -DTRADING_ENGINE_WITH_KAFKA=ON");
 #endif
@@ -195,6 +261,51 @@ void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
         usage_error("unknown --bus '" + o.bus + "'");
     }
     stack.bus = std::make_unique<events::TopicEventBus>(*stack.transport, clock, topic_options);
+}
+
+// The settings the command-line flags describe: both reference strategies on
+// every symbol in the file, the default risk limits and simulation.
+control::RunSettings settings_from(const Options& o, const std::vector<common::Symbol>& symbols,
+                                   const std::vector<domain::MarketEvent>& bars) {
+    control::RunSettings s;
+    s.name          = o.topic_prefix;
+    s.period_start  = bars.front().exchange_time;
+    s.period_end    = bars.back().exchange_time;
+    s.risk_policies = o.risk_policies;
+    s.simulation.starting_cash = common::Money::from_units(o.cash);
+    control::StrategySettings sma;
+    sma.kind               = control::StrategyKind::SmaCrossover;
+    sma.strategy_id        = "sma_crossover";
+    sma.symbols            = symbols;
+    sma.requested_quantity = o.quantity;
+    sma.short_window       = o.short_window;
+    sma.long_window        = o.long_window;
+    control::StrategySettings mr;
+    mr.kind               = control::StrategyKind::MeanReversion;
+    mr.strategy_id        = "mean_reversion";
+    mr.symbols            = symbols;
+    mr.requested_quantity = o.quantity;
+    mr.lookback           = o.lookback;
+    s.strategies = {sma, mr};
+    return s;
+}
+
+// <prefix>.run for a command-line run: its settings and state, with no
+// engine id (nothing can send it commands). Only on a topic bus.
+void publish_status(const Options& o, BusStack& stack, const control::RunSettings& settings,
+                    control::RunState state, std::optional<common::Timestamp> clock, std::uint64_t sequence) {
+    if (!stack.transport) {
+        return;
+    }
+    control::RunStatusReport r;
+    r.run_id     = o.topic_prefix;
+    r.status     = state;
+    r.updated_at = common::SystemClock{}.now();
+    r.settings   = settings;
+    r.progress   = state == control::RunState::Completed ? 1.0 : 0.0;
+    r.clock      = clock;
+    const control::ControlEnvelope envelope{"trading_engine-run", sequence, r.updated_at, r};
+    (void)stack.transport->send({control::run_topic(o.topic_prefix), o.topic_prefix, control::encode(envelope)});
 }
 
 int run(const Options& o) {
@@ -217,6 +328,8 @@ int run(const Options& o) {
     common::ManualClock clock{bars.empty() ? common::Timestamp{} : bars.front().exchange_time};
     BusStack stack;
     make_bus(o, clock, stack);
+    const control::RunSettings settings = settings_from(o, symbols, bars);
+    control::validate(settings);
 
     // Print signals as they come off the bus. The handler runs on the bus
     // dispatcher; the lock keeps lines whole if anything else prints.
@@ -274,43 +387,18 @@ int run(const Options& o) {
                   << '\n';
     });
 
-    app::PipelineConfig pipeline_config;
-    pipeline_config.starting_cash = common::Money::from_units(o.cash);
-    app::Pipeline pipeline{*stack.bus, clock, pipeline_config};
-
-    app::OrderFlowConfig flow_config;
-    flow_config.run_id                   = pipeline_config.run_id;
-    flow_config.simulation.starting_cash = pipeline_config.starting_cash;
-    flow_config.simulation.fees          = pipeline_config.fees;
-    flow_config.risk_policies            = o.risk_policies;
-    app::OrderFlow flow{pipeline, *stack.bus, clock, flow_config};
-
-    strategy::MovingAverageCrossoverConfig sma;
-    sma.short_window       = o.short_window;
-    sma.long_window        = o.long_window;
-    sma.requested_quantity = o.quantity;
-    sma.symbols            = symbols;
-    pipeline.add_strategy(std::make_shared<strategy::MovingAverageCrossoverStrategy>(sma));
-
-    strategy::MeanReversionConfig mr;
-    mr.lookback           = o.lookback;
-    mr.requested_quantity = o.quantity;
-    mr.symbols            = symbols;
-    pipeline.add_strategy(std::make_shared<strategy::MeanReversionStrategy>(mr));
+    app::ConfiguredRun configured{*stack.bus, clock, settings};
+    auto& pipeline = configured.pipeline();
+    auto& flow     = configured.flow();
 
     std::cout << "bus: " << o.bus << ", bars: " << bars.size() << " from " << o.bars
               << ", symbols: " << symbols.size() << "\n\n";
-    flow.start();   // before the pipeline: execution fills before the portfolio marks
-    pipeline.start();
-    for (std::size_t i = 0; i < bars.size(); ++i) {
-        clock.set(bars[i].exchange_time);
-        pipeline.input().on_market_event(bars[i]);
-        if (i + 1 == bars.size() || bars[i + 1].exchange_time != bars[i].exchange_time) {
-            stack.bus->wait_until_drained();   // replay in market time, one timestamp at a time
-        }
+    publish_status(o, stack, settings, control::RunState::Running, std::nullopt, 1);
+    (void)configured.replay(bars);
+    publish_status(o, stack, settings, control::RunState::Completed, bars.back().exchange_time, 2);
+    if (stack.transport) {
+        (void)stack.transport->flush(std::chrono::seconds{10});
     }
-    pipeline.finish();
-    flow.stop();
 
     const auto md   = pipeline.market_data().stats();
     const auto se   = pipeline.strategies().stats();
@@ -353,13 +441,73 @@ int run(const Options& o) {
 
 }  // namespace
 
+std::atomic<bool> g_interrupted{false};
+
+extern "C" void on_signal(int) { g_interrupted = true; }
+
+int serve(const Options& o) {
+#if defined(TRADING_ENGINE_HAVE_KAFKA)
+    app::EngineServiceConfig config;
+    config.control_prefix = o.control_prefix;
+    config.engine_id      = o.engine_id;
+    config.version        = kVersion;
+    config.instant_delay  = std::chrono::milliseconds{o.pace_ms};
+    config.heartbeat      = std::chrono::milliseconds{o.heartbeat_ms};
+    for (const auto& file : o.bar_files) {
+        auto bars = cli::read_bar_csv(file);
+        config.bars.insert(config.bars.end(), bars.begin(), bars.end());
+    }
+    std::unique_ptr<kafka::KafkaMockCluster> mock;
+    if (o.bus == "kafka-mock") {
+        mock = std::make_unique<kafka::KafkaMockCluster>();
+    }
+    common::SystemClock wall;
+    app::EngineService service{[&](std::string_view prefix) {
+                                   return make_kafka_transport(o, std::string(prefix), mock.get());
+                               },
+                               wall, config};
+    service.start();
+    const auto a = service.announcement();
+    std::cout << "engine " << service.engine_id() << " serving " << config.bars.size() << " bars ("
+              << a.symbols.size() << " symbols, " << a.first_session << " to " << a.last_session << ")\n"
+              << "commands: " << control::command_topic(o.control_prefix) << " on "
+              << (mock ? mock->bootstrap_servers() : o.brokers) << ". Ctrl+C stops it.\n"
+              << std::flush;
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    app::EngineService::Stats last{};
+    while (!g_interrupted) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{200});
+        const auto now = service.stats();
+        if (now.completed + now.stopped + now.failed != last.completed + last.stopped + last.failed ||
+            now.commands != last.commands) {
+            std::cout << "commands " << now.commands << ", runs completed " << now.completed << ", stopped "
+                      << now.stopped << ", failed " << now.failed << ", refused " << now.refused << '\n'
+                      << std::flush;
+            last = now;
+        }
+    }
+    std::cout << "stopping\n";
+    service.stop();
+    return 0;
+#else
+    (void)o;
+    usage_error("serve needs Kafka; reconfigure with -DTRADING_ENGINE_WITH_KAFKA=ON");
+#endif
+}
+
 int main(int argc, char** argv) {
-    if (argc < 2 || std::string(argv[1]) != "run") {
+    const std::string command = argc < 2 ? "" : argv[1];
+    if (command != "run" && command != "serve") {
         std::cout << kProjectName << ' ' << kVersion << '\n' << kDescription << "\n\n" << kUsage;
         return argc < 2 ? 0 : 2;
     }
     try {
-        return run(parse(argc, argv));
+        const Options options = parse(argc, argv);
+        return command == "serve" ? serve(options) : run(options);
+    } catch (const control::SettingsError& e) {
+        std::cerr << "trading_engine: " << e.field() << ": " << e.message() << '\n';
+        return 2;
     } catch (const std::exception& e) {
         std::cerr << "trading_engine: " << e.what() << '\n';
         return 1;

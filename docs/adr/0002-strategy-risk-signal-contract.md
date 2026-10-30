@@ -45,6 +45,19 @@
 > unimplemented, or cite a `TODO` in `strategy_engine.cpp`, describe the repository as of
 > 2026-09-16/17 and are kept unchanged as the historical record.
 
+> **Implementation status (2026-10-30; status unchanged, still Proposed until the
+> sign-offs below are ticked).** Since the 2026-10-01 note the pipeline exists:
+> `RiskManager` consumes signals off the bus and reads `order_type` /
+> `limit_price` and publishes a `RiskDecisionReport` for every signal, minting
+> no id; `ExecutionSimulator` mints the `OrderId` after approval and keeps
+> `Order::origin_signal`, exactly as §5 describes, then fills the order. The §8 numeric questions are settled in code: `Price` is
+> the fixed-point `common::Decimal` and `Quantity` is whole `int64` shares,
+> consistent with ADR 0004 §12. On the wire (ADR 0003 §3) signals are JSON
+> with exact decimal strings and integer ids, so the §8 "ids as strings" swap
+> was not taken. Still open: `SignalCancelRequest` exists as a type but nothing
+> publishes or handles it, and `ISignalSink::emit()` still returns nothing, so
+> §7's gap is unchanged.
+
 ## Context
 
 Issue #3 asks for the shape of what a Strategy Engine hands to a Risk

@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { EngineApiError } from "../api/client";
 import type { BacktestRequest, StrategyConfig } from "../api/contract";
@@ -81,6 +81,20 @@ export function NewBacktest() {
   const [maxLoss, setMaxLoss] = useState("5000");
   const [maxOpen, setMaxOpen] = useState("50");
   const [error, setError] = useState<{ field?: string; message: string }>();
+
+  // The defaults suit the demo engine's data. Once the engine says what it has recorded, move a period that lies
+  // outside it onto the last recorded week (or less), so the first click does not ask for bars that do not exist.
+  useEffect(() => {
+    if (!coverage?.first_session || !coverage.last_session) return;
+    const { first_session: first, last_session: lastDay } = coverage;
+    if (start >= first && end <= lastDay && start <= end) return;
+    const weekBack = new Date(`${lastDay}T00:00:00Z`);
+    weekBack.setUTCDate(weekBack.getUTCDate() - 4);
+    const from = weekBack.toISOString().slice(0, 10);
+    setStart(from < first ? first : from);
+    setEnd(lastDay);
+    // Only when the coverage arrives or changes: afterwards the dates are the user's.
+  }, [coverage?.first_session, coverage?.last_session]);
   const [submitting, setSubmitting] = useState(false);
 
   const update = (key: number, patch: Partial<StrategyDraft>) =>

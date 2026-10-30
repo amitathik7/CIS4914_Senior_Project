@@ -18,7 +18,7 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - **Owner:** strategy + market-data leads · **By:** M1
 
 ## 2. Queue and threading model
-> **Proposed answer: [ADR 0003](adr/0003-kafka-transport.md)** - `IEventBus` stays the
+> **Answered by [ADR 0003](adr/0003-kafka-transport.md) (Accepted 2026-10-30)** - `IEventBus` stays the
 > component-facing seam, with Kafka behind it as an adapter (`TopicEventBus` +
 > `RdKafkaTransport`) and a bounded in-process bus (one deque + mutex/condvar,
 > one dispatcher thread, `std::variant` payload) for tests and deterministic

@@ -16,6 +16,8 @@ add_library(trading_engine_core STATIC
     common/timestamp_text.cpp
     domain/domain.cpp
     configuration/engine_config.cpp
+    control/control_codec.cpp
+    control/run_settings.cpp
     events/event_bus.cpp
     events/event_codec.cpp
     events/json.cpp
@@ -40,6 +42,8 @@ add_library(trading_engine_core STATIC
     analytics/system_metrics.cpp
     backtesting/historical_replay.cpp
     app/backtest.cpp
+    app/configured_run.cpp
+    app/engine_service.cpp
     app/order_flow.cpp
     app/pipeline.cpp
     app/trading_engine.cpp)
