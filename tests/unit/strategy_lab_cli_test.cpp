@@ -189,7 +189,9 @@ TEST(LabCliExitStatus, EveryFailureClassHasItsDocumentedStatusAndAMatchingErrorD
         {{"run", "--dataset", path, "--strategy", "nope", "--param", "symbols=A"}, 2, "usage_error"},
         {{"run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "bogus=1"}, 2, "invalid_parameter"},
         {{"run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "short_window=-1"}, 2, "invalid_parameter"},
-        {{"run", "--dataset", path, "--strategy", "ml", "--param", "symbols=A"}, 2, "unavailable_strategy"},
+        // No kind is unavailable any more (ml_logistic replaced the placeholder), so unavailable_strategy has no
+        // producer here; the old placeholder name is now simply unknown.
+        {{"run", "--dataset", path, "--strategy", "ml", "--param", "symbols=A"}, 2, "usage_error"},
         {{"run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "short_window=0"}, 2, "config_error"},
         {{"run", "--dataset", fixture_path("missing.csv").string(), "--strategy", "sma_crossover", "--param", "symbols=A"}, 3, "dataset_error"},
         {{"run", "--dataset", path, "--max-rows", "5", "--strategy", "sma_crossover", "--param", "symbols=AAPL"}, 3, "limit_exceeded"},
@@ -281,7 +283,11 @@ TEST(LabCliExitStatus, AnArgumentThatIsNotValidUtf8IsAUsageErrorWhoseDocumentIsS
 class ResponseFiles : public ::testing::Test {
 protected:
     void SetUp() override {
-        dir_ = std::filesystem::temp_directory_path() / "strategy_lab_cli_test_args";
+        // One directory per test: ctest -j runs each test in its own process, and a shared
+        // directory let one test's TearDown delete another's files mid-run.
+        dir_ = std::filesystem::temp_directory_path() /
+               ("strategy_lab_cli_test_args_" +
+                std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()));
         std::filesystem::create_directories(dir_);
     }
     void TearDown() override { std::filesystem::remove_all(dir_); }

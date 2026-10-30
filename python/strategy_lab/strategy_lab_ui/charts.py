@@ -26,7 +26,9 @@ Z = theme.ZSCORE
 
 # Which recorded indicators to draw, by strategy kind. A drawing choice, not logic: the values are the tool's.
 OVERLAYS: Mapping[str, tuple[str, ...]] = {"sma_crossover": ("short_sma", "long_sma"), "mean_reversion": ("mean",)}
-ZPANEL: Mapping[str, str] = {"mean_reversion": "z_score"}
+ZPANEL: Mapping[str, str] = {"mean_reversion": "z_score", "ml_logistic": "probability_edge"}
+# The lower panel's title, and how its entry / re-arm lines follow from the run's parameters (drawn at +-value).
+_PANEL_TITLE: Mapping[str, str] = {"mean_reversion": "z-score", "ml_logistic": "p - 0.5"}
 # colour, dash, width: distinguishable by style as well as hue.
 _LINE_STYLE = {"short_sma": (theme.SHORT_SMA, "solid", 2.4), "long_sma": (theme.LONG_SMA, "dash", 2.2),
                "mean": (theme.MEAN, "dashdot", 2.2)}
@@ -144,6 +146,9 @@ def _selected_trace(fig: go.Figure, model: ReplayModel, selected: Event | None, 
 
 def _threshold_lines(fig: go.Figure, config: StrategyConfig, row: int) -> None:
     entry, rearm = _param(config, "entry_threshold"), _param(config, "rearm_threshold")
+    if config.kind == "ml_logistic":
+        probability, rearm = _param(config, "entry_probability"), _param(config, "rearm_band")
+        entry = probability - 0.5 if isinstance(probability, (int, float)) and not isinstance(probability, bool) else None
     for value, text, dash, color in ((entry, "entry", "dash", theme.WARN), (rearm, "re-arm", "dot", MUTED)):
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             for sign in (1, -1):
@@ -201,7 +206,7 @@ def _draw(fig: go.Figure, member: Member, sym: str, cursor: int, selected: Event
     if config.kind in ZPANEL:
         z_row = price_row + 1
         zs = series.indicators[ZPANEL[config.kind]]
-        fig.add_trace(go.Scatter(x=series.times, y=zs, mode="lines+markers", name=prefix + "z-score",
+        fig.add_trace(go.Scatter(x=series.times, y=zs, mode="lines+markers", name=prefix + _PANEL_TITLE[config.kind],
                                  legendgroup=prefix + "z", showlegend=first, connectgaps=False,
                                  line=dict(color=Z, width=2), marker=dict(size=6, color=Z), text=hover, hoverinfo="text"),
                       row=z_row, col=1)
@@ -209,7 +214,7 @@ def _draw(fig: go.Figure, member: Member, sym: str, cursor: int, selected: Event
         z_at = {ix: zs[p] for p, ix in enumerate(series.event_indexes)}
         _signal_traces(fig, model, sym, cursor, z_row, False, z_at.get, prefix)
         _selected_trace(fig, model, selected, sym, z_row, False, z_at.get(selected.index) if selected else None, prefix)
-        fig.update_yaxes(title_text="z-score", row=z_row, col=1, zeroline=True, zerolinecolor=theme.AXIS)
+        fig.update_yaxes(title_text=_PANEL_TITLE[config.kind], row=z_row, col=1, zeroline=True, zerolinecolor=theme.AXIS)
 
 
 def _build(members: Sequence[Member], shown: Sequence[str], cursor: int, selected: Event | None, *,
@@ -227,7 +232,7 @@ def _build(members: Sequence[Member], shown: Sequence[str], cursor: int, selecte
             names = indicator_names(member.config.kind)
             titles += [f"{lead}{sym}: close" + (" and indicators" if names else "")]
             if per == 2:
-                titles.append(f"{lead}{sym}: z-score")
+                titles.append(f"{lead}{sym}: {_PANEL_TITLE[member.config.kind]}")
             slots.append((sym, member, row, n == 0, k == 0))
             row += per
     fig = make_subplots(rows=row - 1, cols=1, shared_xaxes=True, vertical_spacing=0.07, row_heights=heights,

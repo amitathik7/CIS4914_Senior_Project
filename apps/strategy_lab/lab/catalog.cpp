@@ -10,6 +10,7 @@
 #include "lab/numbers.hpp"
 #include "lab/utf8.hpp"
 #include "trading_engine/common/errors.hpp"
+#include "trading_engine/strategy/logistic_regression_strategy.hpp"
 #include "trading_engine/strategy/mean_reversion_strategy.hpp"
 #include "trading_engine/strategy/moving_average_crossover_strategy.hpp"
 
@@ -90,6 +91,7 @@ std::optional<ParamValue> parse_param_text(ParamType type, std::string_view text
 
 using SmaConfig = strategy::MovingAverageCrossoverConfig;
 using MrConfig  = strategy::MeanReversionConfig;
+using MlConfig  = strategy::LogisticRegressionConfig;
 
 const std::vector<ParamDef<SmaConfig>>& sma_params() {
     static const std::vector<ParamDef<SmaConfig>> defs{
@@ -138,6 +140,51 @@ const std::vector<ParamDef<MrConfig>>& mr_params() {
          "Comma-separated allowlist: at least one, no empty entry, no repeats; matched exactly and case-sensitively.",
          [](MrConfig& c, const ParamValue& v) { c.symbols = std::get<std::vector<std::string>>(v); },
          [](const MrConfig& c) -> ParamValue { return c.symbols; }},
+    };
+    return defs;
+}
+
+// initial_parameters (an offline warm start) is not offered here: the lab has no list-of-numbers type,
+// so every lab run starts from zero weights.
+const std::vector<ParamDef<MlConfig>>& ml_params() {
+    static const std::vector<ParamDef<MlConfig>> defs{
+        {"strategy_id", ParamType::String, false,
+         "Not empty; unique among the strategies of one run. Becomes TradeSignal::strategy_id.",
+         [](MlConfig& c, const ParamValue& v) { c.strategy_id = std::get<std::string>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.strategy_id; }},
+        {"horizon", ParamType::UInt, false, "At least 1; how many accepted bars ahead the label looks.",
+         [](MlConfig& c, const ParamValue& v) { c.horizon = static_cast<std::size_t>(std::get<std::uint64_t>(v)); },
+         [](const MlConfig& c) -> ParamValue { return static_cast<std::uint64_t>(c.horizon); }},
+        {"label_dead_band", ParamType::Double, false,
+         "Finite, at least 0; moves with abs(log return) at or below it are not trained on.",
+         [](MlConfig& c, const ParamValue& v) { c.label_dead_band = std::get<double>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.label_dead_band; }},
+        {"learning_rate", ParamType::Double, false, "Finite and greater than 0; the SGD step size.",
+         [](MlConfig& c, const ParamValue& v) { c.learning_rate = std::get<double>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.learning_rate; }},
+        {"l2", ParamType::Double, false, "Finite, at least 0; the L2 penalty on the weights.",
+         [](MlConfig& c, const ParamValue& v) { c.l2 = std::get<double>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.l2; }},
+        {"min_training_samples", ParamType::UInt, false,
+         "Trained samples a symbol needs before it may emit; 0 lets it emit at once.",
+         [](MlConfig& c, const ParamValue& v) { c.min_training_samples = static_cast<std::size_t>(std::get<std::uint64_t>(v)); },
+         [](const MlConfig& c) -> ParamValue { return static_cast<std::uint64_t>(c.min_training_samples); }},
+        {"entry_probability", ParamType::Double, false,
+         "Strictly between 0.5 and 1; p at or above it asks for a Buy, at or below 1 - it for a Sell.",
+         [](MlConfig& c, const ParamValue& v) { c.entry_probability = std::get<double>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.entry_probability; }},
+        {"rearm_band", ParamType::Double, false,
+         "Finite, at least 0 and below entry_probability - 0.5; abs(p - 0.5) at or below it rearms the latch.",
+         [](MlConfig& c, const ParamValue& v) { c.rearm_band = std::get<double>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.rearm_band; }},
+        {"requested_quantity", ParamType::Quantity, false,
+         "Shares requested on every signal: a positive whole number (an exact integer count).",
+         [](MlConfig& c, const ParamValue& v) { c.requested_quantity = static_cast<common::Quantity>(std::get<std::uint64_t>(v)); },
+         [](const MlConfig& c) -> ParamValue { return static_cast<std::uint64_t>(c.requested_quantity); }},
+        {"symbols", ParamType::StringList, true,
+         "Comma-separated allowlist: at least one, no empty entry, no repeats; matched exactly and case-sensitively.",
+         [](MlConfig& c, const ParamValue& v) { c.symbols = std::get<std::vector<std::string>>(v); },
+         [](const MlConfig& c) -> ParamValue { return c.symbols; }},
     };
     return defs;
 }
@@ -255,13 +302,44 @@ StrategyKind mr_kind() {
 
 StrategyKind ml_kind() {
     StrategyKind kind;
-    kind.kind               = "ml";
-    kind.title              = "Custom ML strategy";
-    kind.summary            = "Not available.";
-    kind.docs               = "docs/STRATEGIES.md";
-    kind.available          = false;
-    kind.unavailable_reason = "Not implemented: the custom ML strategy has not been started "
-                              "(docs/STRATEGIES.md, section 7), so the lab offers no ML behaviour and invents none.";
+    kind.kind    = "ml_logistic";
+    kind.title   = "Machine learning (online logistic regression)";
+    kind.summary = "Learns walk-forward, per symbol, whether the close tends to be higher horizon bars later, from six "
+                   "price features. Requests a Buy when the predicted probability is high enough and a Sell when it is "
+                   "low enough, once per excursion. Tracks no position and sizes nothing.";
+    kind.docs    = "docs/strategies/logistic_regression.md";
+    kind.params  = specs_of(ml_params());
+    kind.signal_metadata_keys = {"bias", "close", "entry_probability", "horizon", "probability_up", "rearm_band",
+                                 "rolling_accuracy", "training_samples", "trigger"};
+    for (const std::string_view name : strategy::ml::feature_names()) {
+        kind.signal_metadata_keys.push_back("feature_" + std::string{name});
+        kind.signal_metadata_keys.push_back("weight_" + std::string{name});
+    }
+    std::sort(kind.signal_metadata_keys.begin(), kind.signal_metadata_keys.end());
+    kind.reasons = ignore_reasons(false);
+    kind.reasons.push_back(reason(BarReason::WarmingUp, BarVerdict::WarmingUp,
+                                  "Fewer than 21 bars have been accepted for this symbol, so there are no features yet."));
+    kind.reasons.push_back(reason(BarReason::Training, BarVerdict::WarmingUp,
+                                  "The model predicted, but fewer than min_training_samples samples have trained it, so "
+                                  "nothing is emitted yet."));
+    kind.reasons.push_back(reason(BarReason::MeasurementFailed, BarVerdict::Evaluated,
+                                  "A feature came out non-finite (a guard no known input reaches): nothing emitted and the "
+                                  "latch is unchanged."));
+    kind.reasons.push_back(reason(BarReason::EntryBuy, BarVerdict::Evaluated,
+                                  "p >= entry_probability and a rise had not already been requested: a Buy request was "
+                                  "emitted, with confidence p."));
+    kind.reasons.push_back(reason(BarReason::EntrySell, BarVerdict::Evaluated,
+                                  "p <= 1 - entry_probability and a fall had not already been requested: a Sell request was "
+                                  "emitted, with confidence 1 - p."));
+    kind.reasons.push_back(reason(BarReason::ExcursionAlreadyRequested, BarVerdict::Evaluated,
+                                  "p is beyond an entry level on the side already requested; a request repeats only after "
+                                  "the latch rearms."));
+    kind.reasons.push_back(reason(BarReason::InsideRearmBand, BarVerdict::Evaluated,
+                                  "abs(p - 0.5) <= rearm_band: the latch rearms to neutral and nothing is emitted."));
+    kind.reasons.push_back(reason(BarReason::BetweenBands, BarVerdict::Evaluated,
+                                  "p is between the rearm band and the entry levels: nothing emitted, latch unchanged."));
+    kind.indicators = {"probability_up", "probability_edge", "training_samples", "rolling_accuracy"};
+    kind.states     = {"latch_before", "latch_after"};
     return kind;
 }
 
@@ -395,6 +473,19 @@ BuiltStrategy build_strategy(const StrategyRequest& request, std::size_t index) 
             [](const SmaConfig& c) {
                 return std::vector<std::pair<std::string, DerivedValue>>{
                     {"earliest_signal_accepted_bar", static_cast<std::uint64_t>(c.long_window + 1)}};
+            });
+    }
+    if (kind->kind == "ml_logistic") {
+        return build_kind<strategy::LogisticRegressionStrategy, MlConfig>(
+            kind->kind, ml_params(), request, index, [](const MlConfig&) { return strategy::ml::kFeatureWindow; },
+            [](const MlConfig& c) {
+                // The first bar that can emit: the window fills at bar 21, the first sample trains `horizon` bars
+                // later, and each further bar trains one more (dead band aside).
+                const std::uint64_t first = static_cast<std::uint64_t>(strategy::ml::kFeatureWindow + c.horizon) +
+                                            (c.min_training_samples == 0 ? 0 : c.min_training_samples - 1);
+                return std::vector<std::pair<std::string, DerivedValue>>{
+                    {"earliest_signal_accepted_bar",
+                     c.min_training_samples == 0 ? static_cast<std::uint64_t>(strategy::ml::kFeatureWindow) : first}};
             });
     }
     // mean_reversion

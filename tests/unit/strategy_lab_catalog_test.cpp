@@ -1,7 +1,7 @@
 // The strategy catalog: the single authoritative mapping from kinds and parameters to the
 // real configuration structs. Defaults must be the structs' own; a bad configuration must be
-// rejected in the STRATEGY's words (the lab only parses text into a type); ML must stay
-// unavailable.
+// rejected in the STRATEGY's words (the lab only parses text into a type); all three kinds are
+// available, the ML one included.
 
 #include <cmath>
 #include <set>
@@ -12,6 +12,7 @@
 
 #include "lab/result_json.hpp"
 #include "strategy_lab_test_support.hpp"
+#include "trading_engine/strategy/logistic_regression_strategy.hpp"
 #include "trading_engine/strategy/mean_reversion_strategy.hpp"
 #include "trading_engine/strategy/moving_average_crossover_strategy.hpp"
 #include "trading_engine/strategy/strategy_diagnostics.hpp"
@@ -53,26 +54,42 @@ const lab::ParamSpec& param(const lab::StrategyKind& k, const std::string& name)
 
 // ---- what exists --------------------------------------------------------------------------------
 
-TEST(LabCatalog, ListsTheTwoReferenceStrategiesAndAnUnavailableMlEntry) {
+TEST(LabCatalog, ListsTheThreeStrategiesAllAvailable) {
     const auto& catalog = lab::strategy_catalog();
     ASSERT_EQ(catalog.size(), 3u);
     EXPECT_EQ(catalog[0].kind, "sma_crossover");
     EXPECT_EQ(catalog[1].kind, "mean_reversion");
-    EXPECT_EQ(catalog[2].kind, "ml");
-    EXPECT_TRUE(catalog[0].available);
-    EXPECT_TRUE(catalog[1].available);
-    EXPECT_FALSE(catalog[2].available) << "the custom ML strategy has not been started";
-    EXPECT_FALSE(catalog[2].unavailable_reason.empty());
-    EXPECT_TRUE(catalog[2].params.empty());
+    EXPECT_EQ(catalog[2].kind, "ml_logistic");
+    for (const lab::StrategyKind& k : catalog) {
+        EXPECT_TRUE(k.available) << k.kind;
+        EXPECT_TRUE(k.unavailable_reason.empty()) << k.kind;
+    }
     EXPECT_EQ(lab::find_kind("nope"), nullptr);
+    EXPECT_EQ(lab::find_kind("ml"), nullptr) << "the old placeholder name is gone";
 }
 
-TEST(LabCatalog, AnMlStrategyCannotBeBuiltAndTheErrorSaysWhy) {
-    const lab::LabError error = expect_lab_error([] { (void)lab::build_strategy(request("ml", {{"symbols", "AAPL"}})); });
-    EXPECT_EQ(error.code(), ErrorCode::UnavailableStrategy);
-    EXPECT_EQ(lab::exit_status(error.code()), 2);
-    EXPECT_NE(std::string{error.what()}.find("not available"), std::string::npos);
-    EXPECT_NE(std::string{error.what()}.find("Not implemented"), std::string::npos) << error.what();
+TEST(LabCatalog, TheMlStrategyBuildsWithTheConfigStructsDefaults) {
+    const lab::BuiltStrategy built = lab::build_strategy(request("ml_logistic", {{"symbols", "AAPL"}}));
+    EXPECT_EQ(built.strategy_id, "ml_logistic");
+    EXPECT_EQ(built.window_size, strategy::ml::kFeatureWindow);
+    const strategy::LogisticRegressionConfig defaults{};
+    const lab::StrategyKind& k = kind("ml_logistic");
+    EXPECT_EQ(names_of(k), (std::vector<std::string>{"strategy_id", "horizon", "label_dead_band", "learning_rate", "l2",
+                                                     "min_training_samples", "entry_probability", "rearm_band",
+                                                     "requested_quantity", "symbols"}));
+    EXPECT_EQ(param(k, "horizon").default_value, std::optional<ParamValue>{std::uint64_t{defaults.horizon}});
+    EXPECT_EQ(param(k, "entry_probability").default_value, std::optional<ParamValue>{defaults.entry_probability});
+    // Window full at bar 21, first sample trains at 21 + horizon, then one per bar up to min_training_samples.
+    ASSERT_EQ(built.derived.size(), 1u);
+    EXPECT_EQ(built.derived[0].first, "earliest_signal_accepted_bar");
+    EXPECT_EQ(built.derived[0].second,
+              lab::DerivedValue{std::uint64_t{21 + defaults.horizon + defaults.min_training_samples - 1}});
+
+    const lab::LabError error = expect_lab_error(
+        [] { (void)lab::build_strategy(request("ml_logistic", {{"symbols", "AAPL"}, {"entry_probability", "0.5"}})); });
+    EXPECT_EQ(error.code(), ErrorCode::ConfigError);
+    EXPECT_NE(std::string{error.what()}.find("LogisticRegressionStrategy: entry_probability"), std::string::npos)
+        << error.what();
 }
 
 TEST(LabCatalog, AnUnknownKindIsAUsageErrorListingTheKnownOnes) {
@@ -321,7 +338,7 @@ TEST(LabCatalogReasons, EveryReasonTheStrategiesCanReportIsExplainedAndNothingEl
         }
     }
     std::set<std::string> vocabulary;
-    for (int value = 0; value <= static_cast<int>(strategy::BarReason::BetweenBands); ++value) {
+    for (int value = 0; value <= static_cast<int>(strategy::BarReason::Training); ++value) {
         vocabulary.insert(std::string{strategy::to_string(static_cast<strategy::BarReason>(value))});
     }
     EXPECT_EQ(explained, vocabulary) << "the catalog's text and the strategies' codes must match exactly";
@@ -350,6 +367,9 @@ TEST(LabCatalogReasons, TheIndicatorAndStateNamesMatchWhatTheStrategiesReport) {
     EXPECT_EQ(kind("sma_crossover").states, (std::vector<std::string>{"relation_before", "relation_now", "relation_after"}));
     EXPECT_EQ(kind("mean_reversion").indicators, (std::vector<std::string>{"mean", "standard_deviation", "z_score"}));
     EXPECT_EQ(kind("mean_reversion").states, (std::vector<std::string>{"latch_before", "latch_after"}));
+    EXPECT_EQ(kind("ml_logistic").indicators, (std::vector<std::string>{"probability_up", "probability_edge",
+                                                                       "training_samples", "rolling_accuracy"}));
+    EXPECT_EQ(kind("ml_logistic").states, (std::vector<std::string>{"latch_before", "latch_after"}));
 }
 
 TEST(LabCatalogDescribe, TheDescribeDocumentCarriesTheCatalogWithoutAWallClock) {
@@ -357,8 +377,8 @@ TEST(LabCatalogDescribe, TheDescribeDocumentCarriesTheCatalogWithoutAWallClock) 
     EXPECT_EQ(text.back(), '\n');
     EXPECT_EQ(text.find('\r'), std::string::npos);
     for (const char* needle : {"\"schema\":\"strategy_lab.catalog\"", "\"schema_version\":\"1.0\"",
-                               "\"kind\":\"sma_crossover\"", "\"kind\":\"mean_reversion\"", "\"kind\":\"ml\"",
-                               "\"available\":false", "\"name\":\"short_window\",\"type\":\"uint\",\"required\":false,\"default\":5",
+                               "\"kind\":\"sma_crossover\"", "\"kind\":\"mean_reversion\"", "\"kind\":\"ml_logistic\"",
+                               "\"name\":\"horizon\",\"type\":\"uint\",\"required\":false,\"default\":5", "\"name\":\"short_window\",\"type\":\"uint\",\"required\":false,\"default\":5",
                                "\"name\":\"entry_threshold\",\"type\":\"double\",\"required\":false,\"default\":2",
                                "\"name\":\"requested_quantity\",\"type\":\"uint\",\"required\":false,\"default\":1,",
                                "The price is zero or negative.", "INT64_MAX / long_window^2",

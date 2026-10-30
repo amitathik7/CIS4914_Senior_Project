@@ -46,6 +46,15 @@ export const STRATEGY_COPY: Record<string, StrategyCopy> = {
       "A flat window (no spread) has no z-score; it is shown as unavailable, never as zero.",
     ],
   },
+  ml_logistic: {
+    short: "Learns, as the bars arrive, how likely the close is to be higher a few bars later.",
+    rules: [
+      "For each allowed symbol it computes six price features (recent returns, a z-score, a short-vs-long average gap and volatility), and a logistic regression turns them into p, the probability of a rise over the next Horizon bars.",
+      "It learns walk-forward: each prediction trains the model only once its outcome is known, so it never sees the future. Nothing is decided until 21 bars have arrived and Min training samples samples have trained it.",
+      "p at or above the entry probability makes a Buy request; at or below 1 minus it, a Sell request. The request carries p (or 1 − p) as its confidence.",
+      "It asks once per excursion and re-arms when p comes back within the re-arm band of 0.5. The chart's lower pane shows p − 0.5.",
+    ],
+  },
 };
 
 /** Said wherever Buy/Sell requests appear, so no one reads them as orders, trades or positions. */

@@ -66,7 +66,8 @@ be revisited; several are tracked in [`../OPEN_QUESTIONS.md`](../OPEN_QUESTIONS.
     `common::NotImplemented`; nothing returns fabricated market, portfolio, or
     performance data. `main()` only confirms the build.
 
-12. **In-process, single-node** engine. No distribution, no IPC.
+12. ~~**In-process, single-node** engine. No distribution, no IPC.~~
+    Superseded by [ADR 0003](0003-kafka-transport.md) (Proposed): Kafka behind `IEventBus`.
 
 13. **`#pragma once`** for header guards (supported by all three target
     compilers).

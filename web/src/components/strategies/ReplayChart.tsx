@@ -60,6 +60,16 @@ export function layoutFor(model: ReplayModel): Layout {
     }
     return { overlays: [{ name: "mean", label: `Rolling mean${bars("lookback")}`, tone: "warn", dashed: true }], pane: { name: "z_score", label: "z-score", bands } };
   }
+  if (model.kind === "ml_logistic") {
+    // The pane plots p - 0.5 (the strategy's probability_edge), so the entry levels p = entry and p = 1 - entry sit at
+    // +-(entry - 0.5) and the re-arm band at +-rearm_band, exactly as the z-score bands are drawn.
+    const bands: Band[] = [];
+    const entry = run.parameterNumbers["entry_probability"];
+    if (entry !== undefined) bands.push({ param: "entry_probability", text: String(Math.round((entry - 0.5) * 1e9) / 1e9), value: entry - 0.5, kind: "entry" });
+    const rearm = run.parameterNumbers["rearm_band"];
+    if (rearm !== undefined) bands.push({ param: "rearm_band", text: text("rearm_band") ?? String(rearm), value: rearm, kind: "rearm" });
+    return { overlays: [], pane: { name: "probability_edge", label: "p − 0.5", bands } };
+  }
   return { overlays: [] };
 }
 

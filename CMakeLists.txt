@@ -44,6 +44,8 @@ endif()
 # --- Options ---------------------------------------------------------------
 option(TRADING_ENGINE_BUILD_APPS          "Build the trading_engine executable"        ON)
 option(TRADING_ENGINE_WARNINGS_AS_ERRORS  "Treat compiler warnings as errors"          OFF)
+option(TRADING_ENGINE_WITH_KAFKA
+       "Build the Kafka event-bus adapter (needs librdkafka; see docs/EVENT_BUS.md)"   OFF)
 option(TRADING_ENGINE_BUILD_INTEGRATION_TESTS
        "Build integration tests (require external services -- not ready yet)"           OFF)
 
@@ -80,6 +82,7 @@ if(PROJECT_IS_TOP_LEVEL)
     message(STATUS "  C++ standard .............. ${CMAKE_CXX_STANDARD}")
     message(STATUS "  Build apps ............... ${TRADING_ENGINE_BUILD_APPS}")
     message(STATUS "  Build tests (BUILD_TESTING) ${BUILD_TESTING}")
+    message(STATUS "  Kafka adapter ........... ${TRADING_ENGINE_WITH_KAFKA}")
     message(STATUS "  Integration tests ....... ${TRADING_ENGINE_BUILD_INTEGRATION_TESTS}")
     message(STATUS "  Warnings as errors ...... ${TRADING_ENGINE_WARNINGS_AS_ERRORS}")
     message(STATUS "")

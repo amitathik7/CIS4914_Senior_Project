@@ -15,8 +15,8 @@
 //  re-states a range rule. The constructor's common::ConfigError text is passed through
 //  verbatim, so "short_window=0" is rejected with the strategy's own words.
 //
-//  The custom ML strategy is listed as UNAVAILABLE (docs/STRATEGIES.md section 7) and
-//  cannot be built.
+//  All three strategies (sma_crossover, mean_reversion, ml_logistic) are available. The
+//  StrategyKind "available" flag stays so a future kind can be listed before it can be built.
 // -----------------------------------------------------------------------------
 
 #include <cstddef>

@@ -7,7 +7,7 @@
 > The tool is optional and OFF by default. It replays recorded
 > bars through the real `StrategyEngine` and the reference strategies over a **lab-local synchronous
 > bus**, and reports signals and diagnostics. It is not the production queue, runs no risk, execution
-> or portfolio stage, and shows no fills, P&L, confidence or ML. Strategy defaults are the strategies'
+> or portfolio stage, and shows no fills or P&L. Strategy defaults are the strategies'
 > local placeholders ([STRATEGIES.md](STRATEGIES.md)), **not tuned or recommended trading parameters**.
 
 ## 1. What it is, and is not
@@ -354,7 +354,7 @@ Choose dataset and strategy, press **Run replay**, inspect the chart, step throu
 
 * **Header:** "Strategy Lab / Signal replay", the displayed run's dataset (name, synthetic or unknown provenance, SHA-256 prefix, run number)
   and a status chip: *No run yet*, *Run complete - settings match*, *Settings changed*, *Last run failed*.
-* **Left panel:** built-in dataset or CSV upload; strategy (the catalog's available kinds; ML is listed as unavailable); parameters; the
+* **Left panel:** built-in dataset or CSV upload; strategy (the catalog's kinds: crossover, mean reversion and the `ml_logistic` ML strategy); parameters; the
   **symbols allowlist** (it changes what is computed); *Advanced settings* (collapsed: `strategy_id`, `requested_quantity`); **Restore defaults**
   and **Run replay**, kept visible at the bottom of the panel. Parameter names, types, defaults and constraint text come from `describe`; the
   UI keeps no copy, and every other check is the runner's (its messages are shown verbatim). Choosing a built-in fixture or a strategy loads a
@@ -476,7 +476,7 @@ checked-in scenarios against the real executable and compares them with expectat
 
 * **MSVC only** was available: GCC and Clang builds, Release byte-identity across compilers and POSIX launch are unverified. The code avoids
   `std::chrono::parse` and uses only C++20 library features the project already relies on, but that is not evidence.
-* Diagnostics exist on the two concrete strategies only. Promoting the hook to `IStrategy` (for a future ML strategy) is a separate decision
+* Diagnostics exist on the three concrete strategies only. Promoting the hook to `IStrategy` is a separate decision
   (ADR 0002 section 9 keeps `IStrategy` untouched).
 * `common::RunId` is a numeric session id for persistence that does not exist yet, so the lab's `run_id` is a content hash instead.
 * Output is row-oriented JSON capped at 50,000 rows by default (200,000 hard): readable and diffable, not compact. 20,000 rows were exercised.

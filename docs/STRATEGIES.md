@@ -1,11 +1,11 @@
 # Strategies
 
-> Status: the **StrategyEngine** and two reference strategies, a **moving-average
-> crossover** and a **rolling z-score mean reversion**, are implemented and tested
+> Status: the **StrategyEngine** and three strategies, a **moving-average
+> crossover**, a **rolling z-score mean reversion** and an **online logistic-regression
+> ML strategy**, are implemented and tested
 > **against test doubles only** (`RecordingEventBus`, `ManualClock`). The production
 > event bus, market-data service, risk manager, execution simulator, portfolio and
 > application run loops are not implemented, so nothing here has run in a pipeline.
-> The custom ML strategy is not started.
 >
 > **Nothing in the "local choices" tables is a team decision.**
 > [ADR 0002](adr/0002-strategy-risk-signal-contract.md) is still *Proposed* and
@@ -19,6 +19,7 @@
 | This page | The shared contract, what a signal does and does not guarantee, running several strategies, threading and bus assumptions, what is not integrated, and what the other component owners must provide. |
 | [Moving-average crossover](strategies/moving_average_crossover.md) | Configuration, input rules, baseline and equality rules, numbers (exact integer sums), signals, worked example, local choices. |
 | [Mean reversion](strategies/mean_reversion.md) | Configuration, the z-score and its bounds, the latch, numerical policy, signals, worked example, local choices. |
+| [Machine learning (logistic regression)](strategies/logistic_regression.md) | Configuration, features, walk-forward learning without look-ahead, the latch, signals with confidence, what the tests do and do not show. |
 | [Strategy Lab](STRATEGY_LAB.md) | An optional developer tool that replays bars through the real engine and shows each bar's decision (see section 7). |
 
 ## 1. What every strategy gets, and owes
@@ -172,9 +173,11 @@ unsubscribe behaviour when that bus exists.
 
 ## 5. Not yet integrated
 
-- **Run only against a test bus.** The production `InProcessEventBus`,
-  `MarketDataService`, `RiskManager`, execution, portfolio accounting and the
-  application run loops are not implemented. Nothing here has run in a full pipeline.
+- **Partly integrated.** The engine and both strategies now run on the real
+  `InProcessEventBus` and on the Kafka `TopicEventBus` behind `MarketDataService`
+  (`app::Pipeline`, [`EVENT_BUS.md`](EVENT_BUS.md)), and publish the same signals as
+  on the test bus. `RiskManager`, execution and the application run loops are still
+  not implemented, so no signal becomes an order yet.
 - **No routing index.** The engine delivers every event to every strategy, and each
   discards most of them. A symbol-interest declaration on `IStrategy` is a TODO.
 - **Silent ignoring.** An ignored event leaves no counter or log line. That waits
@@ -265,7 +268,9 @@ attached with `set_observer()` on the concrete strategy; `IStrategy`, `ISignalSi
 
 The [Strategy Lab](STRATEGY_LAB.md) is its first user. It is not a logging facade (`OQ#8`).
 
-## 8. Planned
+## 8. The ML strategy
 
-The custom ML strategy is not implemented. It gets a page under `docs/strategies/`, and
-a test file in the `reference_strategies` component, when it lands.
+`LogisticRegressionStrategy` (id `ml_logistic`) is the third option: it learns per symbol, walk-forward, and
+is the only strategy that sets `TradeSignal::confidence`. It follows every rule on this page; its own page is
+[strategies/logistic_regression.md](strategies/logistic_regression.md), and its tests are in the
+`reference_strategies` component.
