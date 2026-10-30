@@ -68,6 +68,7 @@
 #include "trading_engine/domain/fill.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/order.hpp"
+#include "trading_engine/domain/risk_decision_report.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
 
 namespace trading_engine::events
@@ -78,17 +79,19 @@ namespace trading_engine::events
         MarketData = 0,
         Signal,
         Order,
-        Fill
+        Fill,
+        RiskDecision   // the RiskManager's verdict on each signal (domain::RiskDecisionReport)
         // TODO: PortfolioUpdate, Control (shutdown/flush), Timer, Error.
     };
 
-    inline constexpr std::size_t kEventTypeCount = 4;
+    inline constexpr std::size_t kEventTypeCount = 5;
 
     // PROVISIONAL envelope. A closed std::variant keeps the scaffold dependency-free
     // and lets consumers std::visit. If the payload set grows large or needs to be
     // extended by plugins, revisit (type-erased Event, or per-type queues).
     using EventPayload =
-        std::variant<domain::MarketEvent, domain::TradeSignal, domain::Order, domain::Fill>;
+        std::variant<domain::MarketEvent, domain::TradeSignal, domain::Order, domain::Fill,
+                     domain::RiskDecisionReport>;
 
     struct Event
     {

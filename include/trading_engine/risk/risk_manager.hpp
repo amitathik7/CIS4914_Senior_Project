@@ -21,7 +21,9 @@
 //  an approved one (with its quantity replaced by adjusted_quantity when a
 //  policy resized it) is handed to the approval sink -- in a backtest the
 //  ExecutionSimulator's submit() -- and every decision is kept in
-//  decisions(). MarketData events keep the reference prices and the session
+//  decisions() and published on the bus as a domain::RiskDecisionReport
+//  (EventType::RiskDecision) for out-of-process readers such as the web
+//  gateway. MarketData events keep the reference prices and the session
 //  start equity current.
 //
 //  Composition: policies run in order; the first rejection wins; a resize
@@ -85,6 +87,8 @@ public:
     // Before start(). The ledger and sink are borrowed / copied.
     void set_reservation_ledger(portfolio::IReservationLedger* ledger) noexcept { ledger_ = ledger; }
     void set_approval_sink(ApprovalSink sink) { sink_ = std::move(sink); }
+    // Stamped on every published RiskDecisionReport (default 1).
+    void set_run_id(common::RunId run_id) noexcept { run_id_ = run_id; }
 
     // Subscribe to Signal and MarketData. Idempotent. stop() unsubscribes.
     void start();
@@ -111,6 +115,7 @@ private:
     std::vector<std::shared_ptr<IRiskPolicy>>  policies_{};
     portfolio::IReservationLedger*             ledger_{nullptr};
     ApprovalSink                               sink_{};
+    common::RunId                              run_id_{1};
 
     mutable std::mutex                         mutex_;
     std::vector<common::SubscriptionId>        subscriptions_{};
@@ -119,6 +124,7 @@ private:
     std::optional<common::Money>               session_start_equity_{};
     std::vector<RiskRecord>                    decisions_{};
     Stats                                      stats_{};
+    std::uint64_t                              reports_issued_{0};
 
     // TODO: kill-switch latch, rejection log wired to persistence,
     //       per-symbol / per-strategy limit overrides.

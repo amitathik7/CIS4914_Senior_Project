@@ -105,6 +105,6 @@ as JSON numbers, quantities are integers, times are RFC 3339 UTC.
 ## 6. Not yet
 
 Source-driven `HistoricalReplay` (Alpaca / PostgreSQL), latency and partial fills, shorting, a
-kill switch, persistence of runs, and wiring risk and execution into `trading_engine run` (live
-bus path) are open. The demo Backtests page in the web console still runs the in-browser
+kill switch and persistence of runs are open. Risk and execution on the live bus path
+(`trading_engine run`, any `--bus`) are wired by `app::OrderFlow`; see docs/EVENT_BUS.md. The demo Backtests page in the web console still runs the in-browser
 simulator; the Strategies > Backtest view is the real engine.

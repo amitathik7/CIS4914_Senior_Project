@@ -40,6 +40,7 @@ add_library(trading_engine_core STATIC
     analytics/system_metrics.cpp
     backtesting/historical_replay.cpp
     app/backtest.cpp
+    app/order_flow.cpp
     app/pipeline.cpp
     app/trading_engine.cpp)
 add_library(trading_engine::core ALIAS trading_engine_core)

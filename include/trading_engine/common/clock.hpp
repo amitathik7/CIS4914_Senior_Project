@@ -17,6 +17,8 @@
 //                     replay ever drives multiple consumer threads.
 // -----------------------------------------------------------------------------
 
+#include <atomic>
+
 #include "trading_engine/common/types.hpp"
 
 namespace trading_engine::common {
@@ -45,7 +47,8 @@ public:
     void advance(Duration d) noexcept;
 
 private:
-    Timestamp current_{};
+    // Atomic: a driver thread may set() it while a bus dispatcher reads now().
+    std::atomic<Timestamp> current_{};
 };
 
 }  // namespace trading_engine::common

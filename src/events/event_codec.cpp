@@ -18,6 +18,7 @@ std::string_view to_string(EventType type) noexcept {
         case EventType::Signal:     return "signal";
         case EventType::Order:      return "order";
         case EventType::Fill:       return "fill";
+        case EventType::RiskDecision: return "risk_decision";
     }
     return "invalid";
 }
@@ -61,10 +62,13 @@ constexpr domain::OrderStatus kOrderStatuses[] = {
     domain::OrderStatus::Expired};
 constexpr domain::FillStatus kFillStatuses[] = {domain::FillStatus::Filled,
                                                 domain::FillStatus::PartiallyFilled};
+constexpr domain::RiskOutcome kRiskOutcomes[] = {domain::RiskOutcome::Approved,
+                                                 domain::RiskOutcome::Resized,
+                                                 domain::RiskOutcome::Rejected};
 
 EventType event_type_from(std::string_view text) {
     for (const EventType type : {EventType::MarketData, EventType::Signal, EventType::Order,
-                                 EventType::Fill}) {
+                                 EventType::Fill, EventType::RiskDecision}) {
         if (to_string(type) == text) {
             return type;
         }
@@ -181,6 +185,49 @@ std::string payload_json(const domain::Fill& f) {
     write_time(w, "filled_at", f.filled_at);
     w.string("status", domain::to_string(f.status));
     w.unsigned_integer("sequence", f.sequence);
+    w.close();
+    return out;
+}
+
+std::string payload_json(const domain::RiskDecisionReport& r) {
+    std::string checks = "[";
+    for (const auto& c : r.checks) {
+        if (checks.size() > 1) {
+            checks += ',';
+        }
+        ObjectWriter w{checks};
+        w.string("policy", c.policy);
+        w.raw("passed", c.passed ? "true" : "false");
+        w.string("detail", c.detail);
+        if (c.limit) {
+            w.string("limit", *c.limit);
+        }
+        if (c.observed) {
+            w.string("observed", *c.observed);
+        }
+        w.close();
+    }
+    checks += ']';
+
+    std::string out;
+    ObjectWriter w{out};
+    w.unsigned_integer("id", r.id);
+    w.unsigned_integer("run_id", r.run_id.value);
+    w.unsigned_integer("signal_id", r.signal_id.value);
+    write_time(w, "decided_at", r.decided_at);
+    w.string("symbol", r.symbol);
+    w.string("side", domain::to_string(r.side));
+    w.string("strategy_id", r.strategy_id);
+    w.string("outcome", domain::to_string(r.outcome));
+    w.integer("requested_quantity", r.requested_quantity);
+    w.integer("approved_quantity", r.approved_quantity);
+    if (r.reason) {
+        w.string("reason", *r.reason);
+    }
+    w.raw("checks", checks);
+    if (r.order_id) {
+        w.unsigned_integer("order_id", r.order_id->value);
+    }
     w.close();
     return out;
 }
@@ -362,6 +409,51 @@ domain::Fill fill_from(const Value& p) {
     return f;
 }
 
+domain::RiskDecisionReport risk_decision_from(const Value& p) {
+    domain::RiskDecisionReport r;
+    r.id                 = integer<std::uint64_t>(p, "id");
+    r.run_id             = id<common::RunId>(p, "run_id");
+    r.signal_id          = id<common::SignalId>(p, "signal_id");
+    r.decided_at         = time_field(p, "decided_at");
+    r.symbol             = str(p, "symbol");
+    r.side               = enum_from(str(p, "side"), kSignalSides, "signal side");
+    r.strategy_id        = str(p, "strategy_id");
+    r.outcome            = enum_from(str(p, "outcome"), kRiskOutcomes, "risk outcome");
+    r.requested_quantity = integer<common::Quantity>(p, "requested_quantity");
+    r.approved_quantity  = integer<common::Quantity>(p, "approved_quantity");
+    if (const Value* reason = p.find("reason")) {
+        r.reason = string_of(*reason, "reason");
+    }
+    const Value& checks = require(p, "checks");
+    if (checks.kind != Value::Kind::Array) {
+        fail("checks", "must be an array");
+    }
+    for (const Value& c : checks.array) {
+        if (c.kind != Value::Kind::Object) {
+            fail("checks", "must hold objects");
+        }
+        domain::RiskCheck check;
+        check.policy = str(c, "policy");
+        const Value& passed = require(c, "passed");
+        if (passed.kind != Value::Kind::Bool) {
+            fail("passed", "must be true or false");
+        }
+        check.passed = passed.boolean;
+        check.detail = str(c, "detail");
+        if (const Value* limit = c.find("limit")) {
+            check.limit = string_of(*limit, "limit");
+        }
+        if (const Value* observed = c.find("observed")) {
+            check.observed = string_of(*observed, "observed");
+        }
+        r.checks.push_back(std::move(check));
+    }
+    if (p.find("order_id") != nullptr) {
+        r.order_id = id<common::OrderId>(p, "order_id");
+    }
+    return r;
+}
+
 // The payload alternative that belongs to each EventType. Event::type and the
 // variant are set independently by publishers, so encode() checks they agree.
 bool payload_matches(const Event& event) {
@@ -370,6 +462,8 @@ bool payload_matches(const Event& event) {
         case EventType::Signal:     return std::holds_alternative<domain::TradeSignal>(event.payload);
         case EventType::Order:      return std::holds_alternative<domain::Order>(event.payload);
         case EventType::Fill:       return std::holds_alternative<domain::Fill>(event.payload);
+        case EventType::RiskDecision:
+            return std::holds_alternative<domain::RiskDecisionReport>(event.payload);
     }
     return false;
 }
@@ -418,6 +512,7 @@ WireEnvelope decode(std::string_view text) {
         case EventType::Signal:     envelope.event.payload = signal_from(payload); break;
         case EventType::Order:      envelope.event.payload = order_from(payload); break;
         case EventType::Fill:       envelope.event.payload = fill_from(payload); break;
+        case EventType::RiskDecision: envelope.event.payload = risk_decision_from(payload); break;
     }
     return envelope;
 }

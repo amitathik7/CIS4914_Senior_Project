@@ -2,17 +2,21 @@
 // event bus (docs/EVENT_BUS.md):
 //
 //   CSV bars -> MarketDataService -> bus -> StrategyEngine -> bus (signals)
-//                                        -> PortfolioManager (marks)
+//        -> RiskManager -> bus (risk decisions) -> ExecutionSimulator
+//        -> bus (orders, fills) -> PortfolioManager
 //
-// Risk, execution and analytics are still stubs, so a run ends at the signals
-// the strategies publish; nothing is ordered or filled. Simulated only: no
+// The bars are replayed in market time: the clock is set to each bar's time
+// and the bus is drained before the next timestamp, so a market order placed
+// on one bar fills at the next bar's open on every bus. Simulated only: no
 // network market data, no real orders.
 //
 //   trading_engine                      build info and usage
 //   trading_engine run --bars FILE [--bus inprocess|topics|kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
+//                      [--cash N] [--risk on|off]
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -23,6 +27,7 @@
 #include <vector>
 
 #include "bar_csv.hpp"
+#include "trading_engine/app/order_flow.hpp"
 #include "trading_engine/app/pipeline.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/decimal_text.hpp"
@@ -57,7 +62,10 @@ constexpr const char* kUsage =
     "  --topic-prefix NAME     topic prefix (default trading_engine)\n"
     "  --sma SHORT,LONG        moving-average windows (default 5,20)\n"
     "  --lookback N            mean-reversion lookback (default 20)\n"
-    "  --quantity N            shares requested per signal (default 1)\n";
+    "  --quantity N            shares requested per signal (default 1)\n"
+    "  --cash N                starting cash in dollars (default 100000)\n"
+    "  --risk on|off           run the starter risk policies (default on); buying\n"
+    "                          power and no-short-selling are always checked\n";
 
 struct Options {
     std::string bars;
@@ -68,6 +76,8 @@ struct Options {
     std::size_t long_window{20};
     std::size_t lookback{20};
     common::Quantity quantity{1};
+    std::int64_t cash{100'000};
+    bool risk_policies{true};
 };
 
 [[noreturn]] void usage_error(const std::string& message) {
@@ -114,6 +124,13 @@ Options parse(int argc, char** argv) {
             o.lookback = to_size(value, "--lookback");
         } else if (flag == "--quantity") {
             o.quantity = static_cast<common::Quantity>(to_size(value, "--quantity"));
+        } else if (flag == "--cash") {
+            o.cash = static_cast<std::int64_t>(to_size(value, "--cash"));
+        } else if (flag == "--risk") {
+            if (value != "on" && value != "off") {
+                usage_error("--risk needs on or off");
+            }
+            o.risk_policies = value == "on";
         } else {
             usage_error("unknown option " + flag);
         }
@@ -141,7 +158,8 @@ struct BusStack {
 
 void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
     events::TopicEventBusOptions topic_options;
-    topic_options.topic_prefix = o.topic_prefix;
+    topic_options.topic_prefix  = o.topic_prefix;
+    topic_options.poll_interval = std::chrono::milliseconds{5};
 
     if (o.bus == "inprocess") {
         stack.bus = std::make_unique<events::InProcessEventBus>(clock);
@@ -154,13 +172,17 @@ void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
 #if defined(TRADING_ENGINE_HAVE_KAFKA)
         kafka::KafkaTransportConfig config;
         config.bootstrap_servers = o.brokers;
+        // The run drains the bus once per bar timestamp, so every hop's
+        // latency counts: don't let an idle fetch sit for librdkafka's 500 ms.
+        config.fetch_wait_max = std::chrono::milliseconds{10};
         if (o.bus == "kafka-mock") {
             stack.mock_cluster       = std::make_unique<kafka::KafkaMockCluster>();
             config.bootstrap_servers = stack.mock_cluster->bootstrap_servers();
             // The mock does not implement CreateTopics: make the topics on it directly.
             config.create_topics = false;
             for (const auto type : {events::EventType::MarketData, events::EventType::Signal,
-                                    events::EventType::Order, events::EventType::Fill}) {
+                                    events::EventType::Order, events::EventType::Fill,
+                                    events::EventType::RiskDecision}) {
                 stack.mock_cluster->create_topic(
                     o.topic_prefix + "." + std::string(events::to_string(type)), config.partitions);
             }
@@ -176,7 +198,10 @@ void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
 }
 
 int run(const Options& o) {
-    const std::vector<domain::MarketEvent> bars = cli::read_bar_csv(o.bars);
+    std::vector<domain::MarketEvent> bars = cli::read_bar_csv(o.bars);
+    std::stable_sort(bars.begin(), bars.end(), [](const auto& a, const auto& b) {
+        return a.exchange_time < b.exchange_time;
+    });
     std::set<common::Symbol> symbol_set;
     for (const auto& bar : bars) {
         if (!bar.symbol.empty()) {
@@ -189,7 +214,7 @@ int run(const Options& o) {
         return 1;
     }
 
-    const common::SystemClock clock;
+    common::ManualClock clock{bars.empty() ? common::Timestamp{} : bars.front().exchange_time};
     BusStack stack;
     make_bus(o, clock, stack);
 
@@ -210,7 +235,55 @@ int run(const Options& o) {
         std::cout << '\n';
     });
 
-    app::Pipeline pipeline{*stack.bus, clock};
+    std::uint64_t orders_seen = 0, fills_seen = 0, rejected_orders = 0;
+    std::uint64_t approved = 0, resized = 0, rejected = 0;
+    stack.bus->subscribe(events::EventType::RiskDecision, [&](const events::Event& e) {
+        const auto& r = std::get<domain::RiskDecisionReport>(e.payload);
+        const std::lock_guard lock{out_mutex};
+        switch (r.outcome) {
+            case domain::RiskOutcome::Approved: ++approved; return;
+            case domain::RiskOutcome::Resized:  ++resized; break;
+            case domain::RiskOutcome::Rejected: ++rejected; break;
+        }
+        std::cout << "  risk " << domain::to_string(r.outcome) << " signal #" << r.signal_id.value
+                  << " (" << r.reason.value_or("") << ")";
+        if (!r.checks.empty()) {
+            std::cout << ": " << r.checks.back().detail;
+        }
+        std::cout << '\n';
+    });
+    stack.bus->subscribe(events::EventType::Order, [&](const events::Event& e) {
+        const auto& order = std::get<domain::Order>(e.payload);
+        const std::lock_guard lock{out_mutex};
+        ++orders_seen;
+        if (order.status == domain::OrderStatus::Rejected) {
+            ++rejected_orders;
+            std::cout << "  order #" << order.id.value << " rejected: "
+                      << order.reject_reason.value_or("") << '\n';
+        }
+    });
+    stack.bus->subscribe(events::EventType::Fill, [&](const events::Event& e) {
+        const auto& f = std::get<domain::Fill>(e.payload);
+        const std::lock_guard lock{out_mutex};
+        ++fills_seen;
+        std::cout << "  fill #" << f.id.value << "  order #" << f.order_id.value << "  "
+                  << (f.filled_quantity < 0 ? "sold " : "bought ")
+                  << (f.filled_quantity < 0 ? -f.filled_quantity : f.filled_quantity) << ' '
+                  << f.symbol << " @ " << common::format_decimal(f.fill_price) << "  fees "
+                  << common::format_decimal(f.fees) << "  " << common::format_timestamp(f.filled_at)
+                  << '\n';
+    });
+
+    app::PipelineConfig pipeline_config;
+    pipeline_config.starting_cash = common::Money::from_units(o.cash);
+    app::Pipeline pipeline{*stack.bus, clock, pipeline_config};
+
+    app::OrderFlowConfig flow_config;
+    flow_config.run_id                   = pipeline_config.run_id;
+    flow_config.simulation.starting_cash = pipeline_config.starting_cash;
+    flow_config.simulation.fees          = pipeline_config.fees;
+    flow_config.risk_policies            = o.risk_policies;
+    app::OrderFlow flow{pipeline, *stack.bus, clock, flow_config};
 
     strategy::MovingAverageCrossoverConfig sma;
     sma.short_window       = o.short_window;
@@ -227,11 +300,17 @@ int run(const Options& o) {
 
     std::cout << "bus: " << o.bus << ", bars: " << bars.size() << " from " << o.bars
               << ", symbols: " << symbols.size() << "\n\n";
+    flow.start();   // before the pipeline: execution fills before the portfolio marks
     pipeline.start();
-    for (const auto& bar : bars) {
-        pipeline.input().on_market_event(bar);
+    for (std::size_t i = 0; i < bars.size(); ++i) {
+        clock.set(bars[i].exchange_time);
+        pipeline.input().on_market_event(bars[i]);
+        if (i + 1 == bars.size() || bars[i + 1].exchange_time != bars[i].exchange_time) {
+            stack.bus->wait_until_drained();   // replay in market time, one timestamp at a time
+        }
     }
     pipeline.finish();
+    flow.stop();
 
     const auto md   = pipeline.market_data().stats();
     const auto se   = pipeline.strategies().stats();
@@ -242,10 +321,21 @@ int run(const Options& o) {
               << se.signals_published << ", rejected " << se.signals_rejected << ", errors "
               << se.strategy_errors << '\n'
               << "signals seen  " << signals_seen << " (on the bus, after the round trip)\n"
-              << "portfolio     marks " << pb.marks << ", cash "
-              << common::format_decimal(snap.cash) << ", equity "
-              << common::format_decimal(snap.total_equity) << '\n'
-              << "\nRisk and execution are not implemented yet, so no orders or fills.\n";
+              << "risk          approved " << approved << ", resized " << resized
+              << ", rejected " << rejected << (o.risk_policies ? "" : "  (policies off)") << '\n'
+              << "execution     orders " << orders_seen << " events, " << rejected_orders
+              << " rejected, fills " << fills_seen << ", still open "
+              << flow.execution().open_order_count() << '\n'
+              << "portfolio     marks " << pb.marks << ", fills applied " << pb.fills_applied
+              << ", errors " << pb.errors << '\n'
+              << "              cash " << common::format_decimal(snap.cash) << ", equity "
+              << common::format_decimal(snap.total_equity) << '\n';
+    for (const auto& p : snap.positions) {
+        if (!p.is_flat()) {
+            std::cout << "              holding " << p.quantity << ' ' << p.symbol << " (avg cost "
+                      << common::format_decimal(p.average_cost) << ")\n";
+        }
+    }
 
     if (auto* topic_bus = dynamic_cast<events::TopicEventBus*>(stack.bus.get())) {
         const auto s = topic_bus->stats();

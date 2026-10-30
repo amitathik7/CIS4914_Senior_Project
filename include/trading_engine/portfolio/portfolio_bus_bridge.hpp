@@ -8,7 +8,10 @@
 //  subscribes on its behalf and forwards:
 //    EventType::MarketData -> PortfolioManager::mark()
 //    EventType::Order      -> PortfolioManager::apply_order_update()
-//    EventType::Fill       -> PortfolioManager::apply()
+//    EventType::Fill       -> PortfolioManager::apply(), then re-mark the
+//                             symbol with the newest market event if that is
+//                             not older than the fill (apply() marks at the
+//                             fill price, which would otherwise win)
 //  per the flow in docs/DATA_FLOW.md and ADR 0004.
 //
 //  A fill the portfolio refuses (duplicate id or another run: apply() returns
@@ -26,11 +29,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "trading_engine/common/identifiers.hpp"
+#include "trading_engine/domain/market_event.hpp"
 
 namespace trading_engine::events { class IEventBus; }
 
@@ -66,6 +71,8 @@ private:
     events::IEventBus& bus_;
     PortfolioManager&  portfolio_;
     std::vector<common::SubscriptionId> subscriptions_{};
+    // Last market event per symbol; touched only on the dispatcher thread.
+    std::map<common::Symbol, domain::MarketEvent> last_marks_{};
 
     std::atomic<std::uint64_t> marks_{0};
     std::atomic<std::uint64_t> order_updates_{0};

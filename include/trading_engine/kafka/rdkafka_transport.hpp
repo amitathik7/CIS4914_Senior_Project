@@ -65,6 +65,10 @@ struct KafkaTransportConfig {
     int         replication_factor{1};     // ditto; 1 suits a single local broker
     bool        from_beginning{false};     // replay the topics' retained history
     std::chrono::milliseconds timeout{std::chrono::seconds{15}};   // metadata / admin / assign
+    // Longest a fetch waits on an idle partition (librdkafka's
+    // fetch.wait.max.ms; its default is 500 ms). Lower it when the caller
+    // waits for every round trip, as a bar-by-bar replay does.
+    std::chrono::milliseconds fetch_wait_max{500};
     // Extra librdkafka properties, applied to both handles after the defaults
     // (e.g. {"security.protocol", "SASL_SSL"}). Unknown keys throw KafkaError.
     std::map<std::string, std::string> properties{};

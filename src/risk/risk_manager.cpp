@@ -107,8 +107,10 @@ RiskDecision RiskManager::check(const domain::TradeSignal& signal) {
     domain::TradeSignal working = signal;
     const common::Quantity asked = signal.requested_quantity.value_or(0);
 
+    std::vector<domain::RiskCheck> checks;
     for (const auto& policy : policies_) {
         RiskDecision d = policy->evaluate(working, snapshot, context);
+        checks.push_back({std::string(policy->name()), d.approved, d.reason, {}, {}});
         if (!d.approved) {
             record.decision = std::move(d);
             record.policy   = std::string(policy->name());
@@ -134,6 +136,8 @@ RiskDecision RiskManager::check(const domain::TradeSignal& signal) {
                     : "not enough buying power for " + std::to_string(quantity) + " shares");
             record.policy = "buying_power";
         }
+        checks.push_back({"buying_power", hold.granted,
+                          hold.granted ? std::string{"ok"} : record.decision.reason, {}, {}});
     }
 
     const common::Quantity final_quantity = working.requested_quantity.value_or(0);
@@ -143,17 +147,43 @@ RiskDecision RiskManager::check(const domain::TradeSignal& signal) {
         record.decision.adjusted_quantity.reset();
     }
 
-    const std::lock_guard lock{mutex_};
-    ++stats_.evaluated;
-    if (record.decision.approved) {
-        ++stats_.approved;
-        if (record.decision.adjusted_quantity) {
-            ++stats_.resized;
-        }
+    domain::RiskDecisionReport report;
+    report.run_id             = run_id_;
+    report.signal_id          = signal.id;
+    report.decided_at         = context.as_of;
+    report.symbol             = signal.symbol;
+    report.side               = signal.side;
+    report.strategy_id        = signal.strategy_id;
+    report.requested_quantity = asked;
+    report.checks             = std::move(checks);
+    if (!record.decision.approved) {
+        report.outcome           = domain::RiskOutcome::Rejected;
+        report.approved_quantity = 0;
     } else {
-        ++stats_.rejected;
+        report.outcome           = record.decision.adjusted_quantity ? domain::RiskOutcome::Resized
+                                                                     : domain::RiskOutcome::Approved;
+        report.approved_quantity = final_quantity;
     }
-    decisions_.push_back(record);
+    if (!record.policy.empty()) {
+        report.reason = record.policy;
+    }
+
+    {
+        const std::lock_guard lock{mutex_};
+        ++stats_.evaluated;
+        if (record.decision.approved) {
+            ++stats_.approved;
+            if (record.decision.adjusted_quantity) {
+                ++stats_.resized;
+            }
+        } else {
+            ++stats_.rejected;
+        }
+        decisions_.push_back(record);
+        report.id = ++reports_issued_;
+    }
+    // Outside the lock; refused (bus not running) only loses the copy on the bus.
+    (void)bus_.publish(events::Event{events::EventType::RiskDecision, {}, 0, std::move(report)});
     return record.decision;
 }
 

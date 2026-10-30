@@ -22,6 +22,7 @@ void PortfolioBusBridge::attach() {
             bus_.subscribe(events::EventType::MarketData, [this](const events::Event& e) {
                 if (const auto* market = std::get_if<domain::MarketEvent>(&e.payload)) {
                     portfolio_.mark(*market);
+                    last_marks_[market->symbol] = *market;
                     marks_.fetch_add(1, std::memory_order_relaxed);
                 }
             }));
@@ -42,6 +43,14 @@ void PortfolioBusBridge::attach() {
                     try {
                         if (portfolio_.apply(*fill)) {
                             fills_applied_.fetch_add(1, std::memory_order_relaxed);
+                            // apply() marks the position at the fill price. On a bus the
+                            // fill is delivered after the market event that caused it, so
+                            // put back a mark that is at least as new as the fill.
+                            const auto last = last_marks_.find(fill->symbol);
+                            if (last != last_marks_.end() &&
+                                !(last->second.exchange_time < fill->filled_at)) {
+                                portfolio_.mark(last->second);
+                            }
                         } else {
                             fills_ignored_.fetch_add(1, std::memory_order_relaxed);
                         }

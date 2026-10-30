@@ -48,7 +48,8 @@ trading_engine_add_component_test(events
     events_in_process_bus_test.cpp
     events_topic_bus_test.cpp
     portfolio_bus_bridge_test.cpp
-    pipeline_test.cpp)
+    pipeline_test.cpp
+    order_flow_test.cpp)
 target_link_libraries(te_test_events PRIVATE trading_engine::test_support)
 
 # The Kafka adapter, against librdkafka's in-process mock cluster: no broker

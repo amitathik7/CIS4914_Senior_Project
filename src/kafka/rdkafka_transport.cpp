@@ -103,6 +103,7 @@ RdKafkaTransport::RdKafkaTransport(KafkaTransportConfig config)
     set(consumer_conf, "enable.auto.commit", "false");
     set(consumer_conf, "enable.partition.eof", "false");
     set(consumer_conf, "allow.auto.create.topics", "true");
+    set(consumer_conf, "fetch.wait.max.ms", std::to_string(config_.fetch_wait_max.count()));
     apply_extra(consumer_conf, config_);
     handles_->consumer = make_handle(RD_KAFKA_CONSUMER, consumer_conf);
     rd_kafka_poll_set_consumer(handles_->consumer.get());
