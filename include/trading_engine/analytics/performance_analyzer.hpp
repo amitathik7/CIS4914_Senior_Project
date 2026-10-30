@@ -8,8 +8,10 @@
 //  volatility, max drawdown, profit factor, trade count, and more later).
 //  Pure computation: no I/O, no market-data access.
 //
-//  STATUS: analyze() throws common::NotImplemented. It must never return a
-//  zero-filled report as though it were a real result.
+//  analyze() needs at least one snapshot (the first is the starting point)
+//  and throws common::ValidationError for an empty curve rather than return
+//  a zero-filled report. Fills must be in execution order. Metric definitions
+//  are in domain/performance_report.hpp.
 //
 //  Ownership / lifecycle: cheap, stateless; construct on demand. Thread-safe
 //  (nothing mutable).
@@ -36,10 +38,10 @@ public:
 
     [[nodiscard]] domain::PerformanceReport analyze(
         std::span<const domain::PortfolioSnapshot> equity_curve,
-        std::span<const domain::Fill> fills) const;   // NOT IMPLEMENTED
+        std::span<const domain::Fill> fills) const;
 
 private:
-    [[maybe_unused]] AnalysisOptions options_;
+    AnalysisOptions options_;
 
     // TODO: helpers for return series construction, drawdown curve, rolling
     //       volatility, trade round-trip pairing for profit factor / win rate.

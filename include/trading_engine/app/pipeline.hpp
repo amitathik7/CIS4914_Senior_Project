@@ -71,6 +71,8 @@ public:
     [[nodiscard]] const strategy::StrategyEngine& strategies() const noexcept { return strategies_; }
     [[nodiscard]] const portfolio::PortfolioManager& portfolio() const noexcept { return portfolio_; }
     [[nodiscard]] const portfolio::PortfolioBusBridge& portfolio_bridge() const noexcept { return bridge_; }
+    // The portfolio's one mutating seam for the RiskManager (ADR 0005 section 4).
+    [[nodiscard]] portfolio::IReservationLedger& reservations() noexcept { return portfolio_; }
 
 private:
     enum class State : std::uint8_t { Built, Running, Finished };
