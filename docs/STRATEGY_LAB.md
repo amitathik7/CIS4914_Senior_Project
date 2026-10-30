@@ -3,6 +3,7 @@
 > Status (2026-10-02): the **C++ replay tool, its per-bar diagnostics, fixtures and tests are
 > implemented**, and so is the browser UI (Streamlit/Plotly): **Explore** (section 14), and **Compare**, **Validate** and a **dark theme**
 > ([STRATEGY_LAB_COMPARE_VALIDATE.md](STRATEGY_LAB_COMPARE_VALIDATE.md); a 5-minute walkthrough is in [STRATEGY_LAB_DEMO.md](STRATEGY_LAB_DEMO.md)).
+> The Engine console's native **Strategies** section (React, `web/`) reuses the replay tool through a small gateway: [STRATEGIES_CONSOLE.md](STRATEGIES_CONSOLE.md).
 > The tool is optional and OFF by default. It replays recorded
 > bars through the real `StrategyEngine` and the reference strategies over a **lab-local synchronous
 > bus**, and reports signals and diagnostics. It is not the production queue, runs no risk, execution

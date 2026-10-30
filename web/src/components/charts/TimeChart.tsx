@@ -37,10 +37,11 @@ export function fromChartTime(time: Time): string {
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-export type Tone = "line" | "accent" | "up" | "down" | "warn" | "muted";
+export type Tone = "line" | "accent" | "second" | "up" | "down" | "warn" | "muted";
 const TONE_VAR: Record<Tone, string> = {
   line: "--chart-line",
   accent: "--accent",
+  second: "--cmp-b",
   up: "--up",
   down: "--down",
   warn: "--warn",
