@@ -65,7 +65,7 @@ class Server(unittest.TestCase):
         self.assertEqual((status, body["error"]["code"]), (404, "run_not_found"))
         status, body = self.get("/v1/runs", method="POST")
         self.assertEqual((status, body["error"]["code"]), (501, "not_supported"))
-        self.assertIn("trading_engine run", body["error"]["message"])
+        self.assertIn("trading_engine serve", body["error"]["message"])
         status, body = self.get("/v1/runs/te.demo/kill-switch", method="PUT")
         self.assertEqual(status, 501)
         status, body = self.get("/v1/engine", headers={"Origin": "https://evil.example"})
@@ -118,10 +118,14 @@ class TopicPattern(unittest.TestCase):
         self.assertTrue(every.match("te.demo.signal"))
         self.assertFalse(every.match("__consumer_offsets"))
         self.assertFalse(every.match("te.demo.portfolio"))
+        self.assertTrue(every.match("te.demo.run"))
+        self.assertTrue(every.match("trading_engine.control.engine"))
+        self.assertFalse(every.match("trading_engine.control.command"))   # the gateway writes commands, never reads
         named = re.compile(sources.topic_pattern(["te.demo"]))
         self.assertTrue(named.match("te.demo.fill"))
         self.assertFalse(named.match("te.demoX.fill"))
         self.assertFalse(named.match("other.fill"))
+        self.assertTrue(named.match("trading_engine.control.engine"))
 
 
 if __name__ == "__main__":

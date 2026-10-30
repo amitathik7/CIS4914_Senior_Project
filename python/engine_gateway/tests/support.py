@@ -30,7 +30,8 @@ def envelope(event_type: str, payload: dict[str, Any], origin: str = "0123456789
     _sequence += 1
     return json.dumps({"schema": 1, "origin": origin, "sequence": _sequence if sequence is None else sequence,
                        "type": event_type, "enqueued_at": payload.get("exchange_time") or payload.get("created_at")
-                       or payload.get("updated_at") or payload.get("filled_at") or payload.get("decided_at"),
+                       or payload.get("updated_at") or payload.get("filled_at") or payload.get("decided_at")
+                       or payload.get("sent_at"),
                        "payload": payload}).encode()
 
 

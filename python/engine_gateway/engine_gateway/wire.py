@@ -16,9 +16,14 @@ from dataclasses import dataclass
 from typing import Any
 
 SCHEMA = 1
-# The four topics of the C++ bus, plus a risk decision topic the console's Risk page can use once the Risk Manager
-# publishes one (payload shaped like RiskDecision in web/src/api/contract.ts).
-EVENT_TYPES = ("market_data", "signal", "order", "fill", "risk_decision")
+# The five topics of the C++ bus, plus `<prefix>.run`: the run's status, settings and kill switch, published by the
+# engine (docs/adr/0007-engine-command-channel.md).
+EVENT_TYPES = ("market_data", "signal", "order", "fill", "risk_decision", "run")
+# The command channel's own topics live under a control prefix, not a run's: the engine's heartbeat (read) and the
+# commands (written by the gateway, never read).
+CONTROL_PREFIX = "trading_engine.control"
+ENGINE_TYPE = "engine"
+COMMAND_TYPE = "command"
 SCALE = 1_000_000
 
 _DECIMAL = re.compile(r"-?(\d+)(?:\.(\d{1,6}))?")
@@ -39,9 +44,9 @@ class Envelope:
 
 
 def split_topic(topic: str) -> tuple[str, str] | None:
-    """'te.demo.signal' -> ('te.demo', 'signal'); None when the topic is not one of the bus's."""
+    """'te.demo.signal' -> ('te.demo', 'signal'); also '<control>.engine'. None for any other topic."""
     prefix, _, suffix = topic.rpartition(".")
-    if not prefix or suffix not in EVENT_TYPES:
+    if not prefix or (suffix not in EVENT_TYPES and suffix != ENGINE_TYPE):
         return None
     return prefix, suffix
 

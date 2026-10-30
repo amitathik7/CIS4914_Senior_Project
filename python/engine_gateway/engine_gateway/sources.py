@@ -27,12 +27,14 @@ from .read_model import Store
 Sink = Callable[[str, bytes, float], None]
 
 
-def topic_pattern(prefixes: Sequence[str]) -> str:
-    """The subscription regex (librdkafka treats a leading '^' as a pattern)."""
+def topic_pattern(prefixes: Sequence[str], control_prefix: str = wire.CONTROL_PREFIX) -> str:
+    """The subscription regex (librdkafka treats a leading '^' as a pattern): the runs' topics, and the engines'
+    heartbeat on `<control>.engine`. No (?:...): librdkafka's regex dialect (POSIX ERE) rejects it."""
     types = "|".join(wire.EVENT_TYPES)
+    engines = rf"{re.escape(control_prefix)}\.{wire.ENGINE_TYPE}"
     if not prefixes:
-        return rf"^[^_].*\.({types})$"                      # every prefix; skips Kafka's internal __* topics
-    return rf"^({'|'.join(re.escape(p) for p in prefixes)})\.({types})$"
+        return rf"^([^_].*\.({types})|{engines})$"        # every prefix; skips Kafka's internal __* topics
+    return rf"^(({'|'.join(re.escape(p) for p in prefixes)})\.({types})|{engines})$"
 
 
 class Recorder:
@@ -73,7 +75,8 @@ def replay(path: Path, store: Store, pace_s: float = 0.0, stop: threading.Event 
 class KafkaSource:
     """A background consumer thread. Needs the confluent-kafka package (librdkafka, the engine's Kafka client too)."""
 
-    def __init__(self, store: Store, brokers: str, prefixes: Sequence[str] = (), record: Sink | None = None):
+    def __init__(self, store: Store, brokers: str, prefixes: Sequence[str] = (), record: Sink | None = None,
+                 control_prefix: str = wire.CONTROL_PREFIX):
         try:
             from confluent_kafka import Consumer, KafkaError   # noqa: F401  (imported here: Kafka is optional)
         except ImportError:
@@ -84,13 +87,13 @@ class KafkaSource:
         self._store = store
         self._record = record
         self._stop = threading.Event()
-        self._pattern = topic_pattern(prefixes)
+        self._pattern = topic_pattern(prefixes, control_prefix)
         self._consumer = Consumer({
             "bootstrap.servers": brokers,
             "group.id": f"te-engine-gateway-{uuid.uuid4().hex[:12]}",
             "auto.offset.reset": "earliest",
             "enable.auto.commit": False,
-            "topic.metadata.refresh.interval.ms": 2000,     # notice a new run's topics within seconds
+            "topic.metadata.refresh.interval.ms": 500,      # notice a new run's topics (and command answers) quickly
             "fetch.wait.max.ms": 100,
             "client.id": "te-engine-gateway",
         })

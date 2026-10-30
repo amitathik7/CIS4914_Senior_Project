@@ -32,6 +32,12 @@
 //  (ADR 0005 section 4): that is the buying-power and "shares to sell"
 //  check, atomic against other signals queued in the same bar.
 //
+//  Kill switch (plan M6): while engaged, every signal is rejected before any
+//  policy runs, with reason "kill_switch" and the operator's text as the
+//  detail. Orders already working are not cancelled (the simulator has no
+//  cancels yet). set_kill_switch() may be called from any thread, for example
+//  by the command channel (docs/adr/0007-engine-command-channel.md).
+//
 //  Thread-safety: handlers run on the bus dispatcher; public methods take one
 //  mutex, so decisions() and stats() may be read from any thread.
 // -----------------------------------------------------------------------------
@@ -74,6 +80,12 @@ public:
     };
     using ApprovalSink = std::function<void(const domain::TradeSignal&)>;
 
+    struct KillSwitch {
+        bool                             engaged{false};
+        std::optional<common::Timestamp> changed_at{};   // unset until first changed
+        std::string                      reason{};       // empty when released
+    };
+
     RiskManager(const portfolio::IPortfolioView& portfolio,
                 events::IEventBus& bus,
                 const common::IClock& clock,
@@ -103,6 +115,11 @@ public:
 
     void add_policy(std::shared_ptr<IRiskPolicy> policy);
 
+    // Engage (reason is shown on every rejection) or release. Stamped with the
+    // clock's now(). Returns the new state. Any thread.
+    KillSwitch set_kill_switch(bool engaged, std::string reason = {});
+    [[nodiscard]] KillSwitch kill_switch() const;
+
     [[nodiscard]] std::size_t policy_count() const noexcept { return policies_.size(); }
     [[nodiscard]] std::vector<RiskRecord> decisions() const;
     [[nodiscard]] Stats stats() const;
@@ -125,8 +142,9 @@ private:
     std::vector<RiskRecord>                    decisions_{};
     Stats                                      stats_{};
     std::uint64_t                              reports_issued_{0};
+    KillSwitch                                 kill_switch_{};
 
-    // TODO: kill-switch latch, rejection log wired to persistence,
+    // TODO: rejection log wired to persistence,
     //       per-symbol / per-strategy limit overrides.
 };
 

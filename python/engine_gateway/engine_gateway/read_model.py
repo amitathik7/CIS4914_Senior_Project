@@ -1,7 +1,9 @@
 """The gateway's read model: what it has seen on the bus, answered in the console's contract (web/src/api/contract.ts).
 
-ADR 0006 asks for an events-only read model, so everything here is built from the four topics and nothing reads engine
-state. Market data, signals, orders and fills are stored as they arrive. The portfolio, the equity curve and the closed
+ADR 0006 asks for an events-only read model, so everything here is built from the topics and nothing reads engine
+state. Market data, signals, orders and fills are stored as they arrive. `<prefix>.run` carries the run's status,
+settings and kill switch (docs/adr/0007-engine-command-channel.md); a run without one (an older engine) is shown with
+the engine's default settings and is "completed" once it goes quiet. The portfolio, the equity curve and the closed
 trades are DERIVED from fills and marks with the Portfolio Manager's own rules (src/portfolio/portfolio_manager.cpp):
 cash moves by price x signed quantity plus fees, fees are charged to realised P&L, average cost blends on adds and is kept
 on reductions, and a flip opens the remainder at the fill price. Money is integer millionths throughout.
@@ -29,6 +31,7 @@ BARS_PER_SESSION = 390                     # one-minute bars, for annualising vo
 HISTOGRAM_BOUNDS_US = (100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 1_000_000)
 STAGE_FOR_TYPE = {"market_data": "ingest", "signal": "strategy", "risk_decision": "risk", "order": "execution",
                   "fill": "portfolio"}
+ENGINE_GRACE_S = 6.0                       # an engine is gone after max(this, 3 heartbeats) without one
 
 
 def utc_now() -> str:
@@ -83,9 +86,11 @@ class _OpenTrade:
 class Run:
     """One topic prefix."""
 
-    def __init__(self, run_id: str, defaults: RunDefaults):
+    def __init__(self, run_id: str, defaults: RunDefaults, engine_alive: Callable[[str], bool] = lambda _: False):
         self.run_id = run_id
         self.defaults = defaults
+        self.engine_alive = engine_alive
+        self.status_report: dict[str, Any] | None = None    # the latest <prefix>.run payload
         self.created_at = utc_now()
         self.last_message = time.monotonic()
         self.version = 0
@@ -113,8 +118,8 @@ class Run:
         if key in self._seen:
             self.duplicates += 1                              # at-least-once delivery: a redelivered message
             return False
-        handler = {"market_data": self._market_data, "signal": self._signal,
-                   "order": self._order, "fill": self._fill, "risk_decision": self._risk}[envelope.type]
+        handler = {"market_data": self._market_data, "signal": self._signal, "order": self._order,
+                   "fill": self._fill, "risk_decision": self._risk, "run": self._run_status}[envelope.type]
         handler(envelope.payload)                             # raises WireError before anything is recorded
         self._seen.add(key)
         self.counts[envelope.type] += 1
@@ -162,6 +167,14 @@ class Run:
         decision.setdefault("checks", [])
         self.risk_decisions.append(decision)
 
+    def _run_status(self, p: dict[str, Any]) -> None:
+        _require_str(p, "status")
+        updated = _require_str(p, "updated_at")
+        if not isinstance(p.get("config"), dict) or not isinstance(p.get("kill_switch"), dict):
+            _fail("config")
+        if self.status_report is None or self.status_report["updated_at"] <= updated:
+            self.status_report = dict(p)
+
     def _order(self, p: dict[str, Any]) -> None:
         order_id = int(p["id"]) if isinstance(p.get("id"), int) else _fail("order id")
         status, at = _require_str(p, "status"), _require_str(p, "updated_at")
@@ -202,21 +215,70 @@ class Run:
     # ---- reading -----------------------------------------------------------------------------------------------------
 
     def status(self) -> str:
-        return "running" if time.monotonic() - self.last_message < self.defaults.idle_seconds else "completed"
+        quiet = time.monotonic() - self.last_message >= self.defaults.idle_seconds
+        report = self.status_report
+        if report is None:
+            return "completed" if quiet else "running"
+        status = report["status"]
+        if status in ("queued", "running"):
+            engine = report.get("engine_id")
+            if engine and not self.engine_alive(engine):
+                return "failed"                               # its engine stopped answering
+            if not engine and quiet:
+                return "completed"                            # a command-line run that was cut short
+        return status
+
+    def refused(self) -> bool:
+        """A start_backtest the engine turned down: it never ran, and the console already showed the reason."""
+        r = self.status_report
+        return (r is not None and r["status"] == "failed" and bool(r.get("command_id"))
+                and set(self.counts) <= {"run"})
+
+    def controlled_by(self) -> str | None:
+        """The engine that accepts commands for this run, if it is still announcing itself."""
+        engine = (self.status_report or {}).get("engine_id")
+        return engine if engine and self.engine_alive(engine) else None
+
+    def config(self) -> dict[str, Any] | None:
+        return (self.status_report or {}).get("config")
+
+    def starting_cash(self) -> int:
+        try:
+            return wire.micros(self.config()["simulation"]["starting_cash"])     # type: ignore[index]
+        except (TypeError, KeyError, WireError):
+            return self.defaults.starting_cash
 
     def symbols(self) -> list[str]:
-        return sorted(set(self.bars) | {s for _, s, _ in self.marks})
+        seen = set(self.bars) | {s for _, s, _ in self.marks}
+        if not seen and self.config():
+            for strategy in self.config().get("strategies", []):                 # type: ignore[union-attr]
+                seen.update(strategy.get("symbols", []))
+        return sorted(seen)
 
     def summary(self) -> dict[str, Any]:
+        config = self.config() or {}
+        report = self.status_report or {}
+        strategies = [s for s in self.strategies if s]
+        for s in config.get("strategies", []):
+            if s.get("strategy_id") and s["strategy_id"] not in strategies:
+                strategies.append(s["strategy_id"])
         out: dict[str, Any] = {
-            "run_id": self.run_id, "name": self.run_id, "mode": "backtest", "status": self.status(),
-            "created_at": self.created_at, "period_start": self.first_time or self.created_at,
-            "symbols": self.symbols(), "strategies": [s for s in self.strategies if s],
+            "run_id": self.run_id, "name": config.get("name") or self.run_id, "mode": config.get("mode", "backtest"),
+            "status": self.status(), "created_at": self.created_at,
+            "period_start": config.get("period_start") or self.first_time or self.created_at,
+            "symbols": self.symbols(), "strategies": strategies,
         }
-        if self.last_time:
-            out["period_end"] = self.last_time
-            out["clock"] = self.last_time
-        if out["status"] == "completed" and self.marks:
+        period_end = config.get("period_end") or self.last_time
+        if period_end:
+            out["period_end"] = period_end
+        clock = report.get("clock") or self.last_time
+        if clock:
+            out["clock"] = clock
+        if out["status"] == "running" and isinstance(report.get("progress"), (int, float)):
+            out["progress"] = report["progress"]
+        if out["status"] == "failed":
+            out["error"] = report.get("error") or "The engine running this run stopped answering."
+        if out["status"] in ("completed", "stopped") and self.marks:
             out["report"] = self.report()
         return out
 
@@ -224,7 +286,7 @@ class Run:
         """PerformanceReport with ADR 0006 section 5's definitions (as the demo engine computes it), from the derived
         equity curve and trades. It stands in for PerformanceAnalyzer, which is still a stub."""
         d = self.derived()
-        start = self.defaults.starting_cash
+        start = self.starting_cash()
         points = [wire.micros(p["equity"]) for p in d["equity"]]
         returns, previous = [], start
         for value in points:
@@ -265,7 +327,15 @@ class Run:
 
     def detail(self) -> dict[str, Any]:
         summary = self.summary()
-        # The topics carry no strategy parameters: only what the signals show (kind from the id, order size).
+        if self.status_report is not None:                    # the settings the engine actually ran with
+            config = dict(self.status_report["config"])
+            config["name"] = summary["name"]
+            config.setdefault("period_start", summary["period_start"])
+            config.setdefault("mode", summary["mode"])
+            kill = {k: v for k, v in self.status_report["kill_switch"].items() if k in ("engaged", "changed_at", "reason")}
+            kill["engaged"] = bool(kill.get("engaged"))
+            return {**summary, "config": config, "kill_switch": kill}
+        # Without a <prefix>.run, only what the signals show (kind from the id, order size) and the defaults.
         sizes = {s["strategy_id"]: s["requested_quantity"] for s in reversed(self.signals) if "requested_quantity" in s}
         strategies = [{"kind": _kind(s), "strategy_id": s, "symbols": summary["symbols"],
                        "requested_quantity": sizes.get(s, 0)} for s in summary["strategies"]]
@@ -299,7 +369,7 @@ class Run:
         timeline += [(f["filled_at"], 1, f) for f in self.fills.values()]
         timeline.sort(key=lambda item: (item[0], item[1]))   # marks before fills at the same instant
 
-        cash = self.defaults.starting_cash
+        cash = self.starting_cash()
         positions: dict[str, _Position] = {}
         marks: dict[str, int] = {}
         open_trades: dict[str, _OpenTrade] = {}
@@ -481,13 +551,17 @@ def _fail(name: str) -> Any:
 
 
 class Store:
-    """Every run the gateway has seen, keyed by topic prefix, plus the listeners the SSE streams register."""
+    """Every run the gateway has seen, keyed by topic prefix, the engines announcing themselves on the control topic,
+    and the listeners the SSE streams register."""
 
     def __init__(self, defaults: RunDefaults | None = None, queue_capacity: int = 0):
         self.defaults = defaults or RunDefaults()
         self.queue_capacity = queue_capacity
         self.lock = threading.RLock()
+        self.changed = threading.Condition(self.lock)        # notified on every applied message
         self.runs: dict[str, Run] = {}
+        self.engines: dict[str, tuple[float, dict[str, Any]]] = {}   # engine_id -> (monotonic seen, announcement)
+        self.answers: dict[str, dict[str, Any]] = {}          # command_id -> the run report that answered it
         self.decode_errors = 0
         self.last_error: str | None = None
         self.source_status = "starting"
@@ -499,10 +573,16 @@ class Store:
         with self.lock:
             try:
                 envelope = wire.decode(topic, value)
+                if envelope.type == wire.ENGINE_TYPE:
+                    self._engine(envelope.payload)
+                    return True
                 run = self.runs.get(envelope.run_id)
                 if run is None:
-                    run = self.runs[envelope.run_id] = Run(envelope.run_id, self.defaults)
+                    run = self.runs[envelope.run_id] = Run(envelope.run_id, self.defaults, self.engine_alive)
                 applied = run.apply(envelope, received_at, self.live_since)
+                if applied and envelope.type == "run" and isinstance(envelope.payload.get("command_id"), str):
+                    self.answers[envelope.payload["command_id"]] = envelope.payload
+                self.changed.notify_all()
             except (WireError, KeyError, TypeError, ValueError) as error:
                 self.decode_errors += 1
                 self.last_error = f"{topic}: {error}"
@@ -511,14 +591,39 @@ class Store:
                     self.runs[parts[0]].decode_errors += 1
                 return False
             listeners = list(self._listeners.get(envelope.run_id, ()))
-        if applied:
-            event = _stream_event(envelope)
+            event = _stream_event(envelope, run) if applied else None
+        if event is not None:
             for listener in listeners:
                 listener(envelope.run_id, event)
         return applied
 
     def get(self, run_id: str) -> Run | None:
         return self.runs.get(run_id)
+
+    def _engine(self, p: dict[str, Any]) -> None:
+        engine_id = _require_str(p, "engine_id")
+        if not isinstance(p.get("heartbeat_ms"), int) or not isinstance(p.get("market_data"), dict):
+            _fail("heartbeat_ms")
+        self.engines[engine_id] = (time.monotonic(), p)
+        self.changed.notify_all()
+
+    def engine_alive(self, engine_id: str) -> bool:
+        seen = self.engines.get(engine_id)
+        if seen is None:
+            return False
+        grace = max(ENGINE_GRACE_S, 3 * seen[1]["heartbeat_ms"] / 1000)
+        return time.monotonic() - seen[0] < grace
+
+    def live_engines(self) -> list[dict[str, Any]]:
+        """Announcements of the engines still heartbeating, most recently started first."""
+        alive = [a for engine_id, (_, a) in self.engines.items() if self.engine_alive(engine_id)]
+        return sorted(alive, key=lambda a: a.get("started_at", ""), reverse=True)
+
+    def wait_for_answer(self, command_id: str, timeout: float) -> dict[str, Any] | None:
+        """The run report that answers a command, waiting up to `timeout` seconds for it."""
+        with self.changed:
+            self.changed.wait_for(lambda: command_id in self.answers, timeout)
+            return self.answers.get(command_id)
 
     def listen(self, run_id: str, listener: Callable[[str, dict[str, Any]], None]) -> Callable[[], None]:
         with self.lock:
@@ -531,8 +636,10 @@ class Store:
         return remove
 
 
-def _stream_event(envelope: Envelope) -> dict[str, Any]:
+def _stream_event(envelope: Envelope, run: Run) -> dict[str, Any]:
     """A RunEvent for the SSE stream. The console only uses it as 'this run changed', so it carries the raw payload."""
+    if envelope.type == "run":
+        return {"type": "run", "run": run.summary()}
     name, member = {"market_data": ("bar", "bar"), "signal": ("signal", "signal"), "order": ("order", "order"),
                     "fill": ("fill", "fill"), "risk_decision": ("risk", "decision")}[envelope.type]
     return {"type": name, member: envelope.payload}

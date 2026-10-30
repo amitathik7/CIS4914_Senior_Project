@@ -68,6 +68,8 @@ public:
     void stop() noexcept;  // after Pipeline::finish(); idempotent
 
     [[nodiscard]] const risk::RiskManager& risk() const noexcept { return risk_; }
+    // For the kill switch (RiskManager::set_kill_switch), from any thread.
+    [[nodiscard]] risk::RiskManager& risk() noexcept { return risk_; }
     [[nodiscard]] const execution::ExecutionSimulator& execution() const noexcept { return execution_; }
 
 private:

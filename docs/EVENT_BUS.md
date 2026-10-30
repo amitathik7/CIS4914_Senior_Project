@@ -24,10 +24,11 @@ whoever composes the program (`app::Pipeline` takes the bus as a parameter).
 |---|---|---|
 | `MarketDataService` | - (sources call `on_market_event`) | `MarketData` |
 | `StrategyEngine` + both reference strategies | `MarketData` | `Signal` |
-| `RiskManager` | `Signal`, `MarketData` (reference prices) | `RiskDecision`; approved signals go to execution by a direct call |
+| `RiskManager` | `Signal`, `MarketData` (reference prices) | `RiskDecision`; approved signals go to execution by a direct call. Kill switch: `set_kill_switch()` |
 | `ExecutionSimulator` | `MarketData` (fills working orders) | `Order` (every status change), `Fill` |
 | `PortfolioManager` (via `PortfolioBusBridge`) | `MarketData` (marks), `Order`, `Fill` | - |
-| Engine gateway (`python/engine_gateway/`, [ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)) | all four topics, every prefix | - (serves the web console) |
+| Engine gateway (`python/engine_gateway/`, [ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)) | every run topic and `<prefix>.run`, every prefix; `<control>.engine` | `<control>.command` (serves the web console) |
+| `EngineService` (`trading_engine serve`) | `<control>.command` | `<prefix>.run`, `<control>.engine`; each run on its own bus |
 
 So a run goes bars → normalised market data → strategies → signals →
 risk decisions → orders → fills → portfolio, all over the bus. The
@@ -60,6 +61,14 @@ cmake --build build -j
 | `topics` | `TopicEventBus` over the in-memory broker (the Kafka code path, no Kafka) | nothing |
 | `kafka-mock` | `TopicEventBus` over librdkafka's in-process mock cluster (real Kafka protocol) | Kafka build |
 | `kafka` | `TopicEventBus` over a real cluster at `--brokers` (default `localhost:9092`) | Kafka build + broker |
+
+`trading_engine serve --bars FILE` (Kafka build) is the engine as a
+long-running process that the web console drives: it takes `start_backtest`,
+`stop` and `set_kill_switch` commands on `trading_engine.control.command` and
+replays the bars for each backtest on its own topic prefix
+([ADR 0007](adr/0007-engine-command-channel.md),
+[ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)). Both programs build a run the same
+way (`app::ConfiguredRun` from `control::RunSettings`).
 
 Other flags: `--topic-prefix`, `--sma SHORT,LONG`, `--lookback N`,
 `--quantity N`, `--cash N` (starting dollars), `--risk on|off` (the starter
@@ -112,8 +121,13 @@ TE_KAFKA_BOOTSTRAP=localhost:9092 ctest --test-dir build -L kafka   # also runs 
 | `<prefix>.order` | `domain::Order` | symbol |
 | `<prefix>.fill` | `domain::Fill` | symbol |
 | `<prefix>.risk_decision` | `domain::RiskDecisionReport` | symbol |
+| `<prefix>.run` | `control::RunStatusReport`: status, settings, kill switch ([ADR 0007](adr/0007-engine-command-channel.md)) | run id |
+| `<control>.command` | `control::Command` (start_backtest, stop, set_kill_switch) | run id |
+| `<control>.engine` | `control::EngineAnnouncement` (heartbeat) | engine id |
 
-Default prefix `trading_engine`; use one prefix per run. Topics the transport
+Default prefix `trading_engine`; use one prefix per run. `<control>` is
+`trading_engine.control`. The last three are not bus `EventType`s: they are
+about runs, not inside one (`control/control_codec.hpp`, same envelope). Topics the transport
 creates get 3 partitions and replication factor 1 (`KafkaTransportConfig`).
 
 ### Wire format (schema 1)
@@ -180,7 +194,7 @@ creates get 3 partitions and replication factor 1 (`KafkaTransportConfig`).
 ## Not done yet
 
 - `TradingEngine::run_backtest()/run_live()` still throw; the CLI composes the
-  pipeline itself. `HistoricalReplay` is a stub.
+  pipeline itself (`app::ConfiguredRun`). `HistoricalReplay` is a stub.
 - Execution has no `order_to_fill` latency, partial fills or cancels yet;
   `NaiveFillModel` fills the whole order at the next bar's open.
 - No metrics wiring (`SystemMetrics`) on the buses yet; each bus exposes
