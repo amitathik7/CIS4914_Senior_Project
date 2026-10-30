@@ -25,7 +25,7 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 > backtests. Also answers OQ#3 for v1 (Block by default, Reject optional; drain
 > accepts handler publishes). The original note follows.
 >
-> **Superseded in part, pending an ADR.** The team has decided to move the
+> *(Historical note, now recorded as ADR 0003.)* **Superseded in part, pending an ADR.** The team has decided to move the
 > pipeline onto **Kafka**, making every component boundary cross-process. That
 > reverses ADR 0001 item 12 ("in-process, single-node engine. No distribution,
 > no IPC.") and is **not yet recorded in any ADR** - expected to be 0003. The

@@ -185,6 +185,10 @@ Targeted mutation check of this review's web fixes: 15 deliberate defects, 14 ki
 
 ## 10. Limitations
 
+> Note (2026-10-30): this section records the review as it was done. Since then the engine API
+> exists (engine gateway, [ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)), the Strategies > Backtest view runs risk,
+> execution and portfolio with P&L ([BACKTESTING.md](BACKTESTING.md)), and CI runs GCC on Linux too.
+
 * **MSVC and Windows only** were available: GCC/Clang and POSIX were not run. Chrome (Playwright) was the only browser; no screen reader was used (the charts have text alternatives and the controls are keyboard-operable, which is not the same as tested).
 * **No financial comparison** (section 7). The recorded-run inspector reads the Console's engine API, which today means the in-browser demo simulator; it was exercised only against that. Nothing was run against a real engine API because none exists here.
 * The gateway is a second process and a production build has none. Replays are signal-only through the lab's synchronous bus: no risk, execution, portfolio, timing or backpressure. Results are not kept across a page reload (presets are). Uploads are capped at 8 MiB and 20,000 rows.

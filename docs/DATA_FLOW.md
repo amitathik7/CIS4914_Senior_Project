@@ -1,8 +1,11 @@
 # Data Flow
 
-> Status: **planned**, except the `StrategyEngine` stage, which is implemented and
-> tested against a test bus (see [`STRATEGIES.md`](STRATEGIES.md)). Every other stage
-> below is still a stub, so no signal has flowed through a real pipeline.
+> Status (2026-10-30): the downstream pipeline below runs end to end on recorded
+> CSV bars, on the in-process bus and on Kafka (`trading_engine run` / `serve`,
+> [`EVENT_BUS.md`](EVENT_BUS.md), [`BACKTESTING.md`](BACKTESTING.md)). Not built yet:
+> the Alpaca live and historical sources, the source-driven `HistoricalReplay`,
+> every persistence step (`IMarketDataRepository`, `ITradeRepository`),
+> `SystemMetrics`, order latency and partial fills.
 
 Two entry points feed one identical downstream pipeline: a **live** WebSocket
 feed and a **historical replay**. Everything after "Market Data Service" is the

@@ -1,8 +1,14 @@
 # Architecture
 
-> Status: **scaffold**. This document describes the intended shape of the
-> system and the boundaries the code already encodes. No component has behaviour
-> yet.
+> Status (2026-10-30): this document describes the intended shape of the system
+> and the boundaries the code encodes. Most components now have behaviour: the
+> event bus (in-process and Kafka), market data from CSV bars, the strategy engine
+> and three strategies, risk, simulated execution, portfolio and performance
+> analytics run end to end ([`EVENT_BUS.md`](EVENT_BUS.md),
+> [`BACKTESTING.md`](BACKTESTING.md)). Alpaca sources, persistence, config loading,
+> `SystemMetrics` and the source-driven `HistoricalReplay` are still stubs. The
+> console reaches the engine through the engine gateway and command channel
+> ([ADR 0006](adr/0006-web-frontend-api-contract.md), [ADR 0007](adr/0007-engine-command-channel.md)).
 
 ## 1. Goal and non-goals
 
