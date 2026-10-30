@@ -215,7 +215,7 @@ export class CompareStore {
   };
 
   uploadBytes = async (name: string, bytes: Uint8Array): Promise<boolean> => {
-    const problem = precheckUpload(name, bytes, this.lab.getState().uploadLimit);
+    const problem = precheckUpload(name, bytes, this.lab.getState().uploadLimit, this.lab.getState().catalog?.datasetColumns);
     if (problem) {
       this.set({ uploadError: problem });
       return false;

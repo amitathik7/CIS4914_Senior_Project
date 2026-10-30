@@ -49,16 +49,25 @@ public:
         const config::SimulationConfig& config) const = 0;
 };
 
-// Simplest possible model: fill the whole order at a reference price adjusted
-// by a fixed slippage in basis points, charge configured fees, zero latency.
-// Declared here, DEFINED as a throwing stub for now.
+// Fees for one execution of `quantity` shares (sign ignored) at `price`:
+// per_trade + per_share * shares + bps of the gross notional. Always >= 0 for
+// non-negative fee settings.
+[[nodiscard]] common::Money fee_for(common::Quantity quantity, common::Price price,
+                                    const config::FeeModelConfig& fees);
+
+// Simplest possible model: fill the whole remaining quantity at the reference
+// price (MarketContext::last_price) moved against the order by
+// SimulationConfig::slippage_bps, and charge fee_for(). A limit order fills
+// only when the reference price reaches its limit, and never through it.
+// No reference price is a ValidationError. Leaves Fill::id and
+// Fill::sequence unset: the ExecutionSimulator owns both.
 class NaiveFillModel final : public IFillModel {
 public:
     [[nodiscard]] std::string_view name() const override;
     [[nodiscard]] std::vector<domain::Fill> simulate(
         const domain::Order& order,
         const MarketContext& market,
-        const config::SimulationConfig& config) const override;   // NOT IMPLEMENTED
+        const config::SimulationConfig& config) const override;
 };
 
 }  // namespace trading_engine::execution

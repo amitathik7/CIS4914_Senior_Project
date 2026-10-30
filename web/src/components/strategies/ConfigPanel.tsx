@@ -1,4 +1,5 @@
-import { useNavigate } from "react-router";
+import type { ReactNode } from "react";
+import { useNavigate, useParams } from "react-router";
 import { destinationText, handoffBlocker, toCarried, type HandoffState } from "../../strategies/backtestHandoff";
 import { activeCheck, datasetIdentity, draftIssues, runBlocker, specFor, type LabState } from "../../strategies/store";
 import { labStore } from "../../strategies/useLab";
@@ -13,9 +14,13 @@ import { PresetMenu, type PresetHost } from "./PresetMenu";
 import { StrategyKinds } from "./StrategyKinds";
 import { SymbolChips } from "./SymbolChips";
 
-/** The editable draft: strategy, dataset, parameters, the engine's check, and the two actions. Used by Configure and Explore. */
-export function ConfigPanel({ state, onRun }: { state: LabState; onRun: () => void }) {
+/**
+ * The editable draft: strategy, dataset, parameters, the engine's check, and the actions. Used by Configure, Explore and
+ * Backtest; Backtest passes its own `actions` in place of the replay ones.
+ */
+export function ConfigPanel({ state, onRun, actions }: { state: LabState; onRun: () => void; actions?: ReactNode }) {
   const navigate = useNavigate();
+  const { runId } = useParams();
   const { info } = useEngine();
   const spec = specFor(state);
   const issues = draftIssues(state);
@@ -77,6 +82,7 @@ export function ConfigPanel({ state, onRun }: { state: LabState; onRun: () => vo
           </section>
         )}
 
+{actions ?? (
         <section className="lab-section">
           <h3 className="lab-section-title">Actions</h3>
           <div className="stack" style={{ gap: 6 }}>
@@ -94,12 +100,19 @@ export function ConfigPanel({ state, onRun }: { state: LabState; onRun: () => vo
             </p>
           </div>
           <div className="stack" style={{ gap: 6, marginTop: 6 }}>
+            <button type="button" className="btn" disabled={!spec} onClick={() => navigate(`${runId ? `/runs/${runId}` : ""}/strategies/backtest`)} aria-describedby="lab-real-backtest-help">Backtest on the real engine</button>
+            <p id="lab-real-backtest-help" className="lab-help">
+              Opens the Backtest view with this configuration: the real risk checks, simulated fills and portfolio over {dataset?.name ?? "this dataset"}, with P&amp;L. Every strategy is supported.
+            </p>
+          </div>
+          <div className="stack" style={{ gap: 6, marginTop: 6 }}>
             <button type="button" className="btn" disabled={!!carry} onClick={toBacktest} aria-describedby="lab-backtest-help">Use in new backtest</button>
             <p id="lab-backtest-help" className="lab-help" data-tone={carry ? "warn" : undefined}>
               {carry ?? `Pre-fills the New backtest form with the settings in this editor now (not necessarily those of the replay on screen). ${destinationText(info?.data_source, dataset?.name)} Nothing starts until you press Run backtest there.`}
             </p>
           </div>
         </section>
+        )}
       </div>
     </Panel>
   );

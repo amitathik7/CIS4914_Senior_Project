@@ -11,15 +11,17 @@ Timestamp SystemClock::now() const {
 }
 
 Timestamp ManualClock::now() const {
-    return current_;
+    return current_.load();
 }
 
 void ManualClock::set(Timestamp t) noexcept {
-    current_ = t;
+    current_.store(t);
 }
 
 void ManualClock::advance(Duration d) noexcept {
-    current_ += d;
+    Timestamp expected = current_.load();
+    while (!current_.compare_exchange_weak(expected, expected + d)) {
+    }
 }
 
 }  // namespace trading_engine::common

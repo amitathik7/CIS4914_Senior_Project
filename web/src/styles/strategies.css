@@ -75,7 +75,7 @@
 }
 
 .kind-option:hover:not(:disabled) { background: var(--surface-hover); }
-.kind-option[aria-pressed="true"] {
+.kind-option[aria-checked="true"] {
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
 }
@@ -351,3 +351,5 @@ p.wrap {
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
 }
+/* The selected card's tinted background needs the stronger secondary text to keep the id at AA contrast. */
+.kind-option[aria-checked="true"] small { color: var(--text-2); }

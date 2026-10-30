@@ -68,7 +68,7 @@ export function layoutFor(model: ReplayModel): Layout {
     if (entry !== undefined) bands.push({ param: "entry_probability", text: String(Math.round((entry - 0.5) * 1e9) / 1e9), value: entry - 0.5, kind: "entry" });
     const rearm = run.parameterNumbers["rearm_band"];
     if (rearm !== undefined) bands.push({ param: "rearm_band", text: text("rearm_band") ?? String(rearm), value: rearm, kind: "rearm" });
-    return { overlays: [], pane: { name: "probability_edge", label: "p − 0.5", bands } };
+    return { overlays: [], pane: { name: "probability_edge", label: "Probability edge (p − 0.5)", bands } };
   }
   return { overlays: [] };
 }
@@ -190,8 +190,10 @@ export function SymbolChart({ model, symbol, cursor, layout, multiDay, onSelect,
     // Labels are spread over the REVEALED part of the axis (the axis itself is fixed to all rows), so an early position does not cram them together.
     const revealedW = n <= 1 ? innerW : (Math.max(0, shown - 1) / (n - 1)) * innerW;
     const count = Math.min(shown, revealedW < 90 ? 1 : Math.max(2, Math.floor(revealedW / 90)));
+    // One fixed step between labels, so the rows are labelled evenly instead of skipping one now and then.
+    const step = count <= 1 ? Math.max(1, shown) : Math.max(1, Math.ceil((shown - 1) / (count - 1)));
     const picks = new Set<number>();
-    for (let k = 0; k < count; k++) picks.add(count === 1 ? 0 : Math.round((k * (shown - 1)) / (count - 1)));
+    for (let i = 0; i < shown; i += step) picks.add(i);
     return [...picks].map((i) => {
       const iso = model.events[track.indexes[i]!]!.time;
       return { i, text: multiDay ? `${etDay(iso).slice(5)} ${etClock(iso).slice(0, 5)}` : etClock(iso).slice(0, 8) };
@@ -216,7 +218,7 @@ export function SymbolChart({ model, symbol, cursor, layout, multiDay, onSelect,
 
   const body: ReactNode =
     width > 0 && (
-      <svg className="svg-chart" width={width} height={totalH} role="img" aria-label={`${memberLabel ? `${memberLabel}, ` : ""}${symbol}: close price${layout.pane ? ", rolling mean and z-score" : layout.overlays.length ? " and averages" : ""}. ${shown} of ${n} rows revealed.`}>
+      <svg className="svg-chart" width={width} height={totalH} role="img" aria-label={`${memberLabel ? `${memberLabel}, ` : ""}${symbol}: close price${layout.overlays.length ? ` and ${layout.overlays.map((o) => o.label.toLowerCase()).join(", ")}` : ""}${layout.pane ? `; ${layout.pane.label} in its own panel` : ""}. ${shown} of ${n} rows revealed.`}>
         {shown > 0 && price.ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.left} x2={width - PAD.right} y1={price.y(t)} y2={price.y(t)} stroke="var(--chart-grid)" />
@@ -240,7 +242,9 @@ export function SymbolChart({ model, symbol, cursor, layout, multiDay, onSelect,
             {layout.pane.bands.flatMap((b) => [b.value, -b.value].map((v) => (
               <g key={`${b.param}${v}`}>
                 <line x1={PAD.left} x2={width - PAD.right} y1={pane.y(v)} y2={pane.y(v)} stroke={b.kind === "entry" ? "var(--warn)" : "var(--text-3)"} strokeDasharray={b.kind === "entry" ? "6 3" : "2 3"} />
-                <text x={PAD.left + 4} y={pane.y(v) + (v > 0 ? -4 : 11)} fill={b.kind === "entry" ? "var(--warn)" : "var(--text-3)"}>{b.kind === "entry" ? "entry" : "re-arm"} {v > 0 ? "+" : "−"}{b.text}</text>
+                {/* Entry levels are labelled on the left and re-arm levels on the right, so close bands never print on top of each other. */}
+                <text x={b.kind === "entry" ? PAD.left + 4 : width - PAD.right - 4} textAnchor={b.kind === "entry" ? "start" : "end"} y={pane.y(v) + (v > 0 ? -4 : 11)}
+                  style={{ fill: b.kind === "entry" ? "var(--warn)" : "var(--text-3)" }} stroke="var(--surface)" strokeWidth={3} paintOrder="stroke">{b.kind === "entry" ? "entry" : "re-arm"} {v > 0 ? "+" : "−"}{b.text}</text>
               </g>
             )))}
             {shown > 0 && <path d={pathFor(track, track.indicators[layout.pane.name]!, shown, x, pane.y, false)} fill="none" stroke={style ? style.color : "var(--accent)"} strokeWidth={style ? 1.9 : 1.6} strokeDasharray={style?.zDash} />}
@@ -301,7 +305,7 @@ export function SymbolChart({ model, symbol, cursor, layout, multiDay, onSelect,
   );
 }
 
-function Legend({ layout, pane }: { layout: Layout; pane: boolean }) {
+function Legend({ layout }: { layout: Layout }) {
   const glyph = (node: ReactNode) => <svg width="16" height="12" viewBox="0 0 16 12" aria-hidden="true">{node}</svg>;
   return (
     <div className="chart-legend" aria-label="Chart legend">
@@ -312,7 +316,7 @@ function Legend({ layout, pane }: { layout: Layout; pane: boolean }) {
           <span style={{ color: "var(--text-2)" }}>{o.label}</span>
         </span>
       ))}
-      {pane && <span className="legend-key"><span className="legend-swatch" style={{ background: "var(--accent)" }} />z-score (own panel)</span>}
+      {layout.pane && <span className="legend-key"><span className="legend-swatch" style={{ background: "var(--accent)" }} />{layout.pane.label} (own panel)</span>}
       <span className="legend-key">{glyph(<path d="M8 2 l5 8 h-10 z" fill="var(--up)" />)}Buy request</span>
       <span className="legend-key">{glyph(<path d="M8 10 l5 -8 h-10 z" fill="var(--down)" />)}Sell request</span>
       <span className="legend-key">{glyph(<circle cx="8" cy="6" r="3" fill="var(--surface)" stroke="var(--text-3)" strokeWidth="1.3" />)}Warming up</span>
@@ -335,7 +339,7 @@ export function ReplayChart({ model, cursor, symbol, onSelect, onStep }: {
   const multiDay = useMemo(() => new Set(model.events.map((e) => etDay(e.time))).size > 1, [model]);
   return (
     <div className="lab-chart-stack">
-      <Legend layout={layout} pane={!!layout.pane} />
+      <Legend layout={layout} />
       {layout.overlays.length === 0 && !layout.pane && <p className="faint" style={{ fontSize: "var(--fs-sm)" }}>No chart layout is defined for this strategy kind, so only the close and the markers are drawn. Every recorded value is in the tables below.</p>}
       {symbols.map((s) => (
         <SymbolChart key={s} model={model} symbol={s} cursor={cursor} layout={layout} multiDay={multiDay} onSelect={onSelect} onStep={onStep} />

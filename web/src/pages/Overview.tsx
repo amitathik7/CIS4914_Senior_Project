@@ -133,7 +133,9 @@ export function Overview() {
             {equity.data ? (
               equitySeries.length > 1
                 ? <div style={{ padding: "8px 4px 4px 0" }}><TimeChart key={range} label="Equity over time" height={280} format={moneyAxis} series={[{ id: "equity", kind: "area", tone: "accent", data: equitySeries }]} /></div>
-                : <Empty title="No equity history yet">The first bar has not arrived.</Empty>
+                : run?.status === "failed"
+                  ? <Empty title="No equity history">This run failed before any bar was replayed.</Empty>
+                  : <Empty title="No equity history yet">The first bar has not arrived.</Empty>
             ) : <Loading height={280} />}
           </Panel>
           <Panel
@@ -142,7 +144,9 @@ export function Overview() {
             tools={symbols.length > 1 ? <Segmented label="Symbol" value={symbol ?? ""} onChange={setSymbol} options={symbols.map((s) => ({ value: s, label: s }))} /> : undefined}
             flush
           >
-            {bars.data ? (
+            {bars.data && priceSeries.length === 0 ? (
+              <Empty title="No bars">{run?.status === "failed" ? "This run failed before any bar was replayed." : "Prices appear when the first bar arrives."}</Empty>
+            ) : bars.data ? (
               <div style={{ padding: "8px 4px 4px 0" }}>
                 <TimeChart
                   key={symbol}
@@ -158,7 +162,7 @@ export function Overview() {
           </Panel>
         </div>
         <div className="stack">
-          <Panel title="Positions" hint={p ? `as of ${minute(p.as_of)} ET` : undefined} flush>
+          <Panel title="Positions" hint={p && run?.status !== "failed" ? `as of ${minute(p.as_of)} ET` : undefined} flush>
             {p ? (
               <DataTable
                 label="Positions"

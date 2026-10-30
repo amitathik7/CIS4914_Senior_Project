@@ -27,18 +27,19 @@ TEST(ScaffoldContract, ConfigFileLoadingIsNotFakedButThrows) {
 }
 
 TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {
+    // Implemented now, but with nothing to measure it refuses instead of
+    // returning a zero-filled report.
     const trading_engine::analytics::PerformanceAnalyzer analyzer;
-    EXPECT_THROW((void)analyzer.analyze({}, {}), tec::NotImplemented);
+    EXPECT_THROW((void)analyzer.analyze({}, {}), tec::ValidationError);
 }
 
 TEST(ScaffoldContract, NotImplementedCarriesTheCallSiteInItsMessage) {
     try {
-        const trading_engine::analytics::PerformanceAnalyzer analyzer;
-        (void)analyzer.analyze({}, {});
+        (void)tcfg::load_config("does-not-exist.json");
         FAIL() << "expected common::NotImplemented";
     } catch (const tec::NotImplemented& e) {
         const std::string_view what{e.what()};
-        EXPECT_NE(what.find("PerformanceAnalyzer::analyze"), std::string_view::npos);
+        EXPECT_NE(what.find("load_config"), std::string_view::npos);
         EXPECT_NE(what.find("not implemented"), std::string_view::npos);
     }
 }

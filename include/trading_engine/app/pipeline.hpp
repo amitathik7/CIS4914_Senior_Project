@@ -3,19 +3,18 @@
 // -----------------------------------------------------------------------------
 //  Pipeline -- wires the components that exist today through one event bus.
 //
-//      source ──▶ MarketDataService ──MarketData──▶ StrategyEngine ──Signal──▶ (risk: TODO)
+//      source ──▶ MarketDataService ──MarketData──▶ StrategyEngine ──Signal──▶ (app::OrderFlow)
 //                                       │
 //                                       └─────────▶ PortfolioBusBridge ──▶ PortfolioManager
-//                                                    ▲  (marks; Order / Fill events once
-//                                                    │   the execution simulator publishes them)
+//                                                    ▲  (marks; Order / Fill events from
+//                                                    │   the ExecutionSimulator)
 //
 //  The bus is injected, so the same wiring runs on an InProcessEventBus or on
-//  a TopicEventBus over Kafka (docs/EVENT_BUS.md). Risk and execution are
-//  still stubs: signals are published on the bus and whoever subscribes to
-//  EventType::Signal (the CLI prints them) sees them; nothing turns them into
-//  orders yet. When RiskManager / ExecutionSimulator land they subscribe and
-//  publish here the same way, and the portfolio starts receiving Order and
-//  Fill events with no change to this class's callers.
+//  a TopicEventBus over Kafka (docs/EVENT_BUS.md). This class stops at the
+//  signals it publishes; app::OrderFlow (order_flow.hpp) adds the
+//  RiskManager and ExecutionSimulator on the same bus, and app::Backtest
+//  composes them itself. Either way the portfolio receives Order and Fill
+//  events with no change to this class.
 //
 //  Lifecycle (one shot, like the buses):
 //    add_strategy()...  start()  input().on_market_event()...  finish()
@@ -71,6 +70,8 @@ public:
     [[nodiscard]] const strategy::StrategyEngine& strategies() const noexcept { return strategies_; }
     [[nodiscard]] const portfolio::PortfolioManager& portfolio() const noexcept { return portfolio_; }
     [[nodiscard]] const portfolio::PortfolioBusBridge& portfolio_bridge() const noexcept { return bridge_; }
+    // The portfolio's one mutating seam for the RiskManager (ADR 0005 section 4).
+    [[nodiscard]] portfolio::IReservationLedger& reservations() noexcept { return portfolio_; }
 
 private:
     enum class State : std::uint8_t { Built, Running, Finished };

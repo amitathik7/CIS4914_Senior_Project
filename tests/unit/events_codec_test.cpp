@@ -146,6 +146,50 @@ TEST(EventCodec, OrderAndFillRoundTrip) {
     EXPECT_EQ(std::get<dom::Fill>(out.event.payload).slippage, -0.05_px);
 }
 
+dom::RiskDecisionReport full_risk_decision() {
+    dom::RiskDecisionReport r;
+    r.id                 = 7;
+    r.run_id             = tec::RunId{3};
+    r.signal_id          = tec::SignalId{42};
+    r.decided_at         = at(6);
+    r.symbol             = "MSFT";
+    r.side               = dom::SignalSide::Buy;
+    r.strategy_id        = "sma_crossover";
+    r.outcome            = dom::RiskOutcome::Rejected;
+    r.requested_quantity = 2000;
+    r.approved_quantity  = 0;
+    r.reason             = "max_position_notional";
+    r.checks.push_back({"max_order_quantity", true, "resized to 1000", std::nullopt, std::nullopt});
+    r.checks.push_back({"max_position_notional", false, "position would be 406480", "25000", "406480"});
+    r.order_id = tec::OrderId{9};
+    return r;
+}
+
+TEST(EventCodec, RiskDecisionRoundTripsWithTheConsoleFieldNames) {
+    expect_round_trip(ev::EventType::RiskDecision, full_risk_decision());
+    const std::string text = ev::encode(wrap(ev::EventType::RiskDecision, full_risk_decision()));
+    EXPECT_NE(text.find("\"type\":\"risk_decision\""), std::string::npos) << text;
+    EXPECT_NE(text.find("\"outcome\":\"rejected\""), std::string::npos) << text;
+    EXPECT_NE(text.find("\"checks\":[{\"policy\":\"max_order_quantity\",\"passed\":true"),
+              std::string::npos) << text;
+    const auto out = std::get<dom::RiskDecisionReport>(ev::decode(text).event.payload);
+    ASSERT_EQ(out.checks.size(), 2U);
+    EXPECT_FALSE(out.checks[1].passed);
+    EXPECT_EQ(out.checks[1].limit, "25000");
+    EXPECT_FALSE(out.checks[0].observed.has_value());
+    EXPECT_EQ(out.order_id, tec::OrderId{9});
+    EXPECT_EQ(ev::partition_key(wrap(ev::EventType::RiskDecision, out).event), "MSFT");
+
+    dom::RiskDecisionReport bare;   // approved unchanged: no reason, no checks, no order
+    bare.outcome = dom::RiskOutcome::Approved;
+    const std::string bare_text = ev::encode(wrap(ev::EventType::RiskDecision, bare));
+    EXPECT_NE(bare_text.find("\"checks\":[]"), std::string::npos) << bare_text;
+    EXPECT_EQ(bare_text.find("reason"), std::string::npos) << bare_text;
+    const auto bare_out = std::get<dom::RiskDecisionReport>(ev::decode(bare_text).event.payload);
+    EXPECT_TRUE(bare_out.checks.empty());
+    EXPECT_FALSE(bare_out.reason.has_value());
+}
+
 TEST(EventCodec, MinimalPayloadsOmitAbsentOptionalsInsteadOfWritingNull) {
     dom::MarketEvent bare;
     bare.symbol = "X";

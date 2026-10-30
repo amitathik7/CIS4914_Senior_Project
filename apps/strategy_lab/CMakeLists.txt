@@ -10,6 +10,7 @@
 # =============================================================================
 
 add_library(trading_engine_strategy_lab STATIC
+    lab/backtest_cli.cpp
     lab/catalog.cpp
     lab/cli.cpp
     lab/dataset.cpp
@@ -20,7 +21,8 @@ add_library(trading_engine_strategy_lab STATIC
     lab/runner.cpp
     lab/session.cpp
     lab/sha256.cpp
-    lab/timestamp.cpp)
+    lab/timestamp.cpp
+    lab/training.cpp)
 add_library(trading_engine::strategy_lab ALIAS trading_engine_strategy_lab)
 
 # PUBLIC so a test target can include "lab/...".
@@ -37,3 +39,10 @@ target_link_libraries(strategy_lab_replay PRIVATE trading_engine::strategy_lab)
 target_compile_features(strategy_lab_replay PRIVATE cxx_std_20)
 trading_engine_set_warnings(strategy_lab_replay)
 set_target_properties(strategy_lab_replay PROPERTIES FOLDER "trading_engine/strategy_lab")
+
+# The full backtest over a lab dataset (risk, execution, portfolio, analytics): docs/BACKTESTING.md.
+add_executable(strategy_lab_backtest backtest_main.cpp)
+target_link_libraries(strategy_lab_backtest PRIVATE trading_engine::strategy_lab)
+target_compile_features(strategy_lab_backtest PRIVATE cxx_std_20)
+trading_engine_set_warnings(strategy_lab_backtest)
+set_target_properties(strategy_lab_backtest PROPERTIES FOLDER "trading_engine/strategy_lab")

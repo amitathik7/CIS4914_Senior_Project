@@ -16,8 +16,11 @@ tests cleanly. Apart from the strategy layer below, every real operation is a st
 throws `NotImplemented`. The strategy layer, the portfolio manager, a minimal
 market-data service and the **event bus (in-process and Kafka)** are real, and
 `trading_engine run` wires them together ([`docs/EVENT_BUS.md`](docs/EVENT_BUS.md)).
-Risk, execution and analytics are still stubs, so a run ends at the strategies'
-signals: nothing is ordered or filled yet. See
+A full deterministic **backtest** (strategy -> risk -> simulated execution ->
+portfolio -> analytics) runs through `app::Backtest`, the `strategy_lab_backtest`
+tool and the web console's Strategies > Backtest view
+([`docs/BACKTESTING.md`](docs/BACKTESTING.md)); `trading_engine run` itself still
+ends at the signals. See
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), and
 [`docs/STRATEGIES.md`](docs/STRATEGIES.md) for the strategy documentation.
 
@@ -32,7 +35,9 @@ signals: nothing is ordered or filled yet. See
 | Reference strategies: moving-average crossover, rolling z-score mean reversion | ✅ real + tested ([crossover](docs/strategies/moving_average_crossover.md), [mean reversion](docs/strategies/mean_reversion.md)) |
 | Event bus: `InProcessEventBus` (bounded queue, dispatcher thread) and `TopicEventBus` over Kafka | ✅ real + tested, incl. against librdkafka's mock cluster ([docs](docs/EVENT_BUS.md), [ADR 0003](docs/adr/0003-kafka-transport.md)) |
 | `PortfolioManager` (+ `PortfolioBusBridge`), `MarketDataService` MVP | ✅ real + tested, connected through the bus (`app::Pipeline`) |
-| Risk, execution, persistence, analytics, historical replay | ⛔ stubs (`NotImplemented`) |
+| Engine gateway: the web console's API served from the Kafka topics | ✅ real + tested, read-only ([docs](docs/ENGINE_GATEWAY.md)) |
+| Backtest: `RiskManager` + 5 starter policies, `NaiveFillModel`, `ExecutionSimulator`, `PerformanceAnalyzer`, `app::Backtest` | ✅ real + tested ([docs](docs/BACKTESTING.md)) |
+| Persistence, `HistoricalReplay` (source-driven), config loading | ⛔ stubs (`NotImplemented`) |
 | Alpaca connectivity, PostgreSQL, Python charts | ⛔ not started |
 
 No external network or database connectivity is implemented anywhere in this

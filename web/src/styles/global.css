@@ -1415,3 +1415,51 @@ a {
   .brand > div { display: none; }
   .page-head p { font-size: var(--fs-sm); }
 }
+
+/* Skip link: hidden until focused, then the first thing a keyboard user can press. */
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+}
+.skip-link:focus {
+  top: 12px;
+}
+.main:focus {
+  outline: none;
+}
+
+/* A symbol in the allowlist that the dataset does not contain. */
+.lab-symbol-warn {
+  flex-basis: 100%;
+  color: var(--warn);
+  font-size: var(--fs-sm);
+}
+
+/* Light theme: the semantic colours on their own soft tint fall just under AA (4.5:1) for small badge text, so badges use a
+   slightly deeper ink. Text elsewhere (on white) keeps the token colours. */
+:root[data-theme="light"] .badge-up { color: #08704a; }
+:root[data-theme="light"] .badge-down { color: #ad3128; }
+:root[data-theme="light"] .badge-warn { color: #7d5100; }
+
+/* Links inside notices and empty states are underlined, so they do not rely on colour alone. */
+.notice a,
+.empty a { text-decoration: underline; }
+
+/* The kill switch's confirmation step. */
+.kill-confirm {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--down-soft);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.kill-confirm b { color: var(--text); }

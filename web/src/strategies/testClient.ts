@@ -1,7 +1,7 @@
 // Test helper: a controllable stand-in for the gateway. Each replay() call returns a promise the test settles by hand, so races
 // (cancel, duplicate submit, a late answer for an older launch) can be staged exactly.
 
-import type { BuiltinDataset, CheckResult, LabClient, LabStatus, ReplayRequest, ReplayResponse, StrategyRequest, ValidationRequest } from "../api/lab";
+import type { BacktestRequest, BacktestResponse, BuiltinDataset, CheckResult, LabClient, LabStatus, ReplayRequest, ReplayResponse, StrategyRequest, ValidationRequest } from "../api/lab";
 import { LabError } from "../api/lab";
 import { makeDoc, type Spec } from "./testDoc";
 
@@ -95,6 +95,10 @@ export class FakeClient implements LabClient {
     ok: true, kind: request.kind, strategy_id: request.kind, window_size: 3, derived: { earliest_signal_accepted_bar: 4 }, parameters: {}, warnings: [],
   });
   replayImpl: (request: ReplayRequest, signal?: AbortSignal) => Promise<ReplayResponse> = async (request) => replayResponse(request);
+  backtestImpl: (request: BacktestRequest, signal?: AbortSignal) => Promise<BacktestResponse> = async () => {
+    throw new LabError("not_staged", "No backtest answer was staged for this test.");
+  };
+  readonly backtests: BacktestRequest[] = [];
   validationInfoImpl: () => Promise<string> = async () => "{}";
   validateImpl: (request: ValidationRequest, signal?: AbortSignal) => Promise<string> = async () => "{}";
   readonly replays: ReplayRequest[] = [];
@@ -116,6 +120,10 @@ export class FakeClient implements LabClient {
   replay = (request: ReplayRequest, signal?: AbortSignal): Promise<ReplayResponse> => {
     this.replays.push(request);
     return this.replayImpl(request, signal);
+  };
+  backtest = (request: BacktestRequest, signal?: AbortSignal): Promise<BacktestResponse> => {
+    this.backtests.push(request);
+    return this.backtestImpl(request, signal);
   };
   validationInfo = (): Promise<string> => this.validationInfoImpl();
   validate = (request: ValidationRequest, signal?: AbortSignal): Promise<string> => {

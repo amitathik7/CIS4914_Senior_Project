@@ -38,6 +38,10 @@ export function Risk() {
   const [filter, setFilter] = useState<"all" | RiskOutcome>("all");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  // Engaging or releasing the kill switch takes three steps: the first press asks to confirm,
+  // then the action word has to be typed before the final button unlocks.
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
   const [openOrder, setOpenOrder] = useState<number>();
   const multiDay = run?.mode === "backtest";
 
@@ -79,9 +83,17 @@ export function Risk() {
   const p = portfolio.data;
   const kill = detail.data?.kill_switch;
   const canToggle = run?.status === "running";
+  const word = kill?.engaged ? "RELEASE" : "ENGAGE";
+  const typedOk = typed.trim().toUpperCase() === word;
+
+  const cancelConfirm = () => {
+    setConfirming(false);
+    setTyped("");
+  };
 
   const toggleKill = async () => {
-    if (!runId || !kill) return;
+    if (!runId || !kill || !typedOk) return;
+    cancelConfirm();
     setBusy(true);
     try {
       await client.setKillSwitch(runId, !kill.engaged, kill.engaged ? undefined : reason.trim() || "Engaged from the console");
@@ -169,10 +181,35 @@ export function Risk() {
                     <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Recorded with the change" maxLength={120} />
                   </label>
                 )}
-                <button type="button" className={kill.engaged ? "btn" : "btn btn-danger"} disabled={!canToggle || busy} onClick={toggleKill}>
-                  <IconPower />
-                  {kill.engaged ? "Release kill switch" : "Engage kill switch"}
-                </button>
+                {confirming && canToggle ? (
+                  <form
+                    className="kill-confirm"
+                    aria-label="Confirm the kill switch change"
+                    onKeyDown={(e) => { if (e.key === "Escape") cancelConfirm(); }}
+                    onSubmit={(e) => { e.preventDefault(); void toggleKill(); }}
+                  >
+                    <p>
+                      <b>{kill.engaged ? "Release the kill switch?" : "Engage the kill switch?"}</b>{" "}
+                      {kill.engaged ? "New signals will reach risk and execution again." : "Every new signal will be rejected until someone releases it."}
+                    </p>
+                    <label className="field">
+                      <span>Type <b>{word}</b> to confirm</span>
+                      <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus autoComplete="off" spellCheck={false} maxLength={20} />
+                    </label>
+                    <div className="row" style={{ gap: 8 }}>
+                      <button type="submit" className={kill.engaged ? "btn btn-primary" : "btn btn-danger"} disabled={busy || !typedOk}>
+                        <IconPower />
+                        {kill.engaged ? "Yes, release" : "Yes, engage"}
+                      </button>
+                      <button type="button" className="btn" onClick={cancelConfirm}>Cancel</button>
+                    </div>
+                  </form>
+                ) : (
+                  <button type="button" className={kill.engaged ? "btn" : "btn btn-danger"} disabled={!canToggle || busy} onClick={() => setConfirming(true)}>
+                    <IconPower />
+                    {kill.engaged ? "Release kill switch" : "Engage kill switch"}
+                  </button>
+                )}
                 {!canToggle && <small className="faint">Available while a run is running.</small>}
                 {kill.changed_at && <small className="faint">Last changed {dateTime(kill.changed_at)} ET</small>}
               </div>

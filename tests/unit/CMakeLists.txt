@@ -23,6 +23,12 @@ trading_engine_add_component_test(portfolio
     portfolio_view_contract_test.cpp
     portfolio_manager_test.cpp)
 
+# The backtest path: fill model, execution simulator, risk policies and manager,
+# performance analyzer, and app::Backtest end to end (uses the bus's thread).
+trading_engine_add_component_test(backtest
+    backtest_test.cpp)
+target_link_libraries(te_test_backtest PRIVATE trading_engine::test_support)
+
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.
 trading_engine_add_component_test(scaffold_contract
@@ -42,7 +48,8 @@ trading_engine_add_component_test(events
     events_in_process_bus_test.cpp
     events_topic_bus_test.cpp
     portfolio_bus_bridge_test.cpp
-    pipeline_test.cpp)
+    pipeline_test.cpp
+    order_flow_test.cpp)
 target_link_libraries(te_test_events PRIVATE trading_engine::test_support)
 
 # The Kafka adapter, against librdkafka's in-process mock cluster: no broker
@@ -94,7 +101,9 @@ if(TARGET trading_engine_strategy_lab)
         strategy_lab_catalog_test.cpp
         strategy_lab_replay_test.cpp
         strategy_lab_replay_events_test.cpp
-        strategy_lab_cli_test.cpp)
+        strategy_lab_cli_test.cpp
+        strategy_lab_training_test.cpp
+        strategy_lab_backtest_test.cpp)
     target_link_libraries(te_test_strategy_lab PRIVATE trading_engine::strategy_lab trading_engine::test_support)
     target_compile_definitions(te_test_strategy_lab PRIVATE
         STRATEGY_LAB_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/strategy_lab")

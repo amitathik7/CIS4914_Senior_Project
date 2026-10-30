@@ -7,8 +7,8 @@ import { layoutFor, MARKER_LIMIT, PAD, SymbolChart, type ChartStyle, type Layout
 
 // Compare draws ONE symbol at a time as aligned small multiples: configuration A above configuration B, then a ribbon of what the two did
 // on each row. All three share the same horizontal axis (the symbol's rows in recorded order), the same width and the same hover, and the
-// shared replay position is the ring on both charts. Each side keeps its own price axis and, for mean reversion, its own z-score panel:
-// z-scores and prices are never put on one axis, and the two sides' scales are never forced to agree.
+// shared replay position is the ring on both charts. Each side keeps its own price axis and, for mean reversion and the ML strategy, its own indicator panel:
+// indicators and prices are never put on one axis, and the two sides' scales are never forced to agree.
 
 export const SIDE_STYLE: Record<Member, ChartStyle> = {
   A: { color: "var(--cmp-a)", dashes: [undefined, "6 3"], selected: "var(--text)" },
@@ -101,7 +101,7 @@ function Legend({ layouts }: { layouts: Record<Member, Layout> }) {
         <span key={m} className="legend-key">
           <span className="cmp-chip" data-member={m}>{m}</span>
           {layouts[m].overlays.map((o, k) => <span key={o.name} className="legend-key">{line(m, SIDE_STYLE[m].dashes[k])}<span style={{ color: "var(--text-2)" }}>{o.label}</span></span>)}
-          {layouts[m].pane && <span className="legend-key">{line(m, SIDE_STYLE[m].zDash)}<span style={{ color: "var(--text-2)" }}>z-score (own panel)</span></span>}
+          {layouts[m].pane && <span className="legend-key">{line(m, SIDE_STYLE[m].zDash)}<span style={{ color: "var(--text-2)" }}>{layouts[m].pane!.label} (own panel)</span></span>}
         </span>
       ))}
       <span className="legend-key"><svg width="16" height="12" viewBox="0 0 16 12" aria-hidden="true"><path d="M8 2 l5 8 h-10 z" fill="var(--up)" /></svg>Buy request</span>

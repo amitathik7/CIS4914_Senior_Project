@@ -29,12 +29,31 @@ function niceTicks(max: number): number[] {
   return ticks;
 }
 
+// Splits an axis label into at most three lines of about maxChars each (11px text is roughly 6px a character), ending with an
+// ellipsis when it still does not fit. The full label stays in the tooltip and the bar's accessible name.
+function wrapLabel(label: string, maxChars: number): string[] {
+  if (label.length <= maxChars) return [label];
+  const lines: string[] = [];
+  let line = "";
+  for (const word of label.split(" ")) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= maxChars || !line) line = next;
+    else { lines.push(line); line = word; }
+  }
+  lines.push(line);
+  const fit = (text: string) => (text.length <= maxChars ? text : `${text.slice(0, Math.max(1, maxChars - 1))}…`);
+  return lines.length <= 3 ? lines.map(fit) : [fit(lines[0]!), fit(lines[1]!), fit(lines.slice(2).join(" "))];
+}
+
 // Vertical bars with a hover tooltip; rounded data-ends anchored to the baseline.
 export function BarChart({ data, height, format, label, tone = "accent", xLabel }: Props) {
   const [ref, width] = useElementWidth<HTMLDivElement>();
   const [active, setActive] = useState<number | null>(null);
   const titleId = useId();
-  const pad = { top: 10, right: 8, bottom: xLabel ? 36 : 22, left: 44 };
+  const slotGuess = data.length ? Math.max(0, width - 52) / data.length : 0;
+  const labels = useMemo(() => data.map((d) => wrapLabel(d.label, Math.max(3, Math.floor((slotGuess - 6) / 6)))), [data, slotGuess]);
+  const extraLines = Math.max(0, ...labels.map((l) => l.length - 1));
+  const pad = { top: 10, right: 8, bottom: (xLabel ? 36 : 22) + extraLines * 12, left: 44 };
   const ticks = useMemo(() => niceTicks(Math.max(0, ...data.map((d) => d.value))), [data]);
   const max = ticks[ticks.length - 1]!;
   const innerW = Math.max(0, width - pad.left - pad.right);
@@ -71,7 +90,9 @@ export function BarChart({ data, height, format, label, tone = "accent", xLabel 
                   />
                 )}
                 {(data.length <= 12 || i % Math.ceil(data.length / 12) === 0) && (
-                  <text x={x + barW / 2} y={pad.top + innerH + 15} textAnchor="middle">{d.label}</text>
+                  <text x={x + barW / 2} y={pad.top + innerH + 15} textAnchor="middle">
+                    {labels[i]!.map((line, n) => <tspan key={n} x={x + barW / 2} dy={n ? 12 : 0}>{line}</tspan>)}
+                  </text>
                 )}
                 <rect
                   x={pad.left + i * slot}
@@ -80,6 +101,7 @@ export function BarChart({ data, height, format, label, tone = "accent", xLabel 
                   height={innerH}
                   fill="transparent"
                   tabIndex={0}
+                  role="img"
                   aria-label={`${d.label}: ${d.tip ?? format(d.value)}`}
                   onMouseEnter={() => setActive(i)}
                   onMouseLeave={() => setActive(null)}

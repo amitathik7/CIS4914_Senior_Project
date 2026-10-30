@@ -49,10 +49,12 @@ function pnlBins(trades: Trade[]) {
   });
 }
 
+// A parameter the engine did not report is left out (the Kafka gateway sees only what the signals carry).
 function strategyParams(s: StrategyConfig): [string, string][] {
-  return s.kind === "sma_crossover"
-    ? [["Short window", `${s.short_window} bars`], ["Long window", `${s.long_window} bars`]]
-    : [["Lookback", `${s.lookback} bars`], ["Entry |z|", String(s.entry_threshold)], ["Rearm |z|", String(s.rearm_threshold)]];
+  const rows: [string, number | undefined, string][] = s.kind === "sma_crossover"
+    ? [["Short window", s.short_window, " bars"], ["Long window", s.long_window, " bars"]]
+    : [["Lookback", s.lookback, " bars"], ["Entry |z|", s.entry_threshold, ""], ["Rearm |z|", s.rearm_threshold, ""]];
+  return rows.filter(([, v]) => v !== undefined).map(([k, v, unit]) => [k, `${v}${unit}`]);
 }
 
 function Configuration({ run }: { run: RunDetail }) {
@@ -69,7 +71,7 @@ function Configuration({ run }: { run: RunDetail }) {
             <dl className="kv">
               <dt>Symbols</dt><dd>{s.symbols.join(", ")}</dd>
               {strategyParams(s).map(([k, v]) => <FragmentKV key={k} k={k} v={v} />)}
-              <dt>Order size</dt><dd>{int(s.requested_quantity)} shares</dd>
+              <dt>Order size</dt><dd>{s.requested_quantity ? `${int(s.requested_quantity)} shares` : "—"}</dd>
             </dl>
           </div>
         ))}
@@ -135,8 +137,8 @@ export function Report() {
         ) : (
           <Panel title="Replaying">
             <div className="stack" style={{ gap: 10 }}>
-              <div className="progress-line" style={{ width: "100%", height: 6 }}><span style={{ width: `${Math.round((d.progress ?? 0) * 100)}%` }} /></div>
-              <p className="muted num">{Math.round((d.progress ?? 0) * 100)}% of bars replayed{d.clock ? `, now at ${dateTime(d.clock)} ET` : ""}. The report appears when the replay completes.</p>
+              {d.progress !== undefined && <div className="progress-line" style={{ width: "100%", height: 6 }}><span style={{ width: `${Math.round(d.progress * 100)}%` }} /></div>}
+              <p className="muted num">{d.progress !== undefined ? `${Math.round(d.progress * 100)}% of bars replayed` : "Replaying"}{d.clock ? `, now at ${dateTime(d.clock)} ET` : ""}. The report appears when the replay completes.</p>
             </div>
           </Panel>
         )}

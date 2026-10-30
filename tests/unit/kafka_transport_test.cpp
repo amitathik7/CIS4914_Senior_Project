@@ -20,6 +20,7 @@
 #include <tuple>
 #include <vector>
 
+#include "trading_engine/app/order_flow.hpp"
 #include "trading_engine/app/pipeline.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/events/event_codec.hpp"
@@ -105,7 +106,8 @@ protected:
     std::string mock_prefix(const std::string& stem) {
         const std::string prefix = unique_prefix(stem);
         for (const auto type : {ev::EventType::MarketData, ev::EventType::Signal,
-                                ev::EventType::Order, ev::EventType::Fill}) {
+                                ev::EventType::Order, ev::EventType::Fill,
+                                ev::EventType::RiskDecision}) {
             cluster_.create_topic(prefix + "." + std::string(ev::to_string(type)), 3);
         }
         return prefix;
@@ -228,6 +230,53 @@ TEST_F(KafkaMockTest, ThePipelineRunsEndToEndThroughKafka) {
     EXPECT_EQ(signals.size(), pipeline.strategies().stats().signals_published);
     EXPECT_EQ(signals[0].side, dom::SignalSide::Buy);
     EXPECT_EQ(signals[1].side, dom::SignalSide::Sell);
+    EXPECT_EQ(bus.stats().decode_errors, 0U);
+}
+
+TEST_F(KafkaMockTest, OrdersAndFillsFlowThroughKafka) {
+    const std::string prefix = mock_prefix("orderflow");
+    kf::KafkaTransportConfig config = mock_config("orderflow");
+    config.fetch_wait_max = 10ms;   // one drain per bar: keep hops quick
+    kf::RdKafkaTransport transport{config};
+    auto options          = bus_options(prefix);
+    options.poll_interval = 5ms;
+    ev::TopicEventBus bus{transport, clock_, options};
+    std::vector<dom::Fill> fills;                  // dispatcher only
+    std::vector<dom::RiskDecisionReport> decisions;
+    bus.subscribe(ev::EventType::Fill,
+                  [&](const ev::Event& e) { fills.push_back(std::get<dom::Fill>(e.payload)); });
+    bus.subscribe(ev::EventType::RiskDecision, [&](const ev::Event& e) {
+        decisions.push_back(std::get<dom::RiskDecisionReport>(e.payload));
+    });
+
+    trading_engine::app::Pipeline pipeline{bus, clock_};
+    trading_engine::app::OrderFlow flow{pipeline, bus, clock_};
+    st::MovingAverageCrossoverConfig sma;
+    sma.short_window = 2;
+    sma.long_window  = 4;
+    sma.symbols      = {"AAPL"};
+    pipeline.add_strategy(std::make_shared<st::MovingAverageCrossoverStrategy>(sma));
+    flow.start();
+    pipeline.start();
+    const int closes[] = {10, 9, 8, 7, 6, 7, 8, 9, 10, 11, 12, 11, 10, 9, 8, 7};
+    std::uint64_t n = 0;
+    for (const int close : closes) {
+        const ev::Event e = bar("AAPL", ++n, tec::Price::from_units(close));
+        const auto& market = std::get<dom::MarketEvent>(e.payload);
+        clock_.set(market.exchange_time);
+        pipeline.input().on_market_event(market);
+        bus.wait_until_drained();   // replay one bar at a time
+    }
+    pipeline.finish();
+    flow.stop();
+
+    const auto signals = pipeline.strategies().stats().signals_published;
+    ASSERT_GE(signals, 2U);
+    EXPECT_EQ(decisions.size(), signals);
+    ASSERT_FALSE(fills.empty());
+    EXPECT_GT(fills[0].filled_quantity, 0) << "the first crossover buys";
+    EXPECT_EQ(pipeline.portfolio_bridge().stats().fills_applied, fills.size());
+    EXPECT_EQ(pipeline.portfolio_bridge().stats().errors, 0U);
     EXPECT_EQ(bus.stats().decode_errors, 0U);
 }
 

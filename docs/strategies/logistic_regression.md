@@ -107,6 +107,10 @@ In the Strategy Lab and the console, the lower chart pane plots `probability_edg
 regimes of 20 bars up 1% then 20 down) shows it learning. With `horizon=1` and `min_training_samples=20`, it
 requests at each turn once trained.
 
+To fit it on recorded bars, use the lab's `train` command; to compare configurations, `sweep`. Both report accuracy on a
+training period and a held-out period against a majority-class baseline, and `train` prints the learned weights as an
+`initial_parameters` warm start ([STRATEGY_LAB_TRAINING.md](../STRATEGY_LAB_TRAINING.md)).
+
 ## 7. What the tests show and do not show
 
 `tests/unit/logistic_regression_strategy_test.cpp` and `logistic_regression_engine_test.cpp` cover the following:

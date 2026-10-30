@@ -96,6 +96,7 @@ void LogisticRegressionStrategy::SymbolState::reset() noexcept {
     trained  = 0;
     hits.clear();
     next_hit = 0;
+    totals   = {};
     latch    = Latch::Neutral;
 }
 
@@ -244,8 +245,12 @@ void LogisticRegressionStrategy::train_due(SymbolState& state, common::Price clo
         if (std::fabs(move) <= config_.label_dead_band) {
             continue;   // too small to call: not a training sample
         }
-        const bool up = move > 0.0;
-        state.score((sample.probability >= 0.5) == up);
+        const bool up    = move > 0.0;
+        const bool right = (sample.probability >= 0.5) == up;
+        state.score(right);
+        ++state.totals.scored;
+        state.totals.correct += right ? 1 : 0;
+        state.totals.up_labels += up ? 1 : 0;
         state.model.train(sample.features, up);
         ++state.trained;
     }
@@ -305,6 +310,14 @@ std::optional<double> LogisticRegressionStrategy::rolling_accuracy(std::string_v
         return std::nullopt;
     }
     return found->second.accuracy();
+}
+
+std::optional<ml::Scoreboard> LogisticRegressionStrategy::scoreboard(std::string_view symbol) const {
+    const auto found = states_.find(common::Symbol{symbol});
+    if (found == states_.end()) {
+        return std::nullopt;
+    }
+    return found->second.totals;
 }
 
 // --- Diagnostics ----------------------------------------------------------------

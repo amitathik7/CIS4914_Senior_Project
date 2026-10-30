@@ -336,5 +336,53 @@ class ScaleContract(LabTestCase):
             self.assertEqual(capped.returncode, 3)
 
 
+class TrainingContract(LabTestCase):
+    """train and sweep (docs/STRATEGY_LAB_TRAINING.md): strict JSON, determinism, and a warm start
+    whose text reads back as the exact learned numbers."""
+
+    QUICK = ["--param", "horizon=1", "--param", "min_training_samples=20"]
+
+    def test_train_is_one_deterministic_document_with_an_exact_warm_start(self) -> None:
+        args = ["train", "--dataset", datasets("ml_trending.csv"), *self.QUICK, "--no-wall-clock"]
+        first = run_exe(args)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout_bytes, run_exe(args).stdout_bytes)
+        doc = first.json(exact=True)
+        self.assertEqual(doc["schema"], "strategy_lab.training")
+        result = doc["result"]
+        self.assertEqual(result["split"], {"rows": 240, "training_rows": 168, "holdout_rows": 72, "holdout": Decimal("0.3")})
+        for period in ("training", "holdout"):
+            self.assertGreater(result[period]["accuracy"], result[period]["majority_baseline"] + Decimal("0.25"))
+        symbol = result["symbols"][0]
+        warm = [Decimal(text) for text in symbol["initial_parameters"].split(",")]
+        self.assertEqual(warm, [*symbol["weights"].values(), symbol["bias"]])
+        self.assertEqual(list(symbol["weights"]),
+                         ["return_1", "return_5", "return_20", "z_score_20", "sma_gap_5_20", "volatility_20"])
+
+    def test_an_empty_holdout_is_null_not_zero(self) -> None:
+        run = run_exe(["train", "--dataset", datasets("ml_trending.csv"), "--holdout", "0", "--no-wall-clock"])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        holdout = run.json()["result"]["holdout"]
+        self.assertEqual(holdout["scored"], 0)
+        self.assertIsNone(holdout["accuracy"])
+        self.assertIsNone(holdout["majority_baseline"])
+
+    def test_sweep_ranks_rows_and_reports_rejections_in_the_strategys_words(self) -> None:
+        run = run_exe(["sweep", "--dataset", datasets("ml_trending.csv"), "--param", "min_training_samples=20",
+                       "--grid", "horizon=5,1,3", "--grid", "rearm_band=0.05,0.2", "--no-wall-clock"])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        result = run.json()["result"]
+        self.assertEqual(result["ranked_by"], "training.accuracy")
+        rows = result["rows"]
+        accepted = [row for row in rows if "rejected" not in row]
+        self.assertEqual(len(accepted), 3)
+        self.assertEqual(rows[:3], accepted)
+        accuracies = [row["training"]["accuracy"] for row in accepted]
+        self.assertEqual(accuracies, sorted(accuracies, reverse=True))
+        self.assertEqual(result["best"]["parameters"]["horizon"], int(accepted[0]["assignment"]["horizon"]))
+        for row in rows[3:]:
+            self.assertIn("rearm_band", row["rejected"])
+
+
 if __name__ == "__main__":
     unittest.main()

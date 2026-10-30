@@ -13,7 +13,7 @@ namespace trading_engine::events {
 namespace {
 
 constexpr EventType kAllTypes[] = {EventType::MarketData, EventType::Signal, EventType::Order,
-                                   EventType::Fill};
+                                   EventType::Fill, EventType::RiskDecision};
 
 std::string random_origin() {
     std::random_device device;

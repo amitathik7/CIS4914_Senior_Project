@@ -10,6 +10,7 @@ import { FinancialPanel } from "../components/strategies/compare/FinancialPanel"
 import { Empty, Panel } from "../components/ui";
 import { etDay } from "../lib/exactTime";
 import { compareStore, useCompare } from "../strategies/useCompare";
+import { revealBelowTopBar } from "../lib/scroll";
 
 /** Compare: two configurations, one dataset, one position. Results come only from the button; everything below it is a view of finished results. */
 export function StrategiesCompare() {
@@ -25,7 +26,7 @@ export function StrategiesCompare() {
       return;
     }
     const el = top.current;
-    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (el) revealBelowTopBar(el);
   }, [outcome]);
   const multiDay = useMemo(() => (done ? new Set(done.model.events.map((e) => etDay(e.time))).size > 1 : false), [done]);
 

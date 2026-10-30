@@ -4,6 +4,7 @@
 #include "trading_engine/domain/fill.hpp"
 #include "trading_engine/domain/market_event.hpp"
 #include "trading_engine/domain/order.hpp"
+#include "trading_engine/domain/risk_decision_report.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
 
 namespace trading_engine::domain {
@@ -67,6 +68,15 @@ std::string_view to_string(FillStatus status) noexcept {
     switch (status) {
         case FillStatus::Filled:          return "filled";
         case FillStatus::PartiallyFilled: return "partially_filled";
+    }
+    return "invalid";
+}
+
+std::string_view to_string(RiskOutcome outcome) noexcept {
+    switch (outcome) {
+        case RiskOutcome::Approved: return "approved";
+        case RiskOutcome::Resized:  return "resized";
+        case RiskOutcome::Rejected: return "rejected";
     }
     return "invalid";
 }

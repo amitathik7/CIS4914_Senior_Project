@@ -103,6 +103,7 @@ RdKafkaTransport::RdKafkaTransport(KafkaTransportConfig config)
     set(consumer_conf, "enable.auto.commit", "false");
     set(consumer_conf, "enable.partition.eof", "false");
     set(consumer_conf, "allow.auto.create.topics", "true");
+    set(consumer_conf, "fetch.wait.max.ms", std::to_string(config_.fetch_wait_max.count()));
     apply_extra(consumer_conf, config_);
     handles_->consumer = make_handle(RD_KAFKA_CONSUMER, consumer_conf);
     rd_kafka_poll_set_consumer(handles_->consumer.get());
@@ -236,8 +237,20 @@ void RdKafkaTransport::subscribe(const std::vector<std::string>& topics) {
         for (int p = 0; p < partitions; ++p) {
             std::int64_t low = 0;
             std::int64_t high = 0;
-            const rd_kafka_resp_err_t err = rd_kafka_query_watermark_offsets(
-                consumer, topic.c_str(), p, &low, &high, to_ms(config_.timeout));
+            rd_kafka_resp_err_t err = RD_KAFKA_RESP_ERR_NO_ERROR;
+            // A topic created a moment ago can list a leader in its metadata
+            // before that broker serves it; retry those answers until the deadline.
+            do {
+                err = rd_kafka_query_watermark_offsets(consumer, topic.c_str(), p, &low, &high,
+                                                       to_ms(config_.timeout));
+                const bool settling = err == RD_KAFKA_RESP_ERR_NOT_LEADER_FOR_PARTITION ||
+                                      err == RD_KAFKA_RESP_ERR_LEADER_NOT_AVAILABLE ||
+                                      err == RD_KAFKA_RESP_ERR_UNKNOWN_TOPIC_OR_PART;
+                if (!settling || std::chrono::steady_clock::now() >= deadline) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds{100});
+            } while (true);
             if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
                 fail("watermarks of " + topic + "[" + std::to_string(p) + "]: " + rd_kafka_err2str(err));
             }
