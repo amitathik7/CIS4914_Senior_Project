@@ -37,11 +37,17 @@ class BuiltinDataset:
         return f"{self.key}.csv"
 
 
-def _preset(sma: tuple[str, str], mr: tuple[str, str, str], symbols: str) -> dict[str, dict[str, str]]:
-    return {
+def _preset(sma: tuple[str, str], mr: tuple[str, str, str], symbols: str,
+            ml: tuple[str, str] | None = None) -> dict[str, dict[str, str]]:
+    """ml: (horizon, min_training_samples). Without it the ML strategy starts from its own defaults, which need more
+    bars than most fixtures have (21 to warm up, then the training samples)."""
+    out = {
         "sma_crossover": {"short_window": sma[0], "long_window": sma[1], "symbols": symbols},
         "mean_reversion": {"lookback": mr[0], "entry_threshold": mr[1], "rearm_threshold": mr[2], "symbols": symbols},
     }
+    if ml is not None:
+        out["ml_logistic"] = {"horizon": ml[0], "min_training_samples": ml[1], "symbols": symbols}
+    return out
 
 
 # The parameter pairs are the ones the lab's own tests use for each fixture (tests/strategy_lab).
@@ -76,6 +82,10 @@ BUILTINS: tuple[BuiltinDataset, ...] = (
     BuiltinDataset("bars_and_trades", "Bars with trade rows (AAPL, 5 rows)",
                    "Trade rows sit between the bars; the strategies ignore them and say so.",
                    _preset(("1", "2"), ("2", "0.9", "0.1"), "AAPL")),
+    BuiltinDataset("ml_trending", "ML: trending regimes (AAPL, 240 bars)",
+                   "Twenty bars up 1% each, twenty down, repeated: the last move predicts the next except at a turn, so "
+                   "the ML strategy learns it and then requests at each turn.",
+                   _preset(("5", "20"), ("20", "2", "0.5"), "AAPL", ("1", "20"))),
     BuiltinDataset("ohlcv_example", "Bars with open/high/low/volume (AAPL, 3 bars)",
                    "Optional OHLCV columns are carried through; the strategies use only the close.",
                    _preset(("1", "2"), ("3", "1", "0.25"), "AAPL")),

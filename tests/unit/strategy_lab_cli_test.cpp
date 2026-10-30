@@ -189,7 +189,9 @@ TEST(LabCliExitStatus, EveryFailureClassHasItsDocumentedStatusAndAMatchingErrorD
         {{"run", "--dataset", path, "--strategy", "nope", "--param", "symbols=A"}, 2, "usage_error"},
         {{"run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "bogus=1"}, 2, "invalid_parameter"},
         {{"run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "short_window=-1"}, 2, "invalid_parameter"},
-        {{"run", "--dataset", path, "--strategy", "ml", "--param", "symbols=A"}, 2, "unavailable_strategy"},
+        // No kind is unavailable any more (ml_logistic replaced the placeholder), so unavailable_strategy has no
+        // producer here; the old placeholder name is now simply unknown.
+        {{"run", "--dataset", path, "--strategy", "ml", "--param", "symbols=A"}, 2, "usage_error"},
         {{"run", "--dataset", path, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "short_window=0"}, 2, "config_error"},
         {{"run", "--dataset", fixture_path("missing.csv").string(), "--strategy", "sma_crossover", "--param", "symbols=A"}, 3, "dataset_error"},
         {{"run", "--dataset", path, "--max-rows", "5", "--strategy", "sma_crossover", "--param", "symbols=AAPL"}, 3, "limit_exceeded"},

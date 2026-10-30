@@ -364,6 +364,27 @@ TEST(LogisticRegressionStrategyTest, ARestartReplaysBitForBit) {
     }
 }
 
+TEST(LogisticRegressionStrategyTest, AnObserverChangesNoDecision) {
+    struct Sink final : strategy::ISignalSink {
+        std::vector<domain::TradeSignal> signals;
+        void emit(const domain::TradeSignal& signal) override { signals.push_back(signal); }
+    };
+    const Closes closes = lr_test::random_walk(500, 7);
+    strategy::LogisticRegressionStrategy bare{make_config()};
+    Sink sink;
+    long long minute = 1;
+    for (const common::Price close : closes) {
+        bare.on_market_event(bar("AAPL", close, minute++), sink);
+    }
+    Harness observed{make_config()};
+    observed.feed_closes(closes);
+    ASSERT_EQ(sink.signals.size(), observed.signals.size());
+    for (std::size_t i = 0; i < sink.signals.size(); ++i) {
+        EXPECT_EQ(sink.signals[i].metadata, observed.signals[i].metadata);
+    }
+    EXPECT_EQ(bare.parameters("AAPL"), observed.lr.parameters("AAPL"));
+}
+
 TEST(LogisticRegressionStrategyTest, SymbolsLearnIndependently) {
     const Closes up = lr_test::trending(300);
     Harness both{make_config({"AAPL", "MSFT"})};

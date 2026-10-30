@@ -103,9 +103,8 @@ class FirstLoad(AppTestCase):
                           self.at.number_input(key="ui_param.sma_crossover.long_window").value), (2, 3))
         self.assertEqual(self.at.text_input(key="ui_symbols").value, "AAPL")
 
-    def test_the_ml_strategy_is_listed_as_unavailable_and_not_selectable(self):
-        self.assertNotIn("ml", self.at.selectbox(key="ui_strategy_kind").options)
-        self.assertIn("not available", page_text(self.at))
+    def test_the_ml_strategy_is_selectable(self):
+        self.assertIn("Machine learning (online logistic regression)", self.at.selectbox(key="ui_strategy_kind").options)
 
     def test_the_catalog_is_loaded_once_not_per_interaction(self):
         before = session.catalog_loads()

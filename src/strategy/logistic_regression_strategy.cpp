@@ -329,6 +329,9 @@ void LogisticRegressionStrategy::report(const domain::MarketEvent& event, const 
         snapshot.action      = action;
         snapshot.window_size = ml::kFeatureWindow;
         snapshot.add_indicator("probability_up", probability);
+        snapshot.add_indicator("probability_edge",
+                               probability.has_value() ? std::optional<double>{*probability - 0.5}
+                                                       : std::nullopt);
         if (state != nullptr) {
             snapshot.window_fill = state->closes.size();
             snapshot.add_indicator("training_samples", static_cast<double>(state->trained));

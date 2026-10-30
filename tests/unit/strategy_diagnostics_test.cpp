@@ -389,7 +389,7 @@ TEST(StrategyDiagnosticsAgreement, MeanReversionSnapshotsMatchTheirSignalsOnTwoI
 
 TEST(StrategyDiagnosticsVocabulary, EveryReasonHasADistinctSnakeCaseCode) {
     std::set<std::string> seen;
-    for (int value = 0; value <= static_cast<int>(BarReason::BetweenBands); ++value) {
+    for (int value = 0; value <= static_cast<int>(BarReason::Training); ++value) {
         const std::string code{strategy::to_string(static_cast<BarReason>(value))};
         EXPECT_NE(code, "invalid") << value;
         EXPECT_FALSE(code.empty());
@@ -398,7 +398,7 @@ TEST(StrategyDiagnosticsVocabulary, EveryReasonHasADistinctSnakeCaseCode) {
         }
         EXPECT_TRUE(seen.insert(code).second) << "duplicate code " << code;
     }
-    EXPECT_EQ(seen.size(), 19u);
+    EXPECT_EQ(seen.size(), 20u);
     EXPECT_EQ(strategy::to_string(static_cast<BarReason>(200)), "invalid");
     EXPECT_EQ(strategy::to_string(static_cast<BarVerdict>(200)), "invalid");
     EXPECT_EQ(strategy::to_string(static_cast<BarAction>(200)), "invalid");

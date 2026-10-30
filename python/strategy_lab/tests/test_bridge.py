@@ -310,8 +310,9 @@ class RealExecutable(unittest.TestCase):
 
     def test_describe_returns_the_catalog_with_defaults_from_the_cpp_config(self):
         catalog = bridge.describe(self.runner)
-        self.assertEqual([s.kind for s in catalog.strategies], ["sma_crossover", "mean_reversion", "ml"])
-        self.assertFalse(catalog.strategy("ml").available)
+        self.assertEqual([s.kind for s in catalog.strategies], ["sma_crossover", "mean_reversion", "ml_logistic"])
+        self.assertTrue(all(s.available for s in catalog.strategies))
+        self.assertEqual(catalog.strategy("ml_logistic").param("entry_probability").default, 0.6)
         sma = catalog.strategy("sma_crossover")
         self.assertEqual((sma.param("short_window").default, sma.param("long_window").default), (5, 20))
         self.assertTrue(sma.param("symbols").required and not sma.param("symbols").has_default)

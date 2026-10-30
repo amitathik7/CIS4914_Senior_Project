@@ -191,8 +191,8 @@ describe.skipIf(!exe || !pythonOk)("end to end through the real gateway", () => 
     expect(state.service.phase).toBe("online");
     const sma = state.catalog!.strategies.find((s) => s.kind === "sma_crossover")!;
     expect(sma.params.map((p) => [p.name, p.defaultText])).toEqual([["strategy_id", "sma_crossover"], ["short_window", "5"], ["long_window", "20"], ["requested_quantity", "1"], ["symbols", undefined]]);
-    expect(state.catalog!.strategies.find((s) => s.kind === "ml")).toMatchObject({ available: false });
-    expect(state.datasets).toHaveLength(11);
+    expect(state.catalog!.strategies.find((s) => s.kind === "ml_logistic")).toMatchObject({ available: true });
+    expect(state.datasets).toHaveLength(12);
     expect(state.datasets.find((d) => d.key === "sma_crossover")).toMatchObject({ sha256: createHash("sha256").update(readFileSync(join(FIXTURES, "datasets", "sma_crossover.csv"))).digest("hex") });
   });
 

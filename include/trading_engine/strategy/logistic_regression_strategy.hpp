@@ -60,8 +60,9 @@
 //  other strategies, warming_up (window not yet full), training (window full but
 //  too few trained samples), measurement_failed, entry_buy, entry_sell,
 //  excursion_already_requested, inside_rearm_band and between_bands. Indicators:
-//  probability_up, training_samples, rolling_accuracy. States: latch_before,
-//  latch_after.
+//  probability_up, probability_edge (p - 0.5, centred on zero so a chart can draw
+//  the entry and rearm bands as +-(entry_probability - 0.5) and +-rearm_band),
+//  training_samples, rolling_accuracy. States: latch_before, latch_after.
 // -----------------------------------------------------------------------------
 
 #include <cstddef>

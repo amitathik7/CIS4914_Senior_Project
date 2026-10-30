@@ -23,7 +23,7 @@ class DescribeContract(LabTestCase):
         self.assertEqual(doc["schema_version"], "1.0")
         catalog = doc["catalog"]
         kinds = {k["kind"]: k for k in catalog["strategies"]}
-        self.assertEqual(list(kinds), ["sma_crossover", "mean_reversion", "ml"])
+        self.assertEqual(list(kinds), ["sma_crossover", "mean_reversion", "ml_logistic"])
 
         def defaults(kind: str) -> dict:
             return {p["name"]: p.get("default") for p in kinds[kind]["parameters"]}
@@ -42,8 +42,11 @@ class DescribeContract(LabTestCase):
         symbols = [p for p in kinds["sma_crossover"]["parameters"] if p["name"] == "symbols"][0]
         self.assertTrue(symbols["required"])
         self.assertNotIn("default", symbols)
-        self.assertFalse(kinds["ml"]["available"])
-        self.assertIn("not implemented", kinds["ml"]["unavailable_reason"].lower())
+        self.assertTrue(all(k["available"] for k in kinds.values()))
+        self.assertEqual(defaults("ml_logistic"),
+                         {"strategy_id": "ml_logistic", "horizon": 5, "label_dead_band": 0.0, "learning_rate": 0.05,
+                          "l2": 0.001, "min_training_samples": 50, "entry_probability": 0.6, "rearm_band": 0.05,
+                          "requested_quantity": 1, "symbols": None})
         self.assertEqual([c["name"] for c in catalog["dataset_format"]["columns"] if c["required"]],
                          ["symbol", "exchange_time", "type", "price"])
         self.assertEqual(catalog["limits"]["max_strategies"], 16)
@@ -185,7 +188,7 @@ class ExitStatus(LabTestCase):
         self.assert_error(["run", "--dataset", good, "--strategy", "sma_crossover", "--bogus"], 2, "usage_error")
         self.assert_error(["run", "--dataset", good, "--strategy", "sma_crossover", "--max-rows", "0"], 2, "usage_error")
         self.assert_error(["run", "--dataset", good, "--strategy", "nope"], 2, "usage_error")
-        self.assert_error(["run", "--dataset", good, "--strategy", "ml", "--param", "symbols=A"], 2, "unavailable_strategy")
+        self.assert_error(["run", "--dataset", good, "--strategy", "ml", "--param", "symbols=A"], 2, "usage_error")
         self.assert_error(["run", "--dataset", good, "--strategy", "sma_crossover", "--param", "bogus=1"], 2, "invalid_parameter")
         self.assert_error(["run", "--dataset", good, "--strategy", "sma_crossover", "--param", "short_window=-1"], 2, "invalid_parameter")
         self.assert_error(["run", "--dataset", good, "--strategy", "sma_crossover", "--param", "symbols=A", "--param", "short_window=0"],
