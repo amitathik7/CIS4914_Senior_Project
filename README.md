@@ -101,8 +101,8 @@ web/                      engine console (React + TypeScript); real engine via t
 | Python | ≥ 3.10 | the engine gateway and Strategy Lab (`python/`) |
 | Node.js + pnpm | Node 22, pnpm 10 | the web console (`web/`) |
 | librdkafka + a Kafka broker | librdkafka 2.x; Kafka 3.7+ / 4.x | optional: `-DTRADING_ENGINE_WITH_KAFKA=ON` (vcpkg `librdkafka:x64-windows` on Windows); broker via `docker-compose.kafka.yml` |
-| PostgreSQL | 14+ | **not needed for the scaffold**; later milestones |
-| Alpaca account | — | **not needed for the scaffold**; paper account later |
+| PostgreSQL | 14+ | **not needed yet**: nothing connects to it (persistence is a later milestone) |
+| Alpaca account | — | **not needed yet**: market data comes from recorded CSV files; a paper account later |
 
 ## Build
 

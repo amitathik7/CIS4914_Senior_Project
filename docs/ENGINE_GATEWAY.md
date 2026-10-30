@@ -99,7 +99,11 @@ run` (nothing listens for its commands) and for a run whose engine stopped
 heartbeating; such a queued or running run shows as failed. A start the engine
 refused is not listed among the runs. With `--replay` or `--read-only` all
 three answer 501. `GET /v1/engine`'s `market_data` lists what the live engines
-can replay, so the New backtest form offers only recorded symbols and dates.
+can replay, so the New backtest form offers only recorded symbols and dates; when
+the default period lies outside them, the form starts on the last recorded week.
+The Report page of a queued or running console backtest has **Cancel run** /
+**Stop run** (`POST /v1/runs/{id}/stop`); a stopped run shows its report for the
+bars replayed so far.
 
 ## Endpoints
 

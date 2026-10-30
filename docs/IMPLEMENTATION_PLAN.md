@@ -1,8 +1,9 @@
 # Implementation Plan
 
-The scaffold is complete: every runtime path is a stub that throws
-`common::NotImplemented`. This plan turns it into a working **simulated**
-trading engine over the 15-week term. It never trades real money and is not
+This plan was written when the scaffold was complete and every runtime path was
+a stub that threw `common::NotImplemented`. It turns that scaffold into a working
+**simulated** trading engine over the 15-week term; the table below says how far
+each milestone has got. It never trades real money and is not
 graded on predicting markets.
 
 ## Status by milestone (2026-10-30, week 9 of 15)

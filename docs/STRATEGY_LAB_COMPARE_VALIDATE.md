@@ -1,5 +1,9 @@
 # Strategy Lab: Compare, Validate and the dark theme
 
+> Update (2026-10-30): this work is now committed on `jordan`, and CI runs the Strategy Lab UI's Python tests on Linux and
+> Windows. The status below records 2026-10-02; this document does not record whether section 8's ownership review has
+> happened since.
+>
 > Status (2026-10-02): implemented and checked on this machine only; **nothing is committed or pushed and no ownership review has happened**
 > (section 8). This continues [STRATEGY_LAB.md](STRATEGY_LAB.md) (the C++ tool, its JSON and the Explore view; section numbers below
 > that read "S14.x" refer to it). The Strategy Lab is still **signal-only**: it shows the requests the real strategies emit, never fills,
