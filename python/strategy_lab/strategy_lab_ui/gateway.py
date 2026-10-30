@@ -41,13 +41,19 @@ import threading
 import traceback
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Sequence
 
 from . import bridge, datasets, gateway_validation, scenarios, validate, validation_report
 from .gateway_body import RequestBody
 from .catalog import Catalog, StrategySpec
 from .errors import LabUiError
+
+
+def _basename(path: str | Path) -> str:
+    """The file name alone, splitting on / and \\ on every OS, so no directory leaves the machine."""
+    return PureWindowsPath(str(path)).name
+
 
 GATEWAY_VERSION = "0.1.0"
 API_VERSION = "1"
@@ -277,11 +283,11 @@ class Gateway:
             return Response(200, dump({"gateway": gateway, "runner": runner_info}))
         try:
             tool = self.backtest_provider(runner)
-            backtest: dict[str, Any] = {"state": "ready", "name": Path(tool.path).name, "sha256": tool.sha256}
+            backtest: dict[str, Any] = {"state": "ready", "name": _basename(tool.path), "sha256": tool.sha256}
         except LabUiError as error:
             backtest = {"state": "missing", "message": error.message, "setup": _cap(error.detail)}
         return Response(200, dump({"gateway": gateway, "runner": {
-            "state": "ready", "name": Path(runner.path).name, "size": runner.size, "sha256": runner.sha256,
+            "state": "ready", "name": _basename(runner.path), "size": runner.size, "sha256": runner.sha256,
             "tool": catalog.tool, "project_version": catalog.project_version, "schema_version": catalog.schema_version,
             "default_max_rows": catalog.default_max_rows, "hard_max_rows": catalog.hard_max_rows,
             "max_rows_used": bridge.UI_MAX_ROWS}, "backtest": backtest}))
@@ -352,7 +358,7 @@ class Gateway:
             process = outcome.process
             meta = {
                 "gateway": {"version": GATEWAY_VERSION, "api": API_VERSION},
-                "runner": {"name": Path(runner.path).name, "size": runner.size, "sha256": runner.sha256},
+                "runner": {"name": _basename(runner.path), "size": runner.size, "sha256": runner.sha256},
                 "dataset": {"kind": source.kind, "name": source.display_name, "sha256": source.sha256,
                             "bytes": source.size, "synthetic": source.synthetic, "provenance": source.provenance},
                 "request": {"kind": request.kind, "params": [list(pair) for pair in request.params],
@@ -387,7 +393,7 @@ class Gateway:
             process = outcome.process
             meta = {
                 "gateway": {"version": GATEWAY_VERSION, "api": API_VERSION},
-                "runner": {"name": Path(tool.path).name, "size": tool.size, "sha256": tool.sha256},
+                "runner": {"name": _basename(tool.path), "size": tool.size, "sha256": tool.sha256},
                 "dataset": {"kind": source.kind, "name": source.display_name, "sha256": source.sha256,
                             "bytes": source.size, "synthetic": source.synthetic, "provenance": source.provenance},
                 "request": {"kind": request.kind, "params": [list(pair) for pair in request.params],
