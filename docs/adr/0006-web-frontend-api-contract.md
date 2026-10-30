@@ -9,14 +9,13 @@
   (fills and reservation), ADR 0005 (portfolio query), OQ#12 (export format),
   the pending transport ADR 0003 (Kafka).
 
-> **Implementation status (2026-10-30; status unchanged, Proposed).** The read
-> side is built: the Python engine gateway
-> ([`../ENGINE_GATEWAY.md`](../ENGINE_GATEWAY.md)) serves every `GET` endpoint
-> in §2 and the SSE stream from the Kafka topics (ADR 0003), with the §3
-> encoding, and the console reads it. The write side is not: `POST /runs`,
-> `POST /runs/{id}/stop` and the kill switch answer 501 because the engine has
-> no command channel yet. That is being designed separately; this ADR should
-> be revisited for acceptance once it lands.
+> **Implementation status (2026-10-30; status unchanged, Proposed).** Built:
+> the Python engine gateway ([`../ENGINE_GATEWAY.md`](../ENGINE_GATEWAY.md))
+> serves every `GET` endpoint in §2 and the SSE stream from the Kafka topics
+> (ADR 0003), with the §3 encoding, and the console reads it. The write side
+> (`POST /runs`, `POST /runs/{id}/stop`, the kill switch) goes through the
+> command channel in [ADR 0007](0007-engine-command-channel.md) to
+> `trading_engine serve`; run detail shows the settings the engine reports.
 
 ## Context
 
