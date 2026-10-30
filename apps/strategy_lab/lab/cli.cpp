@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <exception>
 #include <fstream>
 #include <optional>
@@ -13,6 +14,7 @@
 #include "lab/paths.hpp"
 #include "lab/result_json.hpp"
 #include "lab/session.hpp"
+#include "lab/training.hpp"
 #include "lab/utf8.hpp"
 
 namespace trading_engine::lab {
@@ -92,6 +94,27 @@ std::vector<std::string> expand_arguments(const std::vector<std::string>& args) 
     return out;
 }
 
+// ---- shared argument parsing --------------------------------------------------------------
+
+ParamAssignment parse_assignment(const std::string& flag, const std::string& text) {
+    const std::size_t equals = text.find('=');
+    if (equals == std::string::npos || equals == 0) {
+        usage_error(flag + " expects name=value (got '" + utf8_excerpt(text, 40) + "')");
+    }
+    return ParamAssignment{text.substr(0, equals), text.substr(equals + 1)};
+}
+
+std::size_t parse_max_rows(const std::string& text) {
+    std::uint64_t value = 0;
+    const auto result   = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size() || value == 0 ||
+        value > kHardMaxRows) {
+        usage_error("--max-rows must be a whole number from 1 to " + std::to_string(kHardMaxRows) + " (got '" +
+                    utf8_excerpt(text, 40) + "')");
+    }
+    return static_cast<std::size_t>(value);
+}
+
 // ---- parsing the run command -------------------------------------------------------------
 
 struct RunCommand {
@@ -149,15 +172,7 @@ RunCommand parse_run(const std::vector<std::string>& tokens, std::size_t first, 
         } else if (token == "--bus-fault") {
             command.fault = parse_fault(value_of(i, token));
         } else if (token == "--max-rows") {
-            const std::string& text = value_of(i, token);
-            std::uint64_t value     = 0;
-            const auto result       = std::from_chars(text.data(), text.data() + text.size(), value);
-            if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size() || value == 0 ||
-                value > kHardMaxRows) {
-                usage_error("--max-rows must be a whole number from 1 to " + std::to_string(kHardMaxRows) +
-                            " (got '" + utf8_excerpt(text, 40) + "')");
-            }
-            command.max_rows = static_cast<std::size_t>(value);
+            command.max_rows = parse_max_rows(value_of(i, token));
         } else if (token == "--pretty") {
             pretty = true;
         } else if (token == "--no-wall-clock") {
@@ -171,6 +186,88 @@ RunCommand parse_run(const std::vector<std::string>& tokens, std::size_t first, 
     }
     if (command.strategies.empty()) {
         usage_error("at least one --strategy is required");
+    }
+    return command;
+}
+
+// ---- parsing the train and sweep commands --------------------------------------------------
+
+constexpr double kDefaultHoldout = 0.3;
+
+struct TrainCommand {
+    std::string                  dataset{};
+    std::vector<ParamAssignment> params{};
+    std::vector<SweepAxis>       axes{};   // sweep only
+    double                       holdout{kDefaultHoldout};
+    std::size_t                  max_rows{kDefaultMaxRows};
+    bool                         no_wall_clock{false};
+};
+
+// `command` is "train" or "sweep"; only sweep takes --grid, and it needs at least one.
+TrainCommand parse_train(const std::vector<std::string>& tokens, const std::string& command_name, bool& pretty) {
+    TrainCommand command;
+    bool have_dataset = false;
+    bool have_holdout = false;
+    const auto value_of = [&](std::size_t& i, const std::string& flag) -> const std::string& {
+        if (i + 1 >= tokens.size()) {
+            usage_error(flag + " needs a value");
+        }
+        return tokens[++i];
+    };
+
+    for (std::size_t i = 1; i < tokens.size(); ++i) {
+        const std::string& token = tokens[i];
+        if (token == "--dataset") {
+            if (have_dataset) {
+                usage_error("--dataset was given more than once");
+            }
+            command.dataset = value_of(i, token);
+            have_dataset    = true;
+        } else if (token == "--param") {
+            command.params.push_back(parse_assignment(token, value_of(i, token)));
+        } else if (token == "--grid" && command_name == "sweep") {
+            const ParamAssignment axis = parse_assignment(token, value_of(i, token));
+            SweepAxis parsed{axis.name, {}};
+            std::size_t start = 0;
+            while (true) {
+                const std::size_t comma = axis.text.find(',', start);
+                parsed.values.push_back(axis.text.substr(start, comma == std::string::npos ? std::string::npos
+                                                                                            : comma - start));
+                if (comma == std::string::npos) {
+                    break;
+                }
+                start = comma + 1;
+            }
+            command.axes.push_back(std::move(parsed));
+        } else if (token == "--holdout") {
+            if (have_holdout) {
+                usage_error("--holdout was given more than once");
+            }
+            const std::string& text = value_of(i, token);
+            double value            = 0.0;
+            const auto result       = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (text.empty() || result.ec != std::errc{} || result.ptr != text.data() + text.size() ||
+                !std::isfinite(value) || value < 0.0 || value >= 1.0) {
+                usage_error("--holdout must be a number from 0 up to (not including) 1 (got '" +
+                            utf8_excerpt(text, 40) + "')");
+            }
+            command.holdout = value;
+            have_holdout    = true;
+        } else if (token == "--max-rows") {
+            command.max_rows = parse_max_rows(value_of(i, token));
+        } else if (token == "--pretty") {
+            pretty = true;
+        } else if (token == "--no-wall-clock") {
+            command.no_wall_clock = true;
+        } else {
+            usage_error("unknown argument '" + utf8_excerpt(token, 40) + "' for " + command_name + " (see --help)");
+        }
+    }
+    if (!have_dataset) {
+        usage_error("--dataset is required");
+    }
+    if (command_name == "sweep" && command.axes.empty()) {
+        usage_error("sweep needs at least one --grid name=v1,v2,...");
     }
     return command;
 }
@@ -229,12 +326,20 @@ std::string usage_text() {
            "                          [--strategy <kind> [--param name=value]...]...\n"
            "                          [--bus-fault none|reject-signals|throw-on-signal]\n"
            "                          [--max-rows N] [--pretty] [--no-wall-clock]\n"
+           "  strategy_lab_replay train --dataset <csv> [--param name=value]... [--holdout F]\n"
+           "                            [--max-rows N] [--pretty] [--no-wall-clock]\n"
+           "  strategy_lab_replay sweep --dataset <csv> [--param name=value]...\n"
+           "                            --grid name=v1,v2,... [--grid ...]... [--holdout F]\n"
+           "                            [--max-rows N] [--pretty] [--no-wall-clock]\n"
            "  strategy_lab_replay --help\n"
            "  @<file>   replaced by that file's lines, one argument per line\n"
            "\n"
            "stdout always holds exactly one JSON document (a result or an error); stderr holds\n"
            "human-readable text. Exit status: 0 ok, 2 usage/configuration, 3 dataset, 4 internal.\n"
-           "Run `strategy_lab_replay describe` for the strategies, parameters and defaults.\n";
+           "Run `strategy_lab_replay describe` for the strategies, parameters and defaults.\n"
+           "train and sweep fit the ml_logistic strategy (--param configures it, as for run);\n"
+           "--holdout is the fraction of rows kept for the out-of-sample check (default 0.3).\n"
+           "See docs/STRATEGY_LAB_TRAINING.md.\n";
 }
 
 CliResult run_cli(const std::vector<std::string>& args, const CliEnvironment& env) {
@@ -266,8 +371,31 @@ CliResult run_cli(const std::vector<std::string>& args, const CliEnvironment& en
             result.out = catalog_json(pretty);
             return result;
         }
+        if (tokens.front() == "train" || tokens.front() == "sweep") {
+            const TrainCommand command = parse_train(tokens, tokens.front(), pretty);
+            DatasetLimits limits;
+            limits.max_rows       = command.max_rows;
+            const Dataset dataset = load_dataset(path_from_utf8(command.dataset), limits);
+
+            std::optional<std::string> generated_at;
+            if (!command.no_wall_clock && env.now_utc) {
+                generated_at = env.now_utc();
+            }
+            const Provenance provenance = current_provenance(std::move(generated_at));
+
+            CliResult result;
+            if (tokens.front() == "train") {
+                result.out = training_json(train_ml(dataset, command.params, command.holdout), dataset.info,
+                                           provenance, pretty);
+            } else {
+                result.out = sweep_json(sweep_ml(dataset, command.params, command.axes, command.holdout),
+                                        dataset.info, provenance, pretty);
+            }
+            return result;
+        }
         if (tokens.front() != "run") {
-            usage_error("unknown command '" + utf8_excerpt(tokens.front(), 40) + "' (expected describe or run)");
+            usage_error("unknown command '" + utf8_excerpt(tokens.front(), 40) +
+                        "' (expected describe, run, train or sweep)");
         }
 
         const RunCommand command = parse_run(tokens, 1, pretty);

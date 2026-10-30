@@ -84,6 +84,14 @@ namespace trading_engine::strategy {
 namespace ml {
 // Scored samples that rolling_accuracy looks back over.
 inline constexpr std::size_t kAccuracyWindow = 100;
+
+// Running totals over a whole run, for evaluation tools (the Strategy Lab's train and sweep).
+// A sample is scored when its label is known, just before it trains the model.
+struct Scoreboard {
+    std::uint64_t scored{0};     // labelled samples
+    std::uint64_t correct{0};    // ... whose prediction was on the right side of 0.5
+    std::uint64_t up_labels{0};  // ... whose label was up
+};
 }  // namespace ml
 
 // Everything the strategy needs, validated once by the constructor. An invalid
@@ -148,6 +156,7 @@ public:
     [[nodiscard]] std::optional<ml::Parameters> parameters(std::string_view symbol) const;
     [[nodiscard]] std::optional<std::size_t>    training_samples(std::string_view symbol) const;
     [[nodiscard]] std::optional<double>         rolling_accuracy(std::string_view symbol) const;
+    [[nodiscard]] std::optional<ml::Scoreboard> scoreboard(std::string_view symbol) const;
 
 private:
     enum class Latch : std::uint8_t { Neutral, Up, Down };
@@ -170,6 +179,7 @@ private:
         std::uint64_t                    accepted{0};
         std::size_t                      trained{0};
         std::vector<std::uint8_t>        hits{};     // ring of the last scored samples, 1 = right
+        ml::Scoreboard                   totals{};
         std::size_t                      next_hit{0};
         Latch                            latch{Latch::Neutral};
 

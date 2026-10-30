@@ -20,7 +20,8 @@ add_library(trading_engine_strategy_lab STATIC
     lab/runner.cpp
     lab/session.cpp
     lab/sha256.cpp
-    lab/timestamp.cpp)
+    lab/timestamp.cpp
+    lab/training.cpp)
 add_library(trading_engine::strategy_lab ALIAS trading_engine_strategy_lab)
 
 # PUBLIC so a test target can include "lab/...".

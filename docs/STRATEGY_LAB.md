@@ -111,11 +111,14 @@ the id it consumed is skipped and listed under `publication_failures`.
 strategy_lab_replay describe [--pretty]
 strategy_lab_replay run --dataset <csv> --strategy <kind> [--param name=value]... [--strategy <kind> [--param ...]]...
                         [--bus-fault none|reject-signals|throw-on-signal] [--max-rows N] [--pretty] [--no-wall-clock]
+strategy_lab_replay train --dataset <csv> [--param name=value]... [--holdout F] [--max-rows N] [--pretty] [--no-wall-clock]
+strategy_lab_replay sweep --dataset <csv> [--param name=value]... --grid name=v1,v2,... [--grid ...]... [--holdout F] ...
 strategy_lab_replay --help        (usage on stderr; stdout stays empty)
 @<file>                           anywhere: that file's lines, one argument each (UTF-8; blank lines and '#' lines skipped; no nesting)
 ```
 
-Kinds: `sma_crossover`, `mean_reversion`; `ml` is listed and **unavailable**. Parameter names are the config field names.
+Kinds: `sma_crossover`, `mean_reversion`, `ml_logistic`. `train` and `sweep` fit `ml_logistic` and are described in
+[STRATEGY_LAB_TRAINING.md](STRATEGY_LAB_TRAINING.md). Parameter names are the config field names.
 `--param` applies to the most recent `--strategy`; strategies keep command-line order, which is registration and delivery
 order. At most 16 strategies. `--max-rows` defaults to 50,000 (hard cap 200,000); a larger file is an error, never truncated.
 Every argument is UTF-8; on Windows the C runtime delivers arguments in the ANSI code page, so put non-ASCII values in an `@file`.

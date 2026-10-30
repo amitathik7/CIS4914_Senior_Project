@@ -94,7 +94,8 @@ if(TARGET trading_engine_strategy_lab)
         strategy_lab_catalog_test.cpp
         strategy_lab_replay_test.cpp
         strategy_lab_replay_events_test.cpp
-        strategy_lab_cli_test.cpp)
+        strategy_lab_cli_test.cpp
+        strategy_lab_training_test.cpp)
     target_link_libraries(te_test_strategy_lab PRIVATE trading_engine::strategy_lab trading_engine::test_support)
     target_compile_definitions(te_test_strategy_lab PRIVATE
         STRATEGY_LAB_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/strategy_lab")

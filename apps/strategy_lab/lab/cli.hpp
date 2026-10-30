@@ -9,6 +9,11 @@
 //                            [--strategy <kind> [--param ...]]...
 //                            [--bus-fault none|reject-signals|throw-on-signal]
 //                            [--max-rows N] [--pretty] [--no-wall-clock]
+//    strategy_lab_replay train --dataset <csv> [--param name=value]... [--holdout F]
+//                              [--max-rows N] [--pretty] [--no-wall-clock]
+//    strategy_lab_replay sweep --dataset <csv> [--param name=value]...
+//                              --grid name=v1,v2,... [--grid ...]... [--holdout F]
+//                              [--max-rows N] [--pretty] [--no-wall-clock]
 //    strategy_lab_replay --help
 //    @<file>   anywhere: replaced by that file's lines, one argument per line (UTF-8,
 //              blank lines and lines starting with '#' skipped, no nesting)
@@ -19,8 +24,8 @@
 //
 //  Every argument is treated as UTF-8. On Windows the C runtime hands a program its
 //  arguments in the ANSI code page, so put non-ASCII values in an @file. --param applies to
-//  the most recent --strategy; strategies keep command-line order, which is registration and
-//  delivery order. Relative paths resolve against the current directory.
+//  the most recent --strategy (for train and sweep, to ml_logistic: see lab/training.hpp);
+//  strategies keep command-line order, which is registration and delivery order. Relative paths resolve against the current directory.
 //
 //  Stateless: nothing is read from the environment, the clock, or files except the dataset
 //  and @files; the wall-clock time for provenance is supplied by the caller.
