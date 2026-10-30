@@ -236,8 +236,20 @@ void RdKafkaTransport::subscribe(const std::vector<std::string>& topics) {
         for (int p = 0; p < partitions; ++p) {
             std::int64_t low = 0;
             std::int64_t high = 0;
-            const rd_kafka_resp_err_t err = rd_kafka_query_watermark_offsets(
-                consumer, topic.c_str(), p, &low, &high, to_ms(config_.timeout));
+            rd_kafka_resp_err_t err = RD_KAFKA_RESP_ERR_NO_ERROR;
+            // A topic created a moment ago can list a leader in its metadata
+            // before that broker serves it; retry those answers until the deadline.
+            do {
+                err = rd_kafka_query_watermark_offsets(consumer, topic.c_str(), p, &low, &high,
+                                                       to_ms(config_.timeout));
+                const bool settling = err == RD_KAFKA_RESP_ERR_NOT_LEADER_FOR_PARTITION ||
+                                      err == RD_KAFKA_RESP_ERR_LEADER_NOT_AVAILABLE ||
+                                      err == RD_KAFKA_RESP_ERR_UNKNOWN_TOPIC_OR_PART;
+                if (!settling || std::chrono::steady_clock::now() >= deadline) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds{100});
+            } while (true);
             if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
                 fail("watermarks of " + topic + "[" + std::to_string(p) + "]: " + rd_kafka_err2str(err));
             }
