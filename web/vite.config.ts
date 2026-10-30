@@ -5,8 +5,11 @@ import react from "@vitejs/plugin-react";
 // The Strategy Lab gateway (python/strategy_lab/lab_gateway.py) that runs the real C++ strategy engine for the Strategies
 // section. It is separate from the engine API above: see docs/STRATEGIES_CONSOLE.md.
 const labGateway = process.env.LAB_GATEWAY ?? "http://127.0.0.1:8765";
+// The engine gateway (python/engine_gateway/serve.py) behind /api. ENGINE_GATEWAY overrides it, e.g. when another
+// program holds port 8080 and the gateway runs with --port.
+const engineGateway = process.env.ENGINE_GATEWAY ?? "http://127.0.0.1:8080";
 const proxy = {
-  "/api": { target: "http://127.0.0.1:8080", changeOrigin: false },
+  "/api": { target: engineGateway, changeOrigin: false },
   "/lab": { target: labGateway, changeOrigin: false },
 };
 

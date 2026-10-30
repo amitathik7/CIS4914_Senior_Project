@@ -60,7 +60,7 @@ python python/engine_gateway/serve.py --replay tests/fixtures/engine_gateway/dem
 | `--read-only` | send no commands: New backtest, Stop and the kill switch answer 501 |
 | `--starting-cash N` | starting cash for a run with no `<prefix>.run` (an older engine; default 100000) |
 | `--idle-seconds N` | a run with no `<prefix>.run`, quiet for this long, shows as completed (default 10) |
-| `--port N` | default 8080, where `web/vite.config.ts` proxies `/api` |
+| `--port N` | default 8080, where `web/vite.config.ts` proxies `/api`; on another port, start the console with `ENGINE_GATEWAY=http://127.0.0.1:N` |
 
 ## What the console shows
 
