@@ -199,7 +199,13 @@ export function TimeChart({ series, markers, height, format, onHover, label, ini
     if (!fitted.current && points > 0) {
       fitted.current = true;
       if (initialBars && points > initialBars) c.timeScale().setVisibleLogicalRange({ from: points - initialBars, to: points + 2 });
-      else c.timeScale().fitContent();
+      else {
+        // fitContent puts the first point on the left edge, where its centred time label is cut in half ("0:00" for
+        // "10:00"). A little empty room on the left (about 25px) keeps the first label whole.
+        const width = host.current?.clientWidth || 600;
+        const pad = Math.max(1, Math.ceil((points * 25) / width));
+        c.timeScale().setVisibleLogicalRange({ from: -pad, to: points - 1 + 2 });
+      }
     }
   });
 

@@ -38,6 +38,8 @@ export function Risk() {
   const [filter, setFilter] = useState<"all" | RiskOutcome>("all");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  // Engaging or releasing the kill switch is a second step: the first press only asks to confirm.
+  const [confirming, setConfirming] = useState(false);
   const [openOrder, setOpenOrder] = useState<number>();
   const multiDay = run?.mode === "backtest";
 
@@ -82,6 +84,7 @@ export function Risk() {
 
   const toggleKill = async () => {
     if (!runId || !kill) return;
+    setConfirming(false);
     setBusy(true);
     try {
       await client.setKillSwitch(runId, !kill.engaged, kill.engaged ? undefined : reason.trim() || "Engaged from the console");
@@ -169,10 +172,26 @@ export function Risk() {
                     <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Recorded with the change" maxLength={120} />
                   </label>
                 )}
-                <button type="button" className={kill.engaged ? "btn" : "btn btn-danger"} disabled={!canToggle || busy} onClick={toggleKill}>
-                  <IconPower />
-                  {kill.engaged ? "Release kill switch" : "Engage kill switch"}
-                </button>
+                {confirming && canToggle ? (
+                  <div className="kill-confirm" role="group" aria-label="Confirm the kill switch change" onKeyDown={(e) => { if (e.key === "Escape") setConfirming(false); }}>
+                    <p>
+                      <b>{kill.engaged ? "Release the kill switch?" : "Engage the kill switch?"}</b>{" "}
+                      {kill.engaged ? "New signals will reach risk and execution again." : "Every new signal will be rejected until someone releases it."}
+                    </p>
+                    <div className="row" style={{ gap: 8 }}>
+                      <button type="button" className={kill.engaged ? "btn btn-primary" : "btn btn-danger"} disabled={busy} onClick={toggleKill}>
+                        <IconPower />
+                        {kill.engaged ? "Yes, release" : "Yes, engage"}
+                      </button>
+                      <button type="button" className="btn" autoFocus onClick={() => setConfirming(false)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" className={kill.engaged ? "btn" : "btn btn-danger"} disabled={!canToggle || busy} onClick={() => setConfirming(true)}>
+                    <IconPower />
+                    {kill.engaged ? "Release kill switch" : "Engage kill switch"}
+                  </button>
+                )}
                 {!canToggle && <small className="faint">Available while a run is running.</small>}
                 {kill.changed_at && <small className="faint">Last changed {dateTime(kill.changed_at)} ET</small>}
               </div>

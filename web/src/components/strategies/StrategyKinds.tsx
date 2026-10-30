@@ -6,7 +6,7 @@ export function StrategyKinds({ kinds, value, onSelect, label }: { kinds: readon
     <div className="kind-list" role="radiogroup" aria-label={label}>
       {kinds.map((k) => (
         <button
-          key={k.kind} type="button" role="radio" aria-checked={k.kind === value} aria-pressed={k.kind === value}
+          key={k.kind} type="button" role="radio" aria-checked={k.kind === value}
           className="kind-option" disabled={!k.available} title={k.available ? k.kind : k.unavailableReason} onClick={() => onSelect(k.kind)}
         >
           <strong>{k.title}</strong>

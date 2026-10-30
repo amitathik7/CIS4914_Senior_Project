@@ -28,7 +28,7 @@ export function Traceability() {
             <>
               <span className="id">number {done.id} · inputs {short(done.comparisonId)}</span> · dataset <span className="id">{done.snapshots.A.meta.dataset.name} {short(done.datasetSha256)}</span>
               {MEMBERS.map((m) => <div key={m}><span className="cmp-chip" data-member={m}>{m}</span> <span className="id">run {done.snapshots[m].doc.runId} · configuration {short(done.configIds[m])} · result {short(done.snapshots[m].doc.resultSha256)}</span></div>)}
-              <div>{runner?.state === "ready" && runner.sha256 !== done.runnerSha256 ? <Badge tone="warn">Engine rebuilt since</Badge> : <Badge>Engine unchanged since</Badge>}</div>
+              <div>{runner?.state === "ready" && runner.sha256 !== done.runnerSha256 ? <Badge tone="warn">Engine rebuilt since this comparison</Badge> : <Badge>Same engine as this comparison</Badge>}</div>
             </>
           ) : <span className="faint">none yet</span>}
         </dd>
@@ -41,8 +41,10 @@ export function Traceability() {
             </>
           ) : <span className="faint">none yet</span>}
         </dd>
-        <dt>Engine launches</dt><dd>{compare.lab.launches} replays from Explore · {compare.launches} comparisons (two replays each) · {validation.launches} validations, in this tab. Only their buttons start the engine.</dd>
+        <dt>Engine launches</dt><dd>{count(compare.lab.launches, "replay")} from Explore · {count(compare.launches, "comparison")} (two replays each) · {count(validation.launches, "validation")}, in this tab. Only their buttons start the engine.</dd>
       </dl>
     </Panel>
   );
 }
+
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;

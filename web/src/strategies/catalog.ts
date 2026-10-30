@@ -44,6 +44,8 @@ export interface Catalog {
   defaultMaxRows: number;
   hardMaxRows: number;
   datasetFormat: string;
+  /** The CSV columns the replay tool reads (empty when the catalog does not list them): lets an upload's header be checked early. */
+  datasetColumns: { name: string; required: boolean }[];
   strategies: StrategySpec[];
 }
 
@@ -121,6 +123,11 @@ export function parseCatalog(text: string): Catalog {
     defaultMaxRows: asCount(need(limits, "default_max_rows", "$.catalog.limits"), "$.catalog.limits.default_max_rows"),
     hardMaxRows: asCount(need(limits, "hard_max_rows", "$.catalog.limits"), "$.catalog.limits.hard_max_rows"),
     datasetFormat: asString(need(format, "id", "$.catalog.dataset_format"), "$.catalog.dataset_format.id"),
+    datasetColumns: format.columns === undefined ? [] : asArray(format.columns, "$.catalog.dataset_format.columns").map((c, i) => {
+      const path = `$.catalog.dataset_format.columns[${i}]`;
+      const o = asObject(c, path);
+      return { name: asString(need(o, "name", path), `${path}.name`), required: asBoolean(need(o, "required", path), `${path}.required`) };
+    }),
     strategies,
   };
 }

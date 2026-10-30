@@ -23,12 +23,26 @@ export function toBase64(bytes: Uint8Array): string {
   return btoa(out);
 }
 
-/** The first problem that makes a file unusable before it is sent, as a sentence; undefined when it looks like text. */
-export function precheckUpload(name: string, bytes: Uint8Array, limit = DEFAULT_UPLOAD_LIMIT): string | undefined {
+/**
+ * The first problem that makes a file unusable before it is sent, as a sentence; undefined when it looks usable. With the
+ * catalog's columns it also checks the header row, so a file that is plainly not a dataset is refused at upload rather than
+ * after Run. Everything past the header (values, order, limits) is still left to the replay tool's own parser.
+ */
+export function precheckUpload(name: string, bytes: Uint8Array, limit = DEFAULT_UPLOAD_LIMIT, columns: readonly { name: string; required: boolean }[] = []): string | undefined {
   const shown = name || "upload.csv";
   if (bytes.length === 0) return `'${shown}' is empty (0 bytes). Choose a CSV with a header row and at least one data row.`;
   if (bytes.length > limit) return `'${shown}' is ${(bytes.length / 1048576).toFixed(1)} MiB; the limit is ${Math.floor(limit / 1048576)} MiB.`;
   if (bytes.subarray(0, 65536).includes(0)) return `'${shown}' contains NUL bytes, so it is not a CSV text file.`;
+  if (columns.length === 0) return undefined;
+  const lines = new TextDecoder("utf-8").decode(bytes.subarray(0, 65536)).replace(/^\uFEFF/, "").split(/\r?\n/);
+  const header = (lines[0] ?? "").split(",").map((c) => c.trim());
+  const known = new Set(columns.map((c) => c.name));
+  const missing = columns.filter((c) => c.required && !header.includes(c.name)).map((c) => c.name);
+  const unknown = header.filter((c) => !known.has(c));
+  const expected = `The header must have ${columns.filter((c) => c.required).map((c) => c.name).join(", ")}${columns.some((c) => !c.required) ? ` (optional: ${columns.filter((c) => !c.required).map((c) => c.name).join(", ")})` : ""}.`;
+  if (missing.length) return `'${shown}' is not a bars dataset: the header row has no ${missing.join(", ")} column${missing.length > 1 ? "s" : ""}. ${expected}`;
+  if (unknown.length) return `'${shown}' has ${unknown.length > 1 ? "columns" : "a column"} the replay tool does not read: ${unknown.map((c) => `'${c}'`).join(", ")}. ${expected}`;
+  if (!lines.slice(1).some((l) => l.trim() !== "")) return `'${shown}' has a header but no data rows.`;
   return undefined;
 }
 

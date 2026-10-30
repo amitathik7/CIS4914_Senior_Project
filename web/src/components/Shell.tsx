@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router";
+import type { ReactNode } from "react";
 import type { RunSummary } from "../api/contract";
 import { day, period, time } from "../lib/format";
 import { useEngine, useRunResource } from "../state/engine";
@@ -7,7 +8,7 @@ import { setTheme, useTheme } from "../state/theme";
 import {
   IconBacktests, IconChevronDown, IconMoon, IconOrders, IconOverview, IconReport, IconRisk, IconStrategies, IconSun, IconSystem,
 } from "./icons";
-import { Badge, RunStatusBadge } from "./ui";
+import { Badge, Empty, Notice, RunStatusBadge } from "./ui";
 
 const RUN_PAGES = [
   { path: "overview", label: "Overview", icon: IconOverview },
@@ -167,13 +168,43 @@ function TopBar() {
   );
 }
 
+// Run pages for a run id the engine does not list say so instead of loading forever, and every page of a failed run (not
+// just its Report) says why it failed.
+function RunGate({ children }: { children: ReactNode }) {
+  const { runs } = useEngine();
+  const { runId } = useParams();
+  const location = useLocation();
+  if (!runId || !runs) return children;
+  const run = runs.find((r) => r.run_id === runId);
+  if (!run) {
+    return (
+      <>
+        <div className="page-head"><div><h1>Run not found</h1><p>The engine has no run with the id <code>{runId}</code>.</p></div></div>
+        <Empty title="Nothing to show for this link">It may be from another browser or a reset demo. <Link to="/backtests">Go to Backtests</Link> or choose a run above.</Empty>
+      </>
+    );
+  }
+  const showFailure = run.status === "failed" && !location.pathname.endsWith("/report");
+  return (
+    <>
+      {showFailure && (
+        <div style={{ marginBottom: 14 }}>
+          <Notice tone="down"><b>This run failed.</b> {run.error ?? "The engine gave no reason."} <Link to={`/runs/${run.run_id}/report`}>See the report</Link></Notice>
+        </div>
+      )}
+      {children}
+    </>
+  );
+}
+
 export function Shell() {
   return (
     <div className="app">
+      <a className="skip-link" href="#main">Skip to content</a>
       <Nav />
       <TopBar />
-      <main className="main" id="main">
-        <Outlet />
+      <main className="main" id="main" tabIndex={-1}>
+        <RunGate><Outlet /></RunGate>
       </main>
     </div>
   );

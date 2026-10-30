@@ -9,6 +9,7 @@ import { Empty, Panel } from "../components/ui";
 import { etDay } from "../lib/exactTime";
 import { specOf } from "../strategies/catalog";
 import { labStore, useLab } from "../strategies/useLab";
+import { revealBelowTopBar } from "../lib/scroll";
 
 export function StrategiesExplore() {
   const state = useLab();
@@ -24,7 +25,7 @@ export function StrategiesExplore() {
       return;
     }
     const el = top.current;
-    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (el) revealBelowTopBar(el);
   }, [outcome]);
   const multiDay = useMemo(() => (snap ? new Set(snap.model.events.map((e) => etDay(e.time))).size > 1 : false), [snap]);
 
