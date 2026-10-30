@@ -34,6 +34,8 @@ from .schema import ReplayDocument, parse_replay
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXE_ENV = "STRATEGY_LAB_EXE"
 EXE_NAME = "strategy_lab_replay.exe" if os.name == "nt" else "strategy_lab_replay"
+BACKTEST_EXE_NAME = "strategy_lab_backtest.exe" if os.name == "nt" else "strategy_lab_backtest"
+BACKTEST_SCHEMA = "strategy_lab.backtest"
 
 DEFAULT_TIMEOUT_S = 60.0
 CATALOG_TIMEOUT_S = 20.0
@@ -121,6 +123,17 @@ def find_runner(explicit: str | None = None, environ: Mapping[str, str] | None =
         "strategy_lab_replay has not been built. Build it once (see the commands in the technical details), "
         f"or set {EXE_ENV} to an existing executable.",
         detail="Looked for:\n" + "\n".join(f"  {c}" for c in candidates) + "\n\nBuild with:\n" + BUILD_HELP)
+
+
+def find_backtest_runner(replay: Runner) -> Runner:
+    """strategy_lab_backtest, built next to the replay tool (same target directory, same build)."""
+    candidate = Path(replay.path).with_name(BACKTEST_EXE_NAME)
+    if not candidate.is_file():
+        raise LabUiError(
+            "executable_missing",
+            "strategy_lab_backtest has not been built next to strategy_lab_replay. Build it once (see the technical details).",
+            detail=f"Looked for:\n  {candidate}\n\nBuild with:\n" + BUILD_HELP.replace("strategy_lab_replay", "strategy_lab_backtest"))
+    return identify(candidate)
 
 
 # ---- running a process ----------------------------------------------------------------------
@@ -344,3 +357,44 @@ def _check_matches_request(document: ReplayDocument, sha256: str, kinds: Sequenc
     if problems:
         raise LabUiError("result_mismatch", "The result does not describe the run that was requested: "
                          + "; ".join(problems) + ".", exit_code=result.exit_code, stderr=result.stderr)
+
+
+# ---- the full backtest (strategy_lab_backtest; docs/BACKTESTING.md) ------------------------------------------------------
+
+@dataclass(frozen=True)
+class BacktestOutcome:
+    process: ProcessResult
+    document: dict
+
+
+def run_backtest(runner: Runner, *, dataset: bytes, dataset_sha256: str, strategies: Sequence[StrategyArgs],
+                 settings: Sequence[tuple[str, str]] = (), max_rows: int = UI_MAX_ROWS,
+                 timeout: float = DEFAULT_TIMEOUT_S) -> BacktestOutcome:
+    """Launch ONE backtest. `settings` are (flag, value) pairs such as ("--cash", "100000"); a value of "" is a bare flag."""
+    args = ["--dataset", DATASET_FILE]
+    for kind, params in strategies:
+        args += ["--strategy", kind]
+        for name, text in params:
+            args += ["--param", f"{name}={text}"]
+    for flag, value in settings:
+        args += [flag] + ([value] if value != "" else [])
+    args += ["--max-rows", str(max_rows)]
+    result = run_process(runner, args, timeout=timeout, files={DATASET_FILE: dataset})
+    _raise_for_status(result)
+    try:
+        document = strict_loads(result.stdout)
+    except LabUiError as error:
+        error.stderr = error.stderr or result.stderr
+        raise
+    if not isinstance(document, dict) or document.get("schema") != BACKTEST_SCHEMA:
+        raise LabUiError("unsupported_schema", f"The backtest tool did not write a {BACKTEST_SCHEMA} document.",
+                         stderr=result.stderr, stdout_excerpt=excerpt(result.stdout))
+    if str(document.get("schema_version", "")).split(".")[0] != "1":
+        raise LabUiError("unsupported_schema", f"Unsupported {BACKTEST_SCHEMA} version {document.get('schema_version')!r}.",
+                         stderr=result.stderr)
+    seen = (document.get("input") or {}).get("sha256")
+    kinds = [s.get("kind") for s in document.get("strategies") or []]
+    if seen != dataset_sha256 or kinds != [kind for kind, _ in strategies]:
+        raise LabUiError("result_mismatch", "The backtest result does not describe the run that was requested.",
+                         exit_code=result.exit_code, stderr=result.stderr)
+    return BacktestOutcome(result, document)

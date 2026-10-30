@@ -432,3 +432,54 @@ class MissingRunner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+ML = {"kind": "ml_logistic", "params": [["symbols", "AAPL"], ["requested_quantity", "50"]]}
+
+
+class Backtest(RealRunnerCase):
+    """POST /backtest: the full backtest (risk, execution, portfolio, analytics) through the real strategy_lab_backtest."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        try:
+            bridge.find_backtest_runner(cls.runner)
+        except LabUiError as error:
+            raise unittest.SkipTest(f"strategy_lab_backtest is not built ({error.message})") from error
+
+    def test_status_reports_the_backtest_tool(self):
+        self.assertEqual(json.loads(self.gateway.status().body)["backtest"]["state"], "ready")
+
+    def test_every_strategy_kind_backtests_and_the_document_passes_through(self):
+        for strategy in (SMA, ML, {"kind": "mean_reversion", "params": [["symbols", "AAPL"]]}):
+            response = self.gateway.backtest({"strategy": strategy, "dataset": {"builtin": "ml_trending"},
+                                              "settings": {"cash": "50000", "fee_per_trade": "1", "risk_policies": True}})
+            self.assertEqual(response.status, 200, response.body[:400])
+            meta, rest = split_replay(response)
+            doc = json.loads(rest)
+            self.assertEqual(doc["schema"], "strategy_lab.backtest")
+            self.assertEqual(doc["strategies"][0]["kind"], strategy["kind"])
+            self.assertEqual(doc["config"]["starting_cash"], 50000)
+            self.assertEqual(meta["request"]["settings"], [["--cash", "50000"], ["--fee-per-trade", "1"]])
+            self.assertEqual(meta["dataset"]["sha256"], doc["input"]["sha256"])
+
+    def test_the_ml_strategy_trades_and_cash_reconciles(self):
+        _, rest = split_replay(self.gateway.backtest({"strategy": ML, "dataset": {"builtin": "ml_trending"}}))
+        doc = json.loads(rest, parse_float=__import__("decimal").Decimal)
+        self.assertTrue(doc["fills"])
+        cash = doc["config"]["starting_cash"]
+        for f in doc["fills"]:
+            signed = f["quantity"] if f["side"] == "buy" else -f["quantity"]
+            cash -= f["price"] * signed + f["fees"]
+        self.assertEqual(cash, doc["final"]["cash"])
+
+    def test_settings_are_checked_at_the_boundary_and_by_the_tool(self):
+        with self.assertRaises(LabUiError) as caught:
+            self.gateway.backtest({"strategy": ML, "dataset": {"builtin": "ml_trending"}, "settings": {"leverage": "2"}})
+        self.assertEqual(caught.exception.kind, "bad_request")
+        with self.assertRaises(LabUiError):
+            self.gateway.backtest({"strategy": ML, "dataset": {"builtin": "ml_trending"}, "settings": {"cash": "-1"}})
+        response = self.gateway.backtest({"strategy": ML, "dataset": {"builtin": "ml_trending"}, "settings": {"cash": "0"}})
+        self.assertEqual(response.status, 422)
+        self.assertIn("--cash", self.error_of(response)["message"])

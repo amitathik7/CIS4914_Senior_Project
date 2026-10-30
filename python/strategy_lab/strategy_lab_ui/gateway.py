@@ -17,6 +17,9 @@ Endpoints (prefix /lab/v1; JSON unless noted; errors are {"error": {"code", "mes
                   200 {"ok": true, ...derived facts} or 200 {"ok": false, "error": {...}} when they refuse it
   POST /replay    run one strategy over a built-in or uploaded dataset. The answer is TWO parts: line 1 is a compact JSON
                   object of gateway metadata, and everything after the first newline is the tool's stdout verbatim.
+  POST /backtest  the full simulated backtest (strategy_lab_backtest: risk, execution at the next bar's open, portfolio,
+                  analytics) of one strategy over a built-in or uploaded dataset. Same two-part answer as /replay; the
+                  second part is the tool's strategy_lab.backtest document verbatim (docs/BACKTESTING.md).
   GET  /validation  the checked-in scenario files (identity and a list). Runs nothing.
   POST /validate  run the checked-in scenario checks (validate.run_all) through the real executable and answer with the
                   Lab's own validation report (strategy_lab.validation_report). Only this request starts the scenarios.
@@ -194,11 +197,45 @@ def parse_dataset(raw: Any) -> datasets.DatasetSource:
     raise bad_request("dataset must be {\"builtin\": key} or {\"name\": text, \"csv_base64\": base64 text}.")
 
 
+# The backtest settings the console may send, as {name: text}, and the tool flag each becomes. Values travel as text and are
+# checked by the tool itself (its errors come back as 422 like a strategy's).
+BACKTEST_SETTINGS = {
+    "cash": "--cash", "slippage_bps": "--slippage-bps", "fee_per_share": "--fee-per-share", "fee_per_trade": "--fee-per-trade",
+    "fee_bps": "--fee-bps", "max_order_quantity": "--max-order-quantity", "max_position_notional": "--max-position-notional",
+    "max_gross_exposure": "--max-gross-exposure", "max_daily_loss": "--max-daily-loss", "max_open_orders": "--max-open-orders",
+}
+SETTING_TEXT = re.compile(r"^[0-9]*\.?[0-9]+$")
+
+
+def parse_backtest_settings(raw: Any) -> list[tuple[str, str]]:
+    """{"cash": "100000", ..., "risk_policies": true}. Unknown names and non-decimal text are refused here."""
+    if raw is None:
+        return []
+    if not isinstance(raw, dict):
+        raise bad_request("settings must be an object.")
+    out: list[tuple[str, str]] = []
+    for name, value in raw.items():
+        if name == "risk_policies":
+            if not isinstance(value, bool):
+                raise bad_request("risk_policies must be true or false.", name)
+            if not value:
+                out.append(("--no-risk-policies", ""))
+            continue
+        flag = BACKTEST_SETTINGS.get(name)
+        if flag is None:
+            raise bad_request(f"Unknown backtest setting {name!r}; known: {', '.join([*BACKTEST_SETTINGS, 'risk_policies'])}.", name)
+        if not isinstance(value, str) or not SETTING_TEXT.match(value) or len(value) > 40:
+            raise bad_request(f"Setting '{name}' must be a plain non-negative number written as text, such as \"100000\".", name)
+        out.append((flag, value))
+    return out
+
+
 # ---- the gateway proper (no HTTP in here: it is tested directly) ------------------------------------------------------
 
 @dataclass
 class Gateway:
     runner_provider: Callable[[], bridge.Runner] = bridge.find_runner
+    backtest_provider: Callable[[bridge.Runner], bridge.Runner] = bridge.find_backtest_runner
     max_concurrent: int = MAX_CONCURRENT_RUNS
     _slots: threading.BoundedSemaphore = field(init=False, repr=False)
     _catalog: tuple[tuple, Catalog, bytes] | None = field(default=None, init=False, repr=False)
@@ -238,11 +275,16 @@ class Gateway:
             if state == "missing":
                 runner_info["setup"] = bridge.BUILD_HELP
             return Response(200, dump({"gateway": gateway, "runner": runner_info}))
+        try:
+            tool = self.backtest_provider(runner)
+            backtest: dict[str, Any] = {"state": "ready", "name": Path(tool.path).name, "sha256": tool.sha256}
+        except LabUiError as error:
+            backtest = {"state": "missing", "message": error.message, "setup": _cap(error.detail)}
         return Response(200, dump({"gateway": gateway, "runner": {
             "state": "ready", "name": Path(runner.path).name, "size": runner.size, "sha256": runner.sha256,
             "tool": catalog.tool, "project_version": catalog.project_version, "schema_version": catalog.schema_version,
             "default_max_rows": catalog.default_max_rows, "hard_max_rows": catalog.hard_max_rows,
-            "max_rows_used": bridge.UI_MAX_ROWS}}))
+            "max_rows_used": bridge.UI_MAX_ROWS}, "backtest": backtest}))
 
     def catalog(self) -> Response:
         _, _, raw = self._runner_and_catalog()
@@ -320,6 +362,40 @@ class Gateway:
                             "stderr_truncated": process.stderr_truncated},
             }
             # Line 1: gateway metadata (compact JSON never contains a raw newline). The rest: the tool's stdout, untouched.
+            return Response(200, dump(meta) + b"\n" + process.stdout, "application/x-ndjson; charset=utf-8")
+
+        return self._guarded(work)
+
+    def backtest(self, body: Any) -> Response:
+        if not isinstance(body, dict) or not {"strategy", "dataset"} <= set(body) <= {"strategy", "dataset", "settings"}:
+            raise bad_request("The body must be {\"strategy\": {...}, \"dataset\": {...}, \"settings\"?: {...}}.")
+        runner, catalog, _ = self._runner_and_catalog()
+        tool = self.backtest_provider(runner)
+        request, spec = parse_strategy(body["strategy"], catalog)
+        names = [p.name for p in spec.params]
+        settings = parse_backtest_settings(body.get("settings"))
+        source = parse_dataset(body["dataset"])
+
+        def work() -> Response:
+            try:
+                outcome = bridge.run_backtest(tool, dataset=source.data, dataset_sha256=source.sha256,
+                                              strategies=[(request.kind, request.params)], settings=settings)
+            except LabUiError as error:
+                if error.kind in ("runner_rejected", "dataset_invalid"):
+                    return error_response(error, names)
+                raise
+            process = outcome.process
+            meta = {
+                "gateway": {"version": GATEWAY_VERSION, "api": API_VERSION},
+                "runner": {"name": Path(tool.path).name, "size": tool.size, "sha256": tool.sha256},
+                "dataset": {"kind": source.kind, "name": source.display_name, "sha256": source.sha256,
+                            "bytes": source.size, "synthetic": source.synthetic, "provenance": source.provenance},
+                "request": {"kind": request.kind, "params": [list(pair) for pair in request.params],
+                            "settings": [list(pair) for pair in settings], "max_rows": bridge.UI_MAX_ROWS},
+                "process": {"exit_code": process.exit_code, "duration_ms": round(process.duration_s * 1000),
+                            "args_file": process.args_file, "stderr": _cap(process.stderr),
+                            "stderr_truncated": process.stderr_truncated},
+            }
             return Response(200, dump(meta) + b"\n" + process.stdout, "application/x-ndjson; charset=utf-8")
 
         return self._guarded(work)
@@ -431,6 +507,7 @@ def make_handler(gateway: Gateway, origins: Sequence[str]) -> type[BaseHTTPReque
                 ("GET", f"{PREFIX}/datasets"): gateway.datasets,
                 ("POST", f"{PREFIX}/check"): lambda: gateway.check(self._body()),
                 ("POST", f"{PREFIX}/replay"): lambda: gateway.replay(self._body()),
+                ("POST", f"{PREFIX}/backtest"): lambda: gateway.backtest(self._body()),
                 ("GET", f"{PREFIX}/validation"): gateway.validation_info,
                 ("POST", f"{PREFIX}/validate"): lambda: gateway.validate(self._body_or_empty()),
             }
