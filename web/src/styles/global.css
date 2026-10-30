@@ -1448,8 +1448,9 @@ a {
 :root[data-theme="light"] .badge-down { color: #ad3128; }
 :root[data-theme="light"] .badge-warn { color: #7d5100; }
 
-/* Links inside notices are underlined, so they do not rely on colour alone. */
-.notice a { text-decoration: underline; }
+/* Links inside notices and empty states are underlined, so they do not rely on colour alone. */
+.notice a,
+.empty a { text-decoration: underline; }
 
 /* The kill switch's confirmation step. */
 .kill-confirm {
