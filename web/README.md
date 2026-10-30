@@ -48,7 +48,7 @@ Other scripts: `pnpm build` (type-check + production bundle in `dist/`),
 
 ## Strategies (real engine)
 
-The Strategies page configures one of the two reference strategies, replays recorded bars through the **real C++ strategy engine**
+The Strategies page configures one of the three strategies (crossover, mean reversion, ML), replays recorded bars through the **real C++ strategy engine**
 (not the demo engine), and **compares** two configurations (A and B) over one dataset. An Advanced area runs the Lab's scenario checks of the executable. A browser cannot start a native program, so it talks to a small local gateway:
 
 ```bash
@@ -56,7 +56,7 @@ python python/strategy_lab/lab_gateway.py     # or: pnpm lab   (needs the replay
 pnpm dev                                      # /lab is proxied to http://127.0.0.1:8765 (LAB_GATEWAY overrides)
 ```
 
-Without the gateway the page says so at the Run button; everything else works. Compare is signal-only: financial figures need the Backtests pipeline (see the doc). What is real, what is a fixture and what is demo, the
+Without the gateway the page says so at the Run button; everything else works. Compare is signal-only; the **Backtest** view runs the same configuration end to end through the real risk, execution and portfolio code with P&L (`strategy_lab_backtest`, [docs/BACKTESTING.md](../docs/BACKTESTING.md)). What is real, what is a fixture and what is demo, the
 numeric rules and the gateway contract are in [docs/STRATEGIES_CONSOLE.md](../docs/STRATEGIES_CONSOLE.md). Vite restarts a running dev
 server when `vite.config.ts` changes; if `/lab` is still not proxied, restart it.
 

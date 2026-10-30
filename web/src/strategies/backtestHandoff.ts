@@ -81,7 +81,7 @@ export const draftFromRequest = (request: RequestSnapshot): StrategyDraft => ({ 
 /** Why the draft cannot be carried to the backtest form, in a sentence; undefined when it can. */
 export function handoffBlocker(draft: StrategyDraft, spec: StrategySpec | undefined, issues: number, rejected: string | undefined, coverage: readonly string[] | undefined): string | undefined {
   if (!spec) return "Choose a strategy first.";
-  if (!KINDS.includes(draft.kind)) return `The backtest form supports only Moving-average crossover and Mean reversion, not ${spec.title}.`;
+  if (!KINDS.includes(draft.kind)) return `The demo backtest form supports only Moving-average crossover and Mean reversion, not ${spec.title}. Use “Backtest on the real engine” above, which supports every strategy.`;
   if (issues > 0) return "Fix the highlighted settings first.";
   if (rejected) return `The engine rejected this configuration: ${rejected}`;
   const kind = draft.kind as CarriedKind;

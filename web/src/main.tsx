@@ -11,6 +11,7 @@ import { Risk } from "./pages/Risk";
 import { Strategies } from "./pages/Strategies";
 import { StrategiesAdvanced } from "./pages/StrategiesAdvanced";
 import { StrategiesCompare } from "./pages/StrategiesCompare";
+import { StrategiesBacktest } from "./pages/StrategiesBacktest";
 import { StrategiesConfigure } from "./pages/StrategiesConfigure";
 import { StrategiesExplore } from "./pages/StrategiesExplore";
 import { System } from "./pages/System";
@@ -26,7 +27,7 @@ function Home() {
   return null;
 }
 
-// Strategies has three views (Configure, Explore, Compare) and an Advanced area for validation. Each keeps its state in a store that outlives the page, so it works with or without a selected run.
+// Strategies has four views (Configure, Explore, Compare, Backtest) and an Advanced area for validation. Each keeps its state in a store that outlives the page, so it works with or without a selected run.
 const strategiesRoute = (path: string) => ({
   path,
   element: <Strategies />,
@@ -35,6 +36,7 @@ const strategiesRoute = (path: string) => ({
     { path: "configure", element: <StrategiesConfigure /> },
     { path: "explore", element: <StrategiesExplore /> },
     { path: "compare", element: <StrategiesCompare /> },
+    { path: "backtest", element: <StrategiesBacktest /> },
     { path: "advanced", element: <StrategiesAdvanced /> },
   ],
 });

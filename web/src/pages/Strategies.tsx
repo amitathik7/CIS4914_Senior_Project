@@ -3,7 +3,7 @@ import { ServiceBadge, ServiceNotice } from "../components/strategies/ServiceSta
 import { Segmented } from "../components/ui";
 import { useLab, useLabConnection } from "../strategies/useLab";
 
-type View = "configure" | "explore" | "compare";
+type View = "configure" | "explore" | "compare" | "backtest";
 
 /** Strategies: the shared header (views, engine status) around Configure, Explore and Compare, and the Advanced area. Each view keeps its state in a store, so it survives switching views and runs. */
 export function Strategies() {
@@ -15,14 +15,14 @@ export function Strategies() {
 
   const base = runId ? `/runs/${runId}/strategies` : "/strategies";
   const advanced = location.pathname.endsWith("/advanced");
-  const view: View = location.pathname.endsWith("/explore") ? "explore" : location.pathname.endsWith("/compare") ? "compare" : "configure";
+  const view: View = location.pathname.endsWith("/explore") ? "explore" : location.pathname.endsWith("/compare") ? "compare" : location.pathname.endsWith("/backtest") ? "backtest" : "configure";
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Strategies</h1>
-          <p>Set up a strategy, replay recorded bars through the real engine, step through every decision it made, and compare two configurations side by side.</p>
+          <p>Set up a strategy, replay recorded bars through the real engine, step through every decision it made, compare two configurations side by side, and backtest one end to end with P&L.</p>
         </div>
         <div className="page-actions">
           <ServiceBadge state={state} />
@@ -30,6 +30,7 @@ export function Strategies() {
             { value: "configure", label: "Configure" },
             { value: "explore", label: "Explore" },
             { value: "compare", label: "Compare" },
+            { value: "backtest", label: "Backtest" },
           ]} />
           <button type="button" className="btn btn-ghost" aria-pressed={advanced} onClick={() => navigate(`${base}/${advanced ? "configure" : "advanced"}`)} title="Validation of the replay engine and the identities behind what these views show">
             Advanced

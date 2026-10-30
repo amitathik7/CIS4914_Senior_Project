@@ -54,6 +54,8 @@ export type RunnerInfo =
 export interface LabStatus {
   gateway: { version: string; api: string };
   runner: RunnerInfo;
+  /** strategy_lab_backtest, built next to the replay tool. Absent from an older gateway. */
+  backtest?: { state: "ready"; name: string; sha256: string } | { state: "missing"; message: string; setup?: string };
 }
 
 export interface BuiltinDataset {
@@ -113,6 +115,37 @@ export interface ReplayResponse {
   raw: string;
 }
 
+/** Simulation and risk settings for a backtest, as text (the tool parses them). Omitted settings use the engine's defaults. */
+export interface BacktestSettings {
+  cash?: string;
+  slippage_bps?: string;
+  fee_per_share?: string;
+  fee_per_trade?: string;
+  fee_bps?: string;
+  max_order_quantity?: string;
+  max_position_notional?: string;
+  max_gross_exposure?: string;
+  max_daily_loss?: string;
+  max_open_orders?: string;
+  risk_policies?: boolean;
+}
+
+export interface BacktestRequest {
+  strategy: StrategyRequest;
+  dataset: DatasetRef;
+  settings?: BacktestSettings;
+}
+
+export interface BacktestMeta extends Omit<ReplayMeta, "request"> {
+  request: { kind: string; params: [string, string][]; settings: [string, string][]; max_rows: number };
+}
+
+export interface BacktestResponse {
+  meta: BacktestMeta;
+  /** strategy_lab_backtest's stdout, byte for byte: a strategy_lab.backtest document (docs/BACKTESTING.md). */
+  raw: string;
+}
+
 export interface ValidationRequest {
   include_demonstration: boolean;
 }
@@ -125,6 +158,8 @@ export interface LabClient {
   /** Resolves when the real strategy constructors accept the configuration; rejects with a LabError(runner_rejected) otherwise. */
   check(strategy: StrategyRequest, signal?: AbortSignal): Promise<CheckResult>;
   replay(request: ReplayRequest, signal?: AbortSignal): Promise<ReplayResponse>;
+  /** The full simulated backtest (risk, execution, portfolio, analytics) through strategy_lab_backtest. */
+  backtest(request: BacktestRequest, signal?: AbortSignal): Promise<BacktestResponse>;
   /** The scenario files a validation would run, as JSON text. Runs nothing. */
   validationInfo(signal?: AbortSignal): Promise<string>;
   /** Run the Lab's scenario checks through the real executable; the answer is the Lab's validation report as JSON text. */
@@ -196,6 +231,8 @@ export class HttpLabClient implements LabClient {
     throw errorFrom(body.error ?? {}, 422);
   };
   replay = async (request: ReplayRequest, signal?: AbortSignal) => splitReplayBody(await (await this.post("/replay", request, signal)).text());
+  backtest = async (request: BacktestRequest, signal?: AbortSignal) =>
+    splitReplayBody(await (await this.post("/backtest", request, signal)).text()) as unknown as BacktestResponse;
   validationInfo = async (signal?: AbortSignal) => (await this.send("/validation", { signal })).text();
   validate = async (request: ValidationRequest, signal?: AbortSignal) => (await this.post("/validate", request, signal)).text();
 }

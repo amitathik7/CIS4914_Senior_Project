@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { createLabClient, type LabClient } from "../api/lab";
+import { BacktestStore, type BacktestState } from "./backtestStore";
 import { LabStore, type LabState } from "./store";
 
 /** The one client of the Strategy Lab gateway: Configure, Explore, Compare and Validation all talk to it through this. */
@@ -7,6 +8,13 @@ export const labApi: LabClient = createLabClient();
 
 /** One store for the whole tab, so the draft, the dataset and the last result survive moving between pages and runs. */
 export const labStore = new LabStore(labApi);
+
+/** The Backtest view's settings and last result (the strategy and dataset are labStore's draft). */
+export const backtestStore = new BacktestStore(labApi);
+
+export function useBacktest(): BacktestState {
+  return useSyncExternalStore(backtestStore.subscribe, backtestStore.getState);
+}
 
 export function useLab(): LabState {
   return useSyncExternalStore(labStore.subscribe, labStore.getState);
