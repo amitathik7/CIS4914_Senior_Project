@@ -25,6 +25,7 @@ whoever composes the program (`app::Pipeline` takes the bus as a parameter).
 | `StrategyEngine` + both reference strategies | `MarketData` | `Signal` |
 | `PortfolioManager` (via `PortfolioBusBridge`) | `MarketData` (marks), `Order`, `Fill` | - |
 | `RiskManager`, `ExecutionSimulator` | *stubs* | *stubs* |
+| Engine gateway (`python/engine_gateway/`, [ENGINE_GATEWAY.md](ENGINE_GATEWAY.md)) | all four topics, every prefix | - (serves the web console) |
 
 So a run today goes bars → normalised market data → strategies → signals on
 the bus, with the portfolio marking prices. When risk and execution land,
@@ -127,9 +128,6 @@ creates get 3 partitions and replication factor 1 (`KafkaTransportConfig`).
 
 ## Not done yet
 
-- The web console's gateway (ADR 0006) does not consume the topics yet; the
-  console still runs on its demo engine. The wire format already follows the
-  API's encoding rules so the gateway can read the topics directly.
 - `TradingEngine::run_backtest()/run_live()` still throw; the CLI composes the
   pipeline itself. `HistoricalReplay`, risk, execution and analytics are stubs.
 - No metrics wiring (`SystemMetrics`) on the buses yet; each bus exposes

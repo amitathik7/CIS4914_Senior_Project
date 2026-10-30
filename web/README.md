@@ -24,6 +24,11 @@ below) and shows a "Demo data" badge. To use a real engine API:
 VITE_ENGINE_API=/api pnpm dev     # proxied to http://127.0.0.1:8080 (vite.config.ts)
 ```
 
+The engine API is served by the engine gateway, which reads the engine's Kafka
+topics: `pnpm engine` (or `python ../python/engine_gateway/serve.py`), then run
+the engine with `--bus kafka`. Setup and what each page shows today:
+[docs/ENGINE_GATEWAY.md](../docs/ENGINE_GATEWAY.md).
+
 Other scripts: `pnpm build` (type-check + production bundle in `dist/`),
 `pnpm typecheck`, `pnpm test`.
 

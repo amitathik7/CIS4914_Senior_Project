@@ -75,9 +75,30 @@ export class HttpEngineClient implements EngineClient {
   trades = (id: string) => this.run<Trade[]>(id, "/trades");
   metrics = (id: string) => this.run<SystemMetrics>(id, "/metrics");
 
+  // One EventSource per run, shared by every subscriber. A page has several resources on the same run, and a browser
+  // allows only six HTTP/1.1 connections per host: one stream each would starve the page's own requests.
+  private readonly streams = new Map<string, { source: EventSource; listeners: Set<(event: RunEvent) => void> }>();
+
   subscribe(runId: string, onEvent: (event: RunEvent) => void) {
-    const source = new EventSource(`${this.base}/v1/runs/${encodeURIComponent(runId)}/stream`);
-    source.onmessage = (message) => onEvent(JSON.parse(message.data as string) as RunEvent);
-    return () => source.close();
+    let stream = this.streams.get(runId);
+    if (!stream) {
+      const source = new EventSource(`${this.base}/v1/runs/${encodeURIComponent(runId)}/stream`);
+      const listeners = new Set<(event: RunEvent) => void>();
+      source.onmessage = (message) => {
+        const event = JSON.parse(message.data as string) as RunEvent;
+        for (const listener of listeners) listener(event);
+      };
+      stream = { source, listeners };
+      this.streams.set(runId, stream);
+    }
+    const current = stream;
+    current.listeners.add(onEvent);
+    return () => {
+      current.listeners.delete(onEvent);
+      if (current.listeners.size === 0) {
+        current.source.close();
+        this.streams.delete(runId);
+      }
+    };
   }
 }

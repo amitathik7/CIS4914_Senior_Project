@@ -1,0 +1,3 @@
+# Engine gateway: only needed to read a Kafka cluster (--replay needs nothing beyond the standard library).
+# confluent-kafka wraps librdkafka, the same client the engine's Kafka adapter uses.
+confluent-kafka==2.16.1

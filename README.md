@@ -32,6 +32,7 @@ signals: nothing is ordered or filled yet. See
 | Reference strategies: moving-average crossover, rolling z-score mean reversion | ✅ real + tested ([crossover](docs/strategies/moving_average_crossover.md), [mean reversion](docs/strategies/mean_reversion.md)) |
 | Event bus: `InProcessEventBus` (bounded queue, dispatcher thread) and `TopicEventBus` over Kafka | ✅ real + tested, incl. against librdkafka's mock cluster ([docs](docs/EVENT_BUS.md), [ADR 0003](docs/adr/0003-kafka-transport.md)) |
 | `PortfolioManager` (+ `PortfolioBusBridge`), `MarketDataService` MVP | ✅ real + tested, connected through the bus (`app::Pipeline`) |
+| Engine gateway: the web console's API served from the Kafka topics | ✅ real + tested, read-only ([docs](docs/ENGINE_GATEWAY.md)) |
 | Risk, execution, persistence, analytics, historical replay | ⛔ stubs (`NotImplemented`) |
 | Alpaca connectivity, PostgreSQL, Python charts | ⛔ not started |
 
