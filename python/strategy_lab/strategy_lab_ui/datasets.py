@@ -89,6 +89,27 @@ BUILTINS: tuple[BuiltinDataset, ...] = (
     BuiltinDataset("ohlcv_example", "Bars with open/high/low/volume (AAPL, 3 bars)",
                    "Optional OHLCV columns are carried through; the strategies use only the close.",
                    _preset(("1", "2"), ("3", "1", "0.25"), "AAPL")),
+    # Larger seeded random series, written by tests/fixtures/strategy_lab/generate_large_datasets.py.
+    BuiltinDataset("large_random_walk", "Large: random walk (AAPL, 5,000 bars)",
+                   "A driftless random walk, about 0.1% a bar. There is nothing to learn, so it is the baseline: any edge "
+                   "a strategy shows here is luck.",
+                   _preset(("10", "50"), ("30", "2", "0.5"), "AAPL", ("5", "200"))),
+    BuiltinDataset("large_regimes", "Large: regime switching (AAPL, 10,000 bars)",
+                   "Blocks of 300 to 900 bars that cycle uptrend, range, downtrend, high volatility: trend followers and "
+                   "mean reversion each win in some blocks and lose in others.",
+                   _preset(("20", "100"), ("50", "2", "0.5"), "AAPL", ("10", "200"))),
+    BuiltinDataset("large_mean_reverting", "Large: mean-reverting (AAPL, MSFT, GOOG, 12,000 rows)",
+                   "Three symbols, 4,000 bars each, pulled back toward a fixed level (180, 410, 150) at different "
+                   "speeds: mean reversion's home ground, whipsaw for crossovers.",
+                   _preset(("10", "40"), ("40", "2", "0.5"), "AAPL,MSFT,GOOG", ("5", "200"))),
+    BuiltinDataset("large_crash_recovery", "Large: crash and recovery (AAPL, 6,000 bars)",
+                   "A calm uptrend for 2,500 bars, a 25% fall over 30 bars, a volatile bottom, then a slow recovery: a "
+                   "test for drawdown and the risk limits.",
+                   _preset(("20", "100"), ("50", "2.5", "0.5"), "AAPL", ("10", "200"))),
+    BuiltinDataset("large_universe", "Large: five-symbol universe (AAPL, MSFT, GOOG, AMZN, NVDA, 15,000 rows)",
+                   "3,000 bars each with a shared market factor, different drifts and betas, and a market-wide 8% drop "
+                   "at bar 2,000 that hits every symbol at once.",
+                   _preset(("20", "100"), ("50", "2", "0.5"), "AAPL,MSFT,GOOG,AMZN,NVDA", ("10", "200"))),
 )
 
 

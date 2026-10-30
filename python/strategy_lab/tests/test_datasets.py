@@ -1,10 +1,15 @@
 """Dataset sources: built-ins, uploads (sanity only; the replay tool validates), symbol suggestions and allowlist text."""
 
+import contextlib
+import importlib.util
+import io
+import tempfile
 import unittest
+from pathlib import Path
 
 from support import FIXTURES
 
-from strategy_lab_ui import datasets
+from strategy_lab_ui import bridge, datasets
 from strategy_lab_ui.errors import LabUiError
 
 
@@ -25,6 +30,21 @@ class Builtins(unittest.TestCase):
             present = set(datasets.load_builtin(item.key).symbols)
             for kind, preset in item.presets.items():
                 self.assertTrue(set(preset["symbols"].split(",")) <= present, (item.key, kind))
+
+    def test_large_fixtures_are_what_the_generator_writes_and_fit_the_row_limit(self):
+        spec = importlib.util.spec_from_file_location("generate_large_datasets",
+                                                      FIXTURES.parent / "generate_large_datasets.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        large = [item for item in datasets.BUILTINS if item.key.startswith("large_")]
+        self.assertEqual(sorted(item.key for item in large), sorted(generator.DATASETS))
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+            generator.main(Path(tmp))
+            for item in large:
+                written = (Path(tmp) / item.filename).read_bytes()
+                checked_in = (FIXTURES / item.filename).read_bytes().replace(b"\r\n", b"\n")  # autocrlf checkouts
+                self.assertEqual(written, checked_in, item.key)
+                self.assertLessEqual(written.count(b"\n") - 1, bridge.UI_MAX_ROWS, item.key)
 
     def test_a_missing_fixture_is_a_clear_error(self):
         with self.assertRaises(LabUiError) as caught:
