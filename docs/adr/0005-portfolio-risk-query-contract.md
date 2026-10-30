@@ -21,6 +21,14 @@
 > Drafted as a review starting point. The open-order decision in §4 is settled
 > by the team; everything else is still a proposal. See "Sign-off".
 
+> **Implementation status (2026-10-30; status unchanged, still Proposed until the
+> sign-offs below are ticked).** Built as proposed: `IPortfolioView` has
+> `buying_power()` (§1), `PortfolioManager` implements both it and
+> `IReservationLedger` (`hold_for_signal` / `release_signal_hold`), and
+> `RiskManager` takes `const IPortfolioView&` for reads plus the ledger for
+> its one atomic check-and-hold (§4), synchronously (§5). The snapshot carries
+> reserved cash, buying power and pending orders.
+
 ## Context
 
 Issue #5 asks for the API the Risk Manager uses to read live portfolio state,

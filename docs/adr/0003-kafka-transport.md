@@ -1,6 +1,6 @@
 # 3. Transport: Kafka behind `IEventBus`
 
-- Status: **Proposed** (not Accepted - draft prepared for review)
+- Status: **Accepted** (2026-10-30)
 - Date: 2026-10-30
 - Deciders: all four members. The team has already chosen Kafka as the
   inter-component communication layer; this record writes that decision down
@@ -13,6 +13,18 @@
   ADR 0004 §0 and §10-§11 (which were written to survive either transport);
   ADR 0006 §1 and §3 (the gateway reads the bus; the JSON encoding rules);
   [`../EVENT_BUS.md`](../EVENT_BUS.md) (the user guide for what is built).
+
+> **Implementation status (2026-10-30).** Built as decided and merged to
+> `main`: `InProcessEventBus`, `TopicEventBus` with `InMemoryTransport` and
+> `RdKafkaTransport` (`trading_engine_kafka_adapter`, tested against
+> librdkafka's mock cluster in CI), `PortfolioBusBridge`, `app::Pipeline` and
+> `app::OrderFlow` (risk and execution on the bus), the `trading_engine run`
+> CLI, and the Python engine gateway reading the topics
+> ([`../EVENT_BUS.md`](../EVENT_BUS.md), [`../ENGINE_GATEWAY.md`](../ENGINE_GATEWAY.md)).
+> One addition to §2: a fifth topic, `<prefix>.risk_decision`
+> (`EventType::RiskDecision`, `domain::RiskDecisionReport`), so the console
+> can show why a signal was approved or rejected. The "not built yet" note
+> for risk and execution under Consequences is historical.
 
 ## Context
 
