@@ -36,6 +36,23 @@ namespace kf  = trading_engine::kafka;
 namespace st  = trading_engine::strategy;
 using namespace std::chrono_literals;
 
+// std::getenv without MSVC's C4996 deprecation warning.
+std::string env_or_empty(const char* name) {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string out{value};
+    std::free(value);
+    return out;
+#else
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string{value} : std::string{};
+#endif
+}
+
 ev::Event bar(const std::string& symbol, std::uint64_t n, tec::Price price = tec::Price::from_units(1)) {
     dom::MarketEvent e;
     e.symbol        = symbol;
@@ -223,8 +240,8 @@ TEST(KafkaConfig, BadPropertiesFailLoudly) {
 // --- optional: a real broker ---------------------------------------------------
 
 TEST(RealBroker, TopicBusRoundTrip) {
-    const char* bootstrap = std::getenv("TE_KAFKA_BOOTSTRAP");
-    if (bootstrap == nullptr || *bootstrap == '\0') {
+    const std::string bootstrap = env_or_empty("TE_KAFKA_BOOTSTRAP");
+    if (bootstrap.empty()) {
         GTEST_SKIP() << "set TE_KAFKA_BOOTSTRAP=host:port to run against a real Kafka broker";
     }
     const tec::SystemClock clock;
