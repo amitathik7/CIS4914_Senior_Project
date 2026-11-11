@@ -24,6 +24,10 @@ below) and shows a "Demo data" badge. To use a real engine API:
 VITE_ENGINE_API=/api pnpm dev     # proxied to http://127.0.0.1:8080 (vite.config.ts)
 ```
 
+When the gateway runs on another port (`serve.py --port 18080`), point the proxy
+at it with `ENGINE_GATEWAY=http://127.0.0.1:18080`. In PowerShell:
+`$env:VITE_ENGINE_API="/api"; $env:ENGINE_GATEWAY="http://127.0.0.1:18080"; pnpm dev`.
+
 The engine API is served by the engine gateway, which reads the engine's Kafka
 topics: `pnpm engine` (or `python ../python/engine_gateway/serve.py`), then run
 the engine with `--bus kafka`. Setup and what each page shows today:

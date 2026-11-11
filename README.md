@@ -169,7 +169,16 @@ real-engine tests against the Linux job's `strategy_lab_replay`.
 cd web && pnpm install && pnpm dev     # http://127.0.0.1:5173, in-browser demo engine
 ```
 
-On the real engine (Kafka build; full steps in [`docs/ENGINE_GATEWAY.md`](docs/ENGINE_GATEWAY.md)):
+On the real engine, one command starts everything (Kafka in Docker, the engine, both gateways and the
+console) and opens the browser; Ctrl+C stops it all. It needs a Kafka build of `trading_engine`, Docker,
+Python and pnpm, and works the same on Windows, macOS and Linux:
+
+```bash
+python start.py                  # --help for options: --pace-ms, --build, --reset-kafka, --check, ...
+```
+
+It picks a free port for the engine gateway when 8080 is taken and writes each process's output to
+`out/logs/`. The same steps by hand (full detail in [`docs/ENGINE_GATEWAY.md`](docs/ENGINE_GATEWAY.md)):
 
 ```bash
 docker compose -f docker-compose.kafka.yml up -d

@@ -39,7 +39,7 @@ Plotly; the Explore UI installs them into its own virtual environment (section 1
 | `apps/strategy_lab/` | The tool (`lab/*.{hpp,cpp}`, `main.cpp`, `CMakeLists.txt`). Target `trading_engine_strategy_lab` (static) and `strategy_lab_replay` (exe); links only `trading_engine::core` |
 | `include/trading_engine/strategy/strategy_diagnostics.hpp` | NEW public header: the diagnostics observer (section 11) |
 | `src/strategy/*_strategy.cpp`, the two strategy headers, `strategy.cpp` | Additive observer hook; no decision code changed |
-| `tests/fixtures/strategy_lab/datasets/*.csv` | 13 small fixtures (section 12) |
+| `tests/fixtures/strategy_lab/datasets/*.csv` | 13 small fixtures (section 13) and 5 larger `large_*` sets (5,000 to 15,000 rows, written by `tests/fixtures/strategy_lab/generate_large_datasets.py`) |
 | `tests/unit/strategy_lab_*_test.cpp`, `strategy_diagnostics_*` | GoogleTest suites |
 | `tests/strategy_lab/` | Python `unittest` process tests, the exact reference model, `json_probe.cpp` |
 | `apps/CMakeLists.txt`, `tests/unit/CMakeLists.txt` | The option and the test registration (section 15) |
@@ -316,6 +316,13 @@ a comment beside it); none is a snapshot of the implementation. All are syntheti
 | `bars_and_trades` | Bars with trade rows | Trades are `not_a_bar`, windows untouched; Sell on bar 3 |
 | `ohlcv_example`, `precision_edge`, `escape_symbol` | Optional fields; exact-decimal edges (one millionth, 6-decimal fractions, trailing zeros, INT64_MAX); a `\` in a symbol | Round-trip and escaping tests |
 
+The `large_*` datasets are for trying the strategies on longer, noisier series, not for hand-derived expectations. They are seeded
+random series written by `python tests/fixtures/strategy_lab/generate_large_datasets.py` (byte-for-byte reproducible; a test
+regenerates them and compares): `large_random_walk` (AAPL, 5,000 bars, driftless), `large_regimes` (AAPL, 10,000 bars cycling
+uptrend, range, downtrend, high volatility), `large_mean_reverting` (AAPL, MSFT, GOOG, 4,000 bars each), `large_crash_recovery`
+(AAPL, 6,000 bars with a 25% fall over 30 bars) and `large_universe` (five symbols, 3,000 bars each, a shared market factor and an
+8% market-wide drop). All stay under the console's 20,000-row limit. To change one, edit the generator and rerun it.
+
 What ran (all on this machine, MSVC 19.39, warnings treated as errors; **a build was completed before every test run**):
 
 | Suite | Count | Covers |
@@ -493,7 +500,7 @@ checked-in scenarios against the real executable and compares them with expectat
 * Windows delivers arguments in the ANSI code page; non-ASCII values need an `@file`.
 * **UI:** Explore was verified with the built-in Chromium pane; Compare, Validate and the theme with Chrome 154 through the Playwright MCP (1440 and 1024 px); all on Windows 11 only; Python 3.13.0 only (3.10+ is the stated floor, not tested); only the two
   direct packages are pinned (their dependencies float within Streamlit's and Plotly's ranges). Explore shows one strategy per run (Compare shows two, from two runs), has no autoplay, and caps
-  uploads at 8 MiB and datasets at 20,000 rows. All built-in datasets are tiny synthetic fixtures (3 to 30 bars per symbol), so charts are sparse; the demo
+  uploads at 8 MiB and datasets at 20,000 rows. The hand-checked built-in datasets are tiny (3 to 30 bars per symbol); the `large_*` ones run to 15,000 rows; the demo
   presets are the parameters the tests use, **not recommended trading parameters**. The browser repaints the whole chart on every step (fine at demo size; not
   measured at 20,000 rows). Streamlit's `st.dataframe` draws its cells on a canvas, so the Signals and Diagnostics tables are not selectable text (the CSV
   downloads are); short key/value lists are real HTML tables. The chart's time axis places points to the millisecond; the exact nanosecond times are in the tables and exports.
