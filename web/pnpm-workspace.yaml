@@ -1,0 +1,5 @@
+# pnpm settings for web/. esbuild (pulled in by vite/vitest) has an install script; pnpm 10+ skips unapproved
+# scripts, and pnpm 11+ fails `pnpm install` with ERR_PNPM_IGNORED_BUILDS until it is approved. Approving it here
+# means a fresh clone installs without `pnpm approve-builds`.
+allowBuilds:
+  esbuild: true
