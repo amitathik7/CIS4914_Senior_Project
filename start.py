@@ -25,6 +25,7 @@ Standard library only; works on Windows, macOS and Linux.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import signal
@@ -109,6 +110,15 @@ def http_ok(url: str) -> bool:
             return r.status < 500
     except Exception:
         return False
+
+
+def engine_announced(gateway_port: int, engine_id: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{gateway_port}/v1/engine", timeout=2) as r:
+            info = json.load(r)
+    except Exception:
+        return False
+    return any(e.get("engine_id") == engine_id for e in info.get("gateway", {}).get("engines", []))
 
 
 def run_quiet(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -201,26 +211,65 @@ class Processes:
 # -- prerequisites ------------------------------------------------------------------------------------------------
 
 
+def kafka_setting(build_dir: Path) -> bool | None:
+    """TRADING_ENGINE_WITH_KAFKA as the build directory was configured, or None if it can't be told."""
+    try:
+        text = (build_dir / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("TRADING_ENGINE_WITH_KAFKA:"):
+            return line.split("=", 1)[1].strip().upper() in ("ON", "TRUE", "1", "YES", "Y")
+    return False  # configured before the option existed, or without it: no Kafka
+
+
+def build_dir_of(exe: Path) -> Path:
+    """build-x/bin/Debug/trading_engine.exe -> build-x (also build-x/bin/trading_engine)."""
+    for parent in exe.parents:
+        if (parent / "CMakeCache.txt").is_file():
+            return parent
+    return exe.parent
+
+
+def configure_hint() -> str:
+    if WINDOWS:
+        return ("  cmake -S . -B build-kafka -G \"Visual Studio 17 2022\" -A x64 `\n"
+                "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DTRADING_ENGINE_WITH_KAFKA=ON\n"
+                "  python start.py --build")
+    return ("  cmake -S . -B build-kafka -DCMAKE_BUILD_TYPE=Release -DTRADING_ENGINE_WITH_KAFKA=ON   # needs librdkafka\n"
+            "  python start.py --build")
+
+
 def find_engine(explicit: str | None, config: str | None) -> Path:
+    """The newest trading_engine built with Kafka. `serve` exits at once ("serve needs Kafka") in any other build,
+    so a newer build without Kafka (an ordinary `build/` or a Debug build from the IDE) is passed over."""
     if explicit:
         path = Path(explicit)
         if not path.is_file():
             raise LaunchError(f"--engine {explicit}: no such file")
+        if kafka_setting(build_dir_of(path.resolve())) is False:
+            raise LaunchError(f"--engine {explicit} was built without Kafka (TRADING_ENGINE_WITH_KAFKA=OFF), and "
+                              "`trading_engine serve` needs it. Use a Kafka build, e.g.\n" + configure_hint())
         return path
     name = "trading_engine.exe" if WINDOWS else "trading_engine"
-    configs = [config] if config else ["Release", "Debug", "RelWithDebInfo"]
+    configs = [config] if config else ["Release", "Debug", "RelWithDebInfo", "MinSizeRel"]
     candidates = []
-    for build in ("build-kafka", "build"):
+    for build in sorted(p for p in ROOT.iterdir() if p.is_dir() and p.name.startswith("build")) + [ROOT / "out"]:
         for cfg in configs:
-            candidates.append(ROOT / build / "bin" / cfg / name)
+            candidates.append(build / "bin" / cfg / name)
         if not config:
-            candidates.append(ROOT / build / "bin" / name)  # single-config generators (Ninja, Makefiles)
+            candidates.append(build / "bin" / name)  # single-config generators (Ninja, Makefiles)
     found = [c for c in candidates if c.is_file()]
-    if not found:
-        raise LaunchError("no trading_engine build found. Build the Kafka build first (README, 'Build'), e.g.\n"
-                          "  cmake --preset ... -DTRADING_ENGINE_WITH_KAFKA=ON && cmake --build build-kafka\n"
-                          "or run `python start.py --build` once build-kafka is configured.")
-    return max(found, key=lambda p: p.stat().st_mtime)  # the most recently built one
+    with_kafka = [c for c in found if kafka_setting(build_dir_of(c)) is not False]
+    if not with_kafka:
+        if found:
+            listed = "\n".join(f"  {c.relative_to(ROOT)}" for c in found)
+            raise LaunchError("found trading_engine, but no build made with Kafka:\n" + listed + "\n"
+                              "`trading_engine serve` (what the console talks to) needs -DTRADING_ENGINE_WITH_KAFKA=ON. "
+                              "Configure a separate Kafka build once, then build it:\n" + configure_hint())
+        raise LaunchError("no trading_engine build found. Configure the Kafka build once, then build it:\n"
+                          + configure_hint())
+    return max(with_kafka, key=lambda p: p.stat().st_mtime)  # the most recently built one
 
 
 def docker_running() -> bool:
@@ -305,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # 1. Check everything before starting anything.
         if args.build:
+            if kafka_setting(ROOT / "build-kafka") is not True:
+                raise LaunchError("--build builds build-kafka, which isn't configured with Kafka yet. Configure it once:\n"
+                                  + configure_hint().rsplit("\n", 1)[0])
             cfg = args.config or "Release"
             run_step("start", ["cmake", "--build", "build-kafka", "--config", cfg, "--target", "trading_engine"])
             args.config = cfg
@@ -359,7 +411,8 @@ def main(argv: list[str] | None = None) -> int:
 
         # 3. Gateway, engine, lab, console.
         procs.start("gateway", [sys.executable, "python/engine_gateway/serve.py", "--port", str(gateway_port)])
-        engine_cmd = [str(engine), "serve", "--pace-ms", str(args.pace_ms)]
+        engine_id = f"start-{os.getpid()}"
+        engine_cmd = [str(engine), "serve", "--pace-ms", str(args.pace_ms), "--engine-id", engine_id]
         for b in bars:
             engine_cmd += ["--bars", b]
         procs.start("engine", engine_cmd)
@@ -369,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
                     env={"VITE_ENGINE_API": "/api", "ENGINE_GATEWAY": f"http://127.0.0.1:{gateway_port}"})
 
         wait_for(lambda: port_open(gateway_port), 60, "the engine gateway", procs)
+        # Up means this engine's heartbeat reached the gateway: before that, New backtest answers "no engine".
+        wait_for(lambda: engine_announced(gateway_port, engine_id), 60, "the engine's first heartbeat", procs)
         url = f"http://127.0.0.1:{CONSOLE_PORT}/"
         wait_for(lambda: http_ok(url), 90, "the web console", procs)
 
