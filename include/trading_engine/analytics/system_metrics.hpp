@@ -1,74 +1,95 @@
 #pragma once
 
-// -----------------------------------------------------------------------------
-//  SystemMetrics -- engineering telemetry for the pipeline itself.
-//
-//  Responsibility: record how the ENGINE is performing (not the strategy):
-//  per-stage processing latency, queue depth, event throughput, and error
-//  counts. This is the data the project's latency/throughput goals are judged
-//  against.
-//
-//  STATUS: declaration only. Recording methods and snapshot() throw
-//  common::NotImplemented so no fabricated metrics are ever reported.
-//
-//  Ownership / lifecycle: one instance owned by TradingEngine, shared by
-//  reference with every stage.
-//
-//  Thread-safety: the future implementation MUST be safe for concurrent
-//  recording from every pipeline thread (lock-free counters / per-thread
-//  accumulation). The scaffold provides no implementation.
-// -----------------------------------------------------------------------------
-
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
+#include <string>
 #include <string_view>
+#include <unordered_map>
+#include <vector>
 
 #include "trading_engine/common/types.hpp"
 
 namespace trading_engine::analytics {
 
-// Pipeline stages we want to time independently.
-enum class Stage : std::uint8_t {
-    Ingest = 0,     // source -> MarketDataService
-    Strategy,       // StrategyEngine dispatch
-    Risk,           // RiskManager evaluation
-    Execution,      // ExecutionSimulator + FillModel
-    Portfolio,      // PortfolioManager update
-    Persistence     // repository write
+using namespace std;
+
+enum class Stage : uint8_t {
+    Ingest = 0,
+    Strategy,
+    Risk,
+    Execution,
+    Portfolio,
+    Persistence
 };
 
-[[nodiscard]] std::string_view to_string(Stage) noexcept;
+inline constexpr size_t kStageCount = 6;
+
+// converts a pipeline stage to a readable name
+[[nodiscard]] string_view to_string(Stage stage) noexcept;
 
 class SystemMetrics {
 public:
     SystemMetrics();
     ~SystemMetrics();
 
-    void record_latency(Stage stage, common::Duration elapsed);   // NOT IMPLEMENTED
-    void set_queue_depth(std::string_view queue_name, std::size_t depth);  // NOT IMPLEMENTED
-    void increment_events(Stage stage, std::uint64_t n = 1);      // NOT IMPLEMENTED
-    void increment_errors(Stage stage, std::uint64_t n = 1);      // NOT IMPLEMENTED
+    // records one latency measurement for a pipeline stage
+    void record_latency(Stage stage, common::Duration elapsed);
+
+    // stores the current depth of a named queue
+    void set_queue_depth(string_view queue_name, size_t depth);
+
+    // adds processed events to a stage's event count
+    void increment_events(Stage stage, uint64_t n = 1);
+
+    // adds errors to a stage's error count
+    void increment_errors(Stage stage, uint64_t n = 1);
 
     struct LatencyStats {
-        std::uint64_t     count{0};
-        common::Duration  min{};
-        common::Duration  max{};
-        common::Duration  p50{};
-        common::Duration  p99{};
+        uint64_t count{0};
+        common::Duration min{};
+        common::Duration max{};
+        common::Duration p50{};
+        common::Duration p99{};
+    };
+
+    struct StageStats {
+        Stage stage{Stage::Ingest};
+        uint64_t events{0};
+        uint64_t errors{0};
+        LatencyStats latency{};
+    };
+
+    struct QueueDepth {
+        string name{};
+        size_t depth{0};
     };
 
     struct Snapshot {
-        std::uint64_t total_events{0};
-        std::uint64_t total_errors{0};
-        // TODO: per-stage LatencyStats, per-queue depth gauges, throughput
-        //       (events/sec) over a rolling window, uptime.
+        uint64_t total_events{0};
+        uint64_t total_errors{0};
+        array<StageStats, kStageCount> stages{};
+        vector<QueueDepth> queue_depths{};
     };
 
-    [[nodiscard]] Snapshot snapshot() const;   // NOT IMPLEMENTED
+    // returns a thread safe snapshot of all currently recorded metrics
+    [[nodiscard]] Snapshot snapshot() const;
 
 private:
-    // TODO: HDR-histogram or fixed-bucket latency accumulators per Stage,
-    //       atomic counters, and an export hook (Prometheus text / JSON).
+    // converts a stage enum into the matching array index
+    [[nodiscard]] static size_t stage_index(Stage stage) noexcept;
+
+    // calculates min, max, median, and p99 for latency samples
+    [[nodiscard]] static LatencyStats summarize_latency(
+        vector<common::Duration> samples);
+
+    mutable mutex mutex_;
+
+    array<uint64_t, kStageCount> events_{};
+    array<uint64_t, kStageCount> errors_{};
+    array<vector<common::Duration>, kStageCount> latencies_{};
+    unordered_map<string, size_t> queue_depths_{};
 };
 
-}  // namespace trading_engine::analytics
+} // namespace trading_engine::analytics

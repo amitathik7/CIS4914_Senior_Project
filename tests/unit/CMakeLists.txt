@@ -29,6 +29,11 @@ trading_engine_add_component_test(backtest
     backtest_test.cpp)
 target_link_libraries(te_test_backtest PRIVATE trading_engine::test_support)
 
+# Engineering telemetry for event counts, errors, queue depth,
+# latency statistics, snapshots, and concurrent recording.
+trading_engine_add_component_test(system_metrics
+    system_metrics_test.cpp)
+
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.
 trading_engine_add_component_test(scaffold_contract
