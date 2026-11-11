@@ -9,7 +9,85 @@ concurrency, modularity, testing, latency, and throughput.
 
 ---
 
-## Status (2026-10-30, week 9 of 15)
+## Quick start: `python start.py`
+
+One command starts the whole system and opens the web console in your browser:
+
+```bash
+python start.py
+```
+
+It runs, in order, and shows each process's output with a name prefix:
+
+1. **kafka**: a single-node Kafka broker in Docker (`docker compose -f docker-compose.kafka.yml up -d`;
+   on Windows it starts Docker Desktop first if it isn't running).
+2. **gateway**: the engine gateway (`python/engine_gateway/serve.py`), which serves the console's API from
+   the Kafka topics, on port 8080, or on 18080 / 8081 / 18081 when 8080 is taken (for example by Apache).
+3. **engine**: `trading_engine serve --bars tests/fixtures/pipeline/demo_bars.csv --pace-ms 50`, which waits
+   for the console to start backtests.
+4. **lab**: the Strategy Lab gateway (`python/strategy_lab/lab_gateway.py`, port 8765) for the Strategies pages.
+5. **console**: `pnpm dev` in `web/` with `VITE_ENGINE_API=/api`, pointed at the engine gateway.
+
+When it prints `Everything is up`, open **Backtests > New backtest** at http://127.0.0.1:5173 (it opens by
+itself). The engine needs a second or two to send its first heartbeat, so a backtest started in that moment
+is refused with "No engine is listening for commands"; try again. **Ctrl+C** stops every process and stops (does not
+delete) the Kafka container, so earlier runs are still listed next time. Each process also logs to
+`out/logs/<name>.log`.
+
+### Before the first run
+
+You need Python 3.10+, Node.js 22 with pnpm 10, Docker, and a **Kafka build** of `trading_engine`.
+`start.py` installs the rest on first start (`confluent-kafka` for the gateway, `pnpm install` in `web/`).
+Check everything without starting anything:
+
+```bash
+python start.py --check
+```
+
+Build `trading_engine` with Kafka once, into `build-kafka/` (`start.py` uses the most recently built
+`trading_engine` it finds in `build-kafka/` or `build/`):
+
+```bash
+# Windows (Visual Studio 2022 + vcpkg: vcpkg install librdkafka:x64-windows)
+cmake -S . -B build-kafka -G "Visual Studio 17 2022" -A x64 -DTRADING_ENGINE_WITH_KAFKA=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build-kafka --config Release --target trading_engine
+
+# Linux / macOS (librdkafka from apt: librdkafka-dev, or Homebrew: librdkafka)
+cmake -S . -B build-kafka -DCMAKE_BUILD_TYPE=Release -DTRADING_ENGINE_WITH_KAFKA=ON
+cmake --build build-kafka --target trading_engine
+```
+
+After that, `python start.py --build` rebuilds `trading_engine` before starting.
+
+The **Strategies** pages (Explore, Compare, Backtest, ...) also need the Strategy Lab tools, built once into
+`out/strategy_lab/` (the Backtests pages work without them):
+
+```bash
+cmake -S . -B out/strategy_lab -DBUILD_TESTING=OFF -DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON   # Windows: add -G "Visual Studio 17 2022" -A x64
+cmake --build out/strategy_lab --config Release --target strategy_lab_replay strategy_lab_backtest
+```
+
+### Options
+
+| Flag | What it does |
+|---|---|
+| `--pace-ms N` | pause N ms after each bar time so a run can be watched, stopped or kill-switched (default 50; e.g. `--pace-ms 200` for a slower replay, `0` for full speed) |
+| `--build` | run `cmake --build build-kafka --target trading_engine` first (Release unless `--config` says otherwise) |
+| `--reset-kafka` | delete the broker's topics, i.e. all earlier runs, before starting (`docker compose down`, then `up`) |
+| `--check` | check prerequisites (engine build, pnpm, free ports, Docker) and exit without starting anything |
+| `--bars FILE` | a CSV of bars the engine can replay; repeatable (default `tests/fixtures/pipeline/demo_bars.csv`) |
+| `--config Debug\|Release\|RelWithDebInfo` | which `trading_engine` build to use (default: the most recently built) |
+| `--engine PATH` | use this `trading_engine` instead of searching `build-kafka/` and `build/` |
+| `--gateway-port N` | engine gateway port (default 8080, or the first free one of 18080, 8081, 18081) |
+| `--no-kafka` | don't touch Docker; use a broker already on `localhost:9092` |
+| `--keep-kafka` | leave the Kafka container running on exit |
+| `--no-lab` | don't start the Strategy Lab gateway |
+| `--no-browser` | don't open the console in a browser |
+
+`python start.py --help` lists the same options. To run the pieces by hand instead, see
+[Web console](#web-console) below.
+
+## Status (2026-11-11, week 11 of 15)
 
 The engine runs a full **simulated backtest end to end**: CSV bars ->
 `MarketDataService` -> event bus (in-process or Kafka) -> `StrategyEngine` (three
@@ -41,7 +119,8 @@ for the milestone-by-milestone status.
 | `PerformanceAnalyzer` (return, volatility, drawdown, Sharpe, profit factor, trades) | ✅ real + tested |
 | `trading_engine run` / `serve`, `app::Backtest`, `app::OrderFlow` | ✅ real + tested |
 | Engine gateway (console API from the Kafka topics) and command channel (New backtest, Stop, kill switch) | ✅ real + tested ([docs](docs/ENGINE_GATEWAY.md)) |
-| Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
+| Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest; 17 built-in datasets incl. five large synthetic ones) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
+| `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
 | `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
 | Alpaca historical + live sources, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
@@ -74,6 +153,7 @@ core never links; stubs throw rather than fake data.
 ```
 CMakeLists.txt            root build
 CMakePresets.json         convenience configure/build/test presets
+start.py                  one-command launcher: Kafka, engine, gateways and web console
 cmake/                    CompilerWarnings, Dependencies (GoogleTest), version.hpp.in
 config/                   config.example.json (no secrets) + notes
 database/migrations/      001_initial_schema.sql  (commented OUTLINE, no-op)
@@ -89,6 +169,7 @@ python/engine_gateway/    serves the console's API from the Kafka topics
 python/strategy_lab/      Strategy Lab gateway and Streamlit UI
 python/visualization/     plot_performance.py outline + requirements.txt
 web/                      engine console (React + TypeScript); real engine via the gateway, or an in-browser demo engine
+build-kafka/, out/        local build and run output (gitignored): Kafka build, Strategy Lab tools, out/logs/
 ```
 
 ## Prerequisites
@@ -100,7 +181,8 @@ web/                      engine console (React + TypeScript); real engine via t
 | Git | any recent | GoogleTest is fetched at a pinned tag on first configure (needs network), unless a system GoogleTest is installed |
 | Python | ≥ 3.10 | the engine gateway and Strategy Lab (`python/`) |
 | Node.js + pnpm | Node 22, pnpm 10 | the web console (`web/`) |
-| librdkafka + a Kafka broker | librdkafka 2.x; Kafka 3.7+ / 4.x | optional: `-DTRADING_ENGINE_WITH_KAFKA=ON` (vcpkg `librdkafka:x64-windows` on Windows); broker via `docker-compose.kafka.yml` |
+| librdkafka | 2.x | for the Kafka build `start.py` runs (`-DTRADING_ENGINE_WITH_KAFKA=ON`); vcpkg `librdkafka:x64-windows` on Windows |
+| Docker (Desktop on Windows/macOS) | any recent | runs the Kafka broker (`docker-compose.kafka.yml`, Kafka 3.7); or bring your own broker on `localhost:9092` with `start.py --no-kafka` |
 | PostgreSQL | 14+ | **not needed yet**: nothing connects to it (persistence is a later milestone) |
 | Alpaca account | — | **not needed yet**: market data comes from recorded CSV files; a paper account later |
 
@@ -138,7 +220,8 @@ Run a backtest from the command line (prints build info and usage with no argume
 ```
 
 `-DTRADING_ENGINE_WITH_KAFKA=ON` adds the Kafka bus (`--bus kafka`, `--bus kafka-mock`)
-and `trading_engine serve`, which the web console drives.
+and `trading_engine serve`, which the web console drives (build it into `build-kafka/` for
+[`start.py`](#before-the-first-run)).
 
 ## Test
 
@@ -165,30 +248,26 @@ real-engine tests against the Linux job's `strategy_lab_replay`.
 
 ## Web console
 
+The usual way to run the console on the real engine is [`python start.py`](#quick-start-python-startpy).
+Without Kafka or an engine build, the console runs on an in-browser demo engine:
+
 ```bash
 cd web && pnpm install && pnpm dev     # http://127.0.0.1:5173, in-browser demo engine
 ```
 
-On the real engine, one command starts everything (Kafka in Docker, the engine, both gateways and the
-console) and opens the browser; Ctrl+C stops it all. It needs a Kafka build of `trading_engine`, Docker,
-Python and pnpm, and works the same on Windows, macOS and Linux:
-
-```bash
-python start.py                  # --help for options: --pace-ms, --build, --reset-kafka, --check, ...
-```
-
-It picks a free port for the engine gateway when 8080 is taken and writes each process's output to
-`out/logs/`. The same steps by hand (full detail in [`docs/ENGINE_GATEWAY.md`](docs/ENGINE_GATEWAY.md)):
+What `start.py` does, step by step by hand (one terminal each; full detail in
+[`docs/ENGINE_GATEWAY.md`](docs/ENGINE_GATEWAY.md)):
 
 ```bash
 docker compose -f docker-compose.kafka.yml up -d
-python python/engine_gateway/serve.py
-./build/bin/trading_engine serve --bars tests/fixtures/pipeline/demo_bars.csv --pace-ms 50
-cd web && VITE_ENGINE_API=/api pnpm dev
+python python/engine_gateway/serve.py                      # --port N if 8080 is taken
+./build-kafka/bin/trading_engine serve --bars tests/fixtures/pipeline/demo_bars.csv --pace-ms 50
+python python/strategy_lab/lab_gateway.py                  # or: cd web && pnpm lab
+cd web && VITE_ENGINE_API=/api pnpm dev                    # ENGINE_GATEWAY=http://127.0.0.1:N for another port
 ```
 
-The Strategies section also needs the Strategy Lab gateway (`cd web && pnpm lab`).
-See [`web/README.md`](web/README.md).
+On Windows the engine is `.\build-kafka\bin\Release\trading_engine.exe`, and in PowerShell the console line is
+`$env:VITE_ENGINE_API="/api"; pnpm dev`. See [`web/README.md`](web/README.md).
 
 ## Python visualization (syntax check only for now)
 
