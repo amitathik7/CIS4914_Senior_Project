@@ -87,6 +87,10 @@ cmake --build out/strategy_lab --config Release --target strategy_lab_replay str
 `python start.py --help` lists the same options. To run the pieces by hand instead, see
 [Web console](#web-console) below.
 
+**New to the console?** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) is a walkthrough for first-time users and
+user testing: a tour of the pages, tasks to try with what you should see, known limitations, and how to
+report problems.
+
 ## Status (2026-11-11, week 11 of 15)
 
 The engine runs a full **simulated backtest end to end**: CSV bars ->
@@ -158,7 +162,7 @@ cmake/                    CompilerWarnings, Dependencies (GoogleTest), version.h
 config/                   config.example.json (no secrets) + notes
 database/migrations/      001_initial_schema.sql  (commented OUTLINE, no-op)
 docker-compose.kafka.yml  a single-node Kafka broker for local runs
-docs/                     ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, EVENT_BUS, BACKTESTING, ENGINE_GATEWAY,
+docs/                     USER_GUIDE, ARCHITECTURE, DATA_FLOW, IMPLEMENTATION_PLAN, EVENT_BUS, BACKTESTING, ENGINE_GATEWAY,
                           STRATEGIES, STRATEGY_LAB*, OPEN_QUESTIONS, strategies/, adr/
 include/trading_engine/   public headers, by component
 src/                      implementation by component (a few remaining stubs listed above)
