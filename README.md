@@ -29,14 +29,14 @@ It runs, in order, and shows each process's output with a name prefix:
 5. **console**: `pnpm dev` in `web/` with `VITE_ENGINE_API=/api`, pointed at the engine gateway.
 
 When it prints `Everything is up`, open **Backtests > New backtest** at http://127.0.0.1:5173 (it opens by
-itself). The engine needs a second or two to send its first heartbeat, so a backtest started in that moment
-is refused with "No engine is listening for commands"; try again. **Ctrl+C** stops every process and stops (does not
+itself). `start.py` waits for the engine's first heartbeat before saying so, so the console can start a backtest
+straight away. **Ctrl+C** stops every process and stops (does not
 delete) the Kafka container, so earlier runs are still listed next time. Each process also logs to
 `out/logs/<name>.log`.
 
 ### Before the first run
 
-You need Python 3.10+, Node.js 22 with pnpm 10, Docker, and a **Kafka build** of `trading_engine`.
+You need Python 3.10+, Node.js 22 with pnpm 10 or newer, Docker, and a **Kafka build** of `trading_engine`.
 `start.py` installs the rest on first start (`confluent-kafka` for the gateway, `pnpm install` in `web/`).
 Check everything without starting anything:
 
@@ -44,8 +44,11 @@ Check everything without starting anything:
 python start.py --check
 ```
 
-Build `trading_engine` with Kafka once, into `build-kafka/` (`start.py` uses the most recently built
-`trading_engine` it finds in `build-kafka/` or `build/`):
+Build `trading_engine` with Kafka once, into `build-kafka/`. `start.py` uses the most recently built
+`trading_engine` in any `build*/` folder **that was configured with `-DTRADING_ENGINE_WITH_KAFKA=ON`** (it reads
+each folder's `CMakeCache.txt`), because `trading_engine serve` exits at once with "serve needs Kafka" in any other
+build. An ordinary `build/` next to it is fine; if it finds only builds without Kafka, it says so and prints the
+command below.
 
 ```bash
 # Windows (Visual Studio 2022 + vcpkg: vcpkg install librdkafka:x64-windows)
