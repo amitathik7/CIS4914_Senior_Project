@@ -2,7 +2,7 @@
 
 import unittest
 
-from support import bar, fill, order, signal
+from support import bar, envelope, fill, order, signal
 
 from engine_gateway import wire
 from engine_gateway.read_model import RunDefaults, Store
@@ -185,6 +185,37 @@ class Metrics(unittest.TestCase):
                          {"ingest": 2, "strategy": 1, "risk": 0, "execution": 0, "portfolio": 0})
         self.assertEqual(m["total_events"], 3)
         self.assertEqual(sum(b["count"] for b in m["latency_histogram"]), 3)
+
+    def test_the_engines_own_timings_replace_the_gateways_view(self):
+        engine = {"stages": [{"stage": "ingest", "events": 2, "errors": 0,
+                              "latency_ns": {"count": 2, "min": 900, "p50": 44_544, "p99": 92_160, "max": 335_084}},
+                             {"stage": "strategy", "events": 1, "errors": 1,
+                              "latency_ns": {"count": 1, "min": 2_816, "p50": 2_816, "p99": 2_816, "max": 2_816}}],
+                  "end_to_end_ns": {"count": 2, "min": 40_000, "p50": 61_000, "p99": 812_345, "max": 812_345},
+                  "end_to_end_histogram": [{"upper_us": 100, "count": 1}, {"upper_us": 1_000, "count": 1}],
+                  "queue_depth": 3}
+        status = {"run_id": "te", "status": "running", "updated_at": "2026-11-13T10:00:00Z", "config": {},
+                  "kill_switch": {"engaged": False}}
+        store = store_with(("te.market_data", bar("AAPL", 30, "1")), ("te.run", envelope("run", status)))
+        self.assertNotIn("source", store.get("te").metrics(0))           # no engine timings yet
+        store.ingest("te.run", envelope("run", {**status, "updated_at": "2026-11-13T10:00:01Z", "metrics": engine}))
+        m = store.get("te").metrics(0)
+        self.assertEqual(m["source"], "engine")
+        self.assertEqual(m["stages"][0], {"stage": "ingest", "events": 2, "errors": 0, "latency_us":
+                                          {"count": 2, "min": 0.9, "p50": 44.544, "p99": 92.16, "max": 335.084}})
+        self.assertEqual((m["total_events"], m["total_errors"], m["queue_depth"]), (3, 1, 3))
+        self.assertEqual(m["end_to_end_us"]["p99"], 812.345)
+        self.assertEqual(m["latency_histogram"], engine["end_to_end_histogram"])
+        self.assertEqual((m["history"][-1]["queue_depth"], m["history"][-1]["p99_us"]), (3, 812.345))
+        store.ingest("te.run", envelope("run", {**status, "updated_at": "2026-11-13T10:00:02Z"}))
+        self.assertEqual(store.get("te").metrics(0)["source"], "engine")   # a report without timings keeps the last
+
+    def test_malformed_engine_timings_are_a_decode_error(self):
+        status = {"run_id": "te", "status": "running", "updated_at": "2026-11-13T10:00:00Z", "config": {},
+                  "kill_switch": {"engaged": False}, "metrics": {"stages": "nope"}}
+        store = Store()
+        self.assertFalse(store.ingest("te.run", envelope("run", status)))
+        self.assertIsNone(store.get("te").status_report if store.get("te") else None)
 
     def test_backlog_has_no_latency_samples(self):
         store = Store()

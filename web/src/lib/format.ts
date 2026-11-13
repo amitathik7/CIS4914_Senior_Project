@@ -50,6 +50,7 @@ export function ratioText(n: number | undefined, dp = 2): string {
 
 export function latency(us: number): string {
   if (us >= 1000) return `${(us / 1000).toFixed(us >= 10_000 ? 0 : 1)} ms`;
+  if (us > 0 && us < 1) return `${Math.round(us * 1000)} ns`;   // the engine times handlers to the nanosecond
   return `${us >= 100 ? us.toFixed(0) : us.toFixed(1)} µs`;
 }
 

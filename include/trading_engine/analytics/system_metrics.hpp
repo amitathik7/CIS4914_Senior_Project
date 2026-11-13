@@ -45,6 +45,9 @@ public:
     // nearest-rank percentile, reported as its bucket's lower bound clamped to [min, max]
     [[nodiscard]] common::Duration percentile(std::size_t percent) const noexcept;
 
+    // samples whose bucket starts at or below `nanos` (exact below 128 ns, within ~1.6% above)
+    [[nodiscard]] std::uint64_t count_at_or_below(std::uint64_t nanos) const noexcept;
+
     [[nodiscard]] static std::size_t bucket_index(std::uint64_t nanos) noexcept;
     [[nodiscard]] static std::uint64_t bucket_lower_bound(std::size_t index) noexcept;
 
@@ -72,6 +75,13 @@ public:
     // adds errors to a stage's error count
     void increment_errors(Stage stage, std::uint64_t n = 1);
 
+    // wall time from a bar time's first market event until the bus is idle again: ingest to portfolio, transport included
+    void record_end_to_end(common::Duration elapsed);
+
+    // upper bounds of the end-to-end histogram the snapshot reports; the last bucket also takes anything slower
+    static constexpr std::array<std::uint64_t, 12> kEndToEndBoundsUs{
+        100, 250, 500, 1'000, 2'500, 5'000, 10'000, 25'000, 50'000, 100'000, 250'000, 1'000'000};
+
     struct LatencyStats {
         std::uint64_t count{0};
         common::Duration min{};
@@ -97,6 +107,8 @@ public:
         std::uint64_t total_errors{0};
         std::array<StageStats, kStageCount> stages{};
         std::vector<QueueDepth> queue_depths{};
+        LatencyStats end_to_end{};
+        std::array<std::uint64_t, kEndToEndBoundsUs.size()> end_to_end_buckets{};   // counts per kEndToEndBoundsUs
     };
 
     // returns a thread safe snapshot of all currently recorded metrics
@@ -111,6 +123,7 @@ private:
     std::array<std::uint64_t, kStageCount> events_{};
     std::array<std::uint64_t, kStageCount> errors_{};
     std::array<LatencyHistogram, kStageCount> latencies_{};
+    LatencyHistogram end_to_end_{};
     std::unordered_map<std::string, std::size_t> queue_depths_{};
 };
 

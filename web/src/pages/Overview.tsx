@@ -7,7 +7,7 @@ import { TimeChart } from "../components/charts/TimeChart";
 import { useCurrentRun } from "../components/Shell";
 import { Empty, Figure, Loading, Panel, Segmented, Side, toneOf } from "../components/ui";
 import { add, formatDecimal, money, price, ratio, sub, toNumber } from "../lib/decimal";
-import { day, int, label, minute, percent, signedInt } from "../lib/format";
+import { int, label, minute, percent, signedInt } from "../lib/format";
 import { useRunResource } from "../state/engine";
 import { candles, equityLine, fillMarkers, lastSession } from "./chartData";
 import { OrderDrawer } from "./OrderDrawer";
@@ -121,11 +121,7 @@ export function Overview() {
       {p && start ? (
         <div className="figures">
           <Figure lead label="Equity" value={money(p.total_equity)} sub={<span className={toneOf(sub(p.total_equity, start))}>{money(sub(p.total_equity, start), true)} since start</span>} />
-          <Figure
-            label="Day P&L"
-            value={<span className={toneOf(p.session_pnl)}>{money(p.session_pnl, true)}</span>}
-            sub={`${percent(toNumber(p.session_pnl) / Math.max(1, toNumber(p.total_equity) - toNumber(p.session_pnl)))}${live ? " today" : run?.clock ? ` on ${day(run.clock)}` : ""}`}
-          />
+          <Figure label="Day P&L" value={<span className={toneOf(p.session_pnl)}>{money(p.session_pnl, true)}</span>} />
           <Figure label="Cash" value={money(p.cash)} sub={`${money(p.reserved_cash)} reserved`} />
           <Figure label="Buying power" value={money(p.buying_power)} />
           <Figure

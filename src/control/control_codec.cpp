@@ -67,6 +67,53 @@ std::string string_array(const std::vector<std::string>& items) {
     return out + "]";
 }
 
+std::string latency_json(const LatencySummary& l) {
+    std::string out;
+    ObjectWriter w{out};
+    w.unsigned_integer("count", l.count);
+    w.unsigned_integer("min", l.min_ns);
+    w.unsigned_integer("p50", l.p50_ns);
+    w.unsigned_integer("p99", l.p99_ns);
+    w.unsigned_integer("max", l.max_ns);
+    w.close();
+    return out;
+}
+
+std::string metrics_json(const RunMetrics& m) {
+    std::string stages = "[";
+    for (const StageTiming& s : m.stages) {
+        if (stages.size() > 1) {
+            stages += ',';
+        }
+        ObjectWriter w{stages};
+        w.string("stage", s.stage);
+        w.unsigned_integer("events", s.events);
+        w.unsigned_integer("errors", s.errors);
+        w.raw("latency_ns", latency_json(s.latency));
+        w.close();
+    }
+    stages += ']';
+    std::string histogram = "[";
+    for (const LatencyBucket& b : m.end_to_end_histogram) {
+        if (histogram.size() > 1) {
+            histogram += ',';
+        }
+        ObjectWriter w{histogram};
+        w.unsigned_integer("upper_us", b.upper_us);
+        w.unsigned_integer("count", b.count);
+        w.close();
+    }
+    histogram += ']';
+    std::string out;
+    ObjectWriter w{out};
+    w.raw("stages", stages);
+    w.raw("end_to_end_ns", latency_json(m.end_to_end));
+    w.raw("end_to_end_histogram", histogram);
+    w.unsigned_integer("queue_depth", m.queue_depth);
+    w.close();
+    return out;
+}
+
 std::string strategy_json(const StrategySettings& s) {
     std::string out;
     ObjectWriter w{out};
@@ -142,6 +189,9 @@ std::string payload_json(const RunStatusReport& r) {
     }
     if (r.command_id) {
         w.string("command_id", *r.command_id);
+    }
+    if (r.metrics) {
+        w.raw("metrics", metrics_json(*r.metrics));
     }
     w.close();
     return out;
@@ -272,7 +322,43 @@ struct Reader {
         }
         return out;
     }
+    [[nodiscard]] std::vector<Reader> objects(std::string_view member) const {
+        const Value& v = need(member);
+        if (v.kind != Value::Kind::Array) {
+            bad(where(member), setting ? "must be a list." : "must be an array", setting);
+        }
+        std::vector<Reader> out;
+        for (std::size_t i = 0; i < v.array.size(); ++i) {
+            const std::string at = where(member) + "." + std::to_string(i);
+            if (v.array[i].kind != Value::Kind::Object) {
+                bad(at, setting ? "must be an object." : "must be an object", setting);
+            }
+            out.push_back(Reader{v.array[i], at, setting});
+        }
+        return out;
+    }
 };
+
+LatencySummary latency_from(const Reader& r) {
+    return LatencySummary{r.integer<std::uint64_t>("count"), r.integer<std::uint64_t>("min"),
+                          r.integer<std::uint64_t>("p50"), r.integer<std::uint64_t>("p99"),
+                          r.integer<std::uint64_t>("max")};
+}
+
+RunMetrics metrics_from(const Reader& r) {
+    RunMetrics m;
+    for (const Reader& s : r.objects("stages")) {
+        m.stages.push_back(StageTiming{s.str("stage"), s.integer<std::uint64_t>("events"),
+                                       s.integer<std::uint64_t>("errors"), latency_from(s.child("latency_ns"))});
+    }
+    m.end_to_end = latency_from(r.child("end_to_end_ns"));
+    for (const Reader& b : r.objects("end_to_end_histogram")) {
+        m.end_to_end_histogram.push_back(
+            LatencyBucket{b.integer<std::uint64_t>("upper_us"), b.integer<std::uint64_t>("count")});
+    }
+    m.queue_depth = r.integer<std::uint64_t>("queue_depth");
+    return m;
+}
 
 std::size_t window(const Reader& r, std::string_view member) {
     const auto value = r.integer<std::int64_t>(member);
@@ -431,6 +517,7 @@ RunStatusReport report_from(const Reader& r) {
     out.clock = r.opt_time("clock");
     if (r.find("error"))      out.error      = r.str("error");
     if (r.find("command_id")) out.command_id = r.str("command_id");
+    if (r.find("metrics"))    out.metrics    = metrics_from(r.child("metrics"));
     return out;
 }
 

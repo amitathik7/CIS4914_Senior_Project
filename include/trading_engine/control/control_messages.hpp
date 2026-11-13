@@ -67,6 +67,34 @@ struct KillSwitchState {
 // Published when a run is queued, starts, changes its kill switch, every few
 // percent of progress, and when it ends. Each report is the whole state, so a
 // reader only needs the latest one.
+// The engine's own measurements of a run (analytics::SystemMetrics), in nanoseconds.
+struct LatencySummary {
+    std::uint64_t count{0};
+    std::uint64_t min_ns{0};
+    std::uint64_t p50_ns{0};
+    std::uint64_t p99_ns{0};
+    std::uint64_t max_ns{0};
+};
+
+struct StageTiming {
+    std::string    stage{};   // "ingest", "strategy", "risk", "execution", "portfolio"
+    std::uint64_t  events{0};
+    std::uint64_t  errors{0};
+    LatencySummary latency{};  // one handler call each
+};
+
+struct LatencyBucket {
+    std::uint64_t upper_us{0};   // the last bucket also counts anything slower
+    std::uint64_t count{0};
+};
+
+struct RunMetrics {
+    std::vector<StageTiming>   stages{};
+    LatencySummary             end_to_end{};             // per bar time: first market event until the bus is idle
+    std::vector<LatencyBucket> end_to_end_histogram{};
+    std::uint64_t              queue_depth{0};           // messages sent on the transport, not yet read back
+};
+
 struct RunStatusReport {
     std::string                      run_id{};
     std::string                      engine_id{};     // empty: not controllable (trading_engine run)
@@ -78,6 +106,7 @@ struct RunStatusReport {
     std::optional<common::Timestamp> clock{};         // the run's market time
     std::optional<std::string>       error{};         // failed, or a refused command
     std::optional<std::string>       command_id{};    // the command this report answers
+    std::optional<RunMetrics>        metrics{};       // once the run has started
 };
 
 struct EngineAnnouncement {

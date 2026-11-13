@@ -132,6 +132,7 @@ private:
         bool                                stop{false};
         bool                                live{false};
         risk::RiskManager*                  risk{nullptr};   // while running
+        const analytics::SystemMetrics*     metrics{nullptr};  // from start until the final report
         std::optional<double>               progress{};
         std::optional<common::Timestamp>    clock{};
     };

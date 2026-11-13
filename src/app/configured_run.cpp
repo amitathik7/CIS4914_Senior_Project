@@ -38,7 +38,8 @@ ConfiguredRun::ConfiguredRun(events::IEventBus& bus, common::ManualClock& clock,
     : bus_{bus},
       clock_{clock},
       pipeline_{bus, clock, pipeline_config(settings, run_id, metrics)},
-      flow_{pipeline_, bus, clock, flow_config(settings, run_id, metrics)} {
+      flow_{pipeline_, bus, clock, flow_config(settings, run_id, metrics)},
+      metrics_{metrics} {
     for (auto& strategy : control::make_strategies(settings)) {
         pipeline_.add_strategy(std::move(strategy));
     }
@@ -74,8 +75,17 @@ void ConfiguredRun::feed(const domain::MarketEvent& event) {
     if (event.exchange_time > clock_.now()) {
         clock_.set(event.exchange_time);
     }
+    const auto started = std::chrono::steady_clock::now();
     pipeline_.input().on_market_event(event);
     bus_.wait_until_drained();
+    record_end_to_end(started);
+}
+
+void ConfiguredRun::record_end_to_end(std::chrono::steady_clock::time_point started) {
+    if (metrics_ != nullptr) {
+        metrics_->record_end_to_end(
+            std::chrono::duration_cast<common::Duration>(std::chrono::steady_clock::now() - started));
+    }
 }
 
 void ConfiguredRun::end() {
@@ -86,11 +96,16 @@ void ConfiguredRun::end() {
 bool ConfiguredRun::replay(const std::vector<domain::MarketEvent>& bars, const InstantCallback& on_instant) {
     begin(bars.empty() ? clock_.now() : bars.front().exchange_time);
     bool complete = true;
+    auto started  = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < bars.size(); ++i) {
+        if (i == 0 || bars[i - 1].exchange_time != bars[i].exchange_time) {
+            started = std::chrono::steady_clock::now();
+        }
         clock_.set(bars[i].exchange_time);
         pipeline_.input().on_market_event(bars[i]);
         if (i + 1 == bars.size() || bars[i + 1].exchange_time != bars[i].exchange_time) {
             bus_.wait_until_drained();   // one timestamp at a time
+            record_end_to_end(started);
             if (on_instant && !on_instant(ReplayProgress{i + 1, bars.size(), bars[i].exchange_time}) &&
                 i + 1 < bars.size()) {
                 complete = false;

@@ -36,6 +36,29 @@ bool valid_prefix(const std::string& prefix) {
     });
 }
 
+control::LatencySummary summary(const analytics::SystemMetrics::LatencyStats& l) {
+    const auto ns = [](common::Duration d) { return static_cast<std::uint64_t>(std::max<std::int64_t>(0, d.count())); };
+    return {l.count, ns(l.min), ns(l.p50), ns(l.p99), ns(l.max)};
+}
+
+control::RunMetrics run_metrics(const analytics::SystemMetrics::Snapshot& s) {
+    control::RunMetrics m;
+    for (const auto& stage : s.stages) {
+        if (stage.stage != analytics::Stage::Persistence || stage.events > 0) {
+            m.stages.push_back({std::string{analytics::to_string(stage.stage)}, stage.events, stage.errors,
+                                summary(stage.latency)});
+        }
+    }
+    m.end_to_end = summary(s.end_to_end);
+    for (std::size_t b = 0; b < s.end_to_end_buckets.size(); ++b) {
+        m.end_to_end_histogram.push_back({analytics::SystemMetrics::kEndToEndBoundsUs[b], s.end_to_end_buckets[b]});
+    }
+    for (const auto& queue : s.queue_depths) {
+        m.queue_depth += queue.depth;
+    }
+    return m;
+}
+
 bool finished(RunState state) {
     return state == RunState::Completed || state == RunState::Failed || state == RunState::Stopped;
 }
@@ -171,6 +194,9 @@ void EngineService::report(const Run& run, const std::string& command_id, std::o
     r.error       = std::move(error);
     if (!command_id.empty()) {
         r.command_id = command_id;
+    }
+    if (run.metrics != nullptr) {
+        r.metrics = run_metrics(run.metrics->snapshot());
     }
     ++stats_.reports;
     send(control::run_topic(run.run_id), run.run_id, std::move(r));
@@ -359,7 +385,7 @@ void EngineService::execute(const std::shared_ptr<Run>& run) {
         events::TopicEventBusOptions options;
         options.topic_prefix  = run->run_id;
         options.poll_interval = std::chrono::milliseconds{5};
-        events::TopicEventBus bus{*transport, clock, options};
+        events::TopicEventBus bus{*transport, clock, options, &metrics};
         ConfiguredRun configured{bus, clock, run->settings, common::RunId{1}, &metrics};
         LiveEventQueue events;
         LiveFeed feed;
@@ -379,8 +405,9 @@ void EngineService::execute(const std::shared_ptr<Run>& run) {
         } lend{*this, *run};
         {
             const std::lock_guard lock{mutex_};
-            run->risk  = &configured.flow().risk();
-            run->state = RunState::Running;
+            run->risk    = &configured.flow().risk();
+            run->metrics = &metrics;
+            run->state   = RunState::Running;
             if (!run->live) {
                 run->progress = 0.0;
             }
@@ -414,6 +441,7 @@ void EngineService::execute(const std::shared_ptr<Run>& run) {
         ++stats_.stopped;
     }
     report(*run, run->stop_command, error);
+    run->metrics = nullptr;   // `metrics` ends with this call
 }
 
 bool EngineService::replay(Run& run, ConfiguredRun& configured, const std::vector<domain::MarketEvent>& bars) {
