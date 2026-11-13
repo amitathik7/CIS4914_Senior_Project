@@ -86,7 +86,6 @@ cmake --build out/strategy_lab --config Release --target strategy_lab_replay str
 
 | Flag | What it does |
 |---|---|
-| `--bars FILE` | replay these bars instead of the demo bars; the next start replays them again until you choose others |
 | `--demo` | go back to the demo bars |
 | `--year` | replay the last year of AAPL, MSFT and SPY minute bars, downloaded once into `data/alpaca_year.csv` with your Alpaca keys (about 80 minutes per backtest at the default pace; delete the file to download a newer year) |
 | `--pace-ms N` | pause N ms after each bar time so a run can be watched, stopped or kill-switched (default 50; e.g. `--pace-ms 200` for a slower replay, `0` for full speed) |
@@ -94,7 +93,7 @@ cmake --build out/strategy_lab --config Release --target strategy_lab_replay str
 | `--no-build` | don't bring `build-kafka/` up to date before starting (it is by default) |
 | `--reset-kafka` | delete the broker's topics, i.e. all earlier runs, before starting (`docker compose down`, then `up`) |
 | `--check` | check prerequisites (engine build, pnpm, free ports, Docker) and exit without starting anything |
-| `--bars FILE` | a CSV of bars the engine can replay; repeatable (default `tests/fixtures/pipeline/demo_bars.csv`) |
+| `--bars FILE` | a CSV of bars the engine can replay; repeatable (default `tests/fixtures/pipeline/demo_bars.csv`). The next start replays the same bars until you choose others |
 | `--config Debug\|Release\|RelWithDebInfo` | which `trading_engine` build to use (default: the most recently built) |
 | `--engine PATH` | use this `trading_engine` instead of searching `build-kafka/` and `build/` |
 | `--gateway-port N` | engine gateway port (default 8080, or the first free one of 18080, 8081, 18081) |
