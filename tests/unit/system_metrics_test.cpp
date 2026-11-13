@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
+#include <numeric>
 #include <thread>
 #include <vector>
 
@@ -73,6 +75,27 @@ TEST(SystemMetrics, RecordsLatencyStatistics) {
     EXPECT_EQ(latency.max, nanoseconds{100});
     EXPECT_EQ(latency.p50, nanoseconds{30});
     EXPECT_EQ(latency.p99, nanoseconds{100});
+}
+
+TEST(SystemMetrics, EndToEndFallsIntoItsHistogramBuckets) {
+    an::SystemMetrics metrics;
+
+    metrics.record_end_to_end(microseconds{50});        // <= 100 us
+    metrics.record_end_to_end(microseconds{100});       // <= 100 us, on the bound
+    metrics.record_end_to_end(microseconds{700});       // <= 1000 us
+    metrics.record_end_to_end(seconds{5});              // slower than the last bound: still counted in it
+
+    const auto snapshot = metrics.snapshot();
+    const auto& buckets = snapshot.end_to_end_buckets;
+    const auto& bounds = an::SystemMetrics::kEndToEndBoundsUs;
+
+    EXPECT_EQ(snapshot.end_to_end.count, 4u);
+    EXPECT_EQ(snapshot.end_to_end.min, microseconds{50});
+    EXPECT_EQ(snapshot.end_to_end.max, seconds{5});
+    EXPECT_EQ(buckets[0], 2u);
+    EXPECT_EQ(buckets[static_cast<size_t>(std::find(bounds.begin(), bounds.end(), 1'000u) - bounds.begin())], 1u);
+    EXPECT_EQ(buckets.back(), 1u);
+    EXPECT_EQ(std::accumulate(buckets.begin(), buckets.end(), uint64_t{0}), 4u);
 }
 
 // check that a stage with no latency data returns zero values

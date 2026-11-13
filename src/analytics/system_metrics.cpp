@@ -116,6 +116,23 @@ common::Duration LatencyHistogram::percentile(size_t percent) const noexcept {
     return max();
 }
 
+uint64_t LatencyHistogram::count_at_or_below(uint64_t nanos) const noexcept {
+    uint64_t total = 0;
+    for (size_t i = 0; i < kBucketCount && bucket_lower_bound(i) <= nanos; ++i) {
+        total += buckets_[i];
+    }
+    return total;
+}
+
+namespace {
+
+SystemMetrics::LatencyStats stats_of(const LatencyHistogram& h) {
+    return SystemMetrics::LatencyStats{
+        .count = h.count(), .min = h.min(), .max = h.max(), .p50 = h.percentile(50), .p99 = h.percentile(99)};
+}
+
+}  // namespace
+
 // --- SystemMetrics ----------------------------------------------------------
 
 SystemMetrics::SystemMetrics() = default;
@@ -148,6 +165,12 @@ void SystemMetrics::increment_events(Stage stage, uint64_t n) {
     events_[stage_index(stage)] += n;
 }
 
+void SystemMetrics::record_end_to_end(common::Duration elapsed) {
+    const lock_guard lock{mutex_};
+
+    end_to_end_.record(elapsed);
+}
+
 // increments the number of errors recorded for a stage
 void SystemMetrics::increment_errors(Stage stage, uint64_t n) {
     const lock_guard lock{mutex_};
@@ -169,18 +192,22 @@ SystemMetrics::Snapshot SystemMetrics::snapshot() const {
         stats.stage = kStages[i];
         stats.events = events_[i];
         stats.errors = errors_[i];
-        stats.latency = LatencyStats{
-            .count = histogram.count(),
-            .min = histogram.min(),
-            .max = histogram.max(),
-            .p50 = histogram.percentile(50),
-            .p99 = histogram.percentile(99)
-        };
+        stats.latency = stats_of(histogram);
 
         result.stages[i] = stats;
 
         result.total_events += stats.events;
         result.total_errors += stats.errors;
+    }
+
+    result.end_to_end = stats_of(end_to_end_);
+    uint64_t below = 0;
+    for (size_t b = 0; b < kEndToEndBoundsUs.size(); ++b) {
+        const uint64_t upto = b + 1 == kEndToEndBoundsUs.size()
+                                  ? end_to_end_.count()
+                                  : end_to_end_.count_at_or_below(kEndToEndBoundsUs[b] * 1'000);
+        result.end_to_end_buckets[b] = upto - below;
+        below = upto;
     }
 
     result.queue_depths.reserve(queue_depths_.size());

@@ -93,6 +93,23 @@ switch, every 2% of progress (or 0.5 s), and when it ends (`completed`,
 `stopped`, `failed`). `config` holds the settings the run actually used, with
 the period filled in from the bars when it was not given.
 
+From the moment a run starts, `trading_engine serve` also adds the engine's
+own measurements (`analytics::SystemMetrics`) so far, in nanoseconds:
+
+```json
+"metrics":{"stages":[{"stage":"ingest","events":2319,"errors":0,
+                      "latency_ns":{"count":2319,"min":900,"p50":44544,"p99":92160,"max":335084}}, ...],
+           "end_to_end_ns":{"count":773,"min":...,"p50":...,"p99":...,"max":...},
+           "end_to_end_histogram":[{"upper_us":100,"count":0}, ..., {"upper_us":1000000,"count":2}],
+           "queue_depth":0}
+```
+
+A stage's latency is one handler call. End to end is one per bar time: from
+its first market event until the bus is idle again, Kafka round trips
+included. The last histogram bucket also counts anything slower than its
+bound. `queue_depth` is the run's messages sent on the transport and not yet
+read back.
+
 `trading_engine run` publishes the same report (`running`, then `completed`)
 on a topic bus, **without** `engine_id`: nothing can send it commands, and
 the gateway answers 409 if the console tries.

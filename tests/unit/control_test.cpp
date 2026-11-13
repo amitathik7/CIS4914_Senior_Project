@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -184,6 +185,22 @@ TEST(ControlCodec, StatusReportAndAnnouncementRoundTrip) {
     EXPECT_EQ(out.command_id, "cmd-9");
     EXPECT_FALSE(out.error.has_value());
     EXPECT_EQ(ctl::settings_json(out.settings), ctl::settings_json(r.settings));
+    EXPECT_FALSE(out.metrics.has_value());
+
+    r.metrics = ctl::RunMetrics{{{"ingest", 12, 1, {12, 900, 2'816, 51'200, 93'125}}},
+                                {4, 40'000, 44'544, 92'160, 335'084},
+                                {{100, 3}, {1'000'000, 1}},
+                                2};
+    const auto with = std::get<ctl::RunStatusReport>(ctl::decode_control(ctl::encode({"e", 1, r.updated_at, r})).payload);
+    ASSERT_TRUE(with.metrics.has_value());
+    ASSERT_EQ(with.metrics->stages.size(), 1U);
+    EXPECT_EQ(with.metrics->stages[0].stage, "ingest");
+    EXPECT_EQ(with.metrics->stages[0].errors, 1U);
+    EXPECT_EQ(with.metrics->stages[0].latency.p50_ns, 2'816U);
+    EXPECT_EQ(with.metrics->end_to_end.max_ns, 335'084U);
+    ASSERT_EQ(with.metrics->end_to_end_histogram.size(), 2U);
+    EXPECT_EQ(with.metrics->end_to_end_histogram[1].upper_us, 1'000'000U);
+    EXPECT_EQ(with.metrics->queue_depth, 2U);
 
     ctl::EngineAnnouncement a;
     a.engine_id = "engine-a";
@@ -362,6 +379,20 @@ TEST(ConfiguredRun, MetricsCountEveryStage) {
     }
     EXPECT_EQ(m.stages[static_cast<std::size_t>(an::Stage::Ingest)].events, input.size());
     EXPECT_EQ(m.stages[static_cast<std::size_t>(an::Stage::Persistence)].events, 0U);
+
+    // One end-to-end sample per bar time, each at least as long as that bar time's slowest single handler.
+    std::set<tec::Timestamp> instants;
+    for (const auto& bar : input) {
+        instants.insert(bar.exchange_time);
+    }
+    EXPECT_EQ(m.end_to_end.count, instants.size());
+    EXPECT_GT(m.end_to_end.p50, tec::Duration{});
+    EXPECT_GE(m.end_to_end.max, m.stages[static_cast<std::size_t>(an::Stage::Ingest)].latency.min);
+    std::uint64_t bucketed = 0;
+    for (const auto n : m.end_to_end_buckets) {
+        bucketed += n;
+    }
+    EXPECT_EQ(bucketed, m.end_to_end.count);
 }
 
 TEST(ResultsExport, WritesTheSummaryCurveFillsAndStages) {
@@ -551,6 +582,19 @@ TEST_F(EngineServiceTest, StartsABacktestAndReportsItsSettingsAndProgress) {
     EXPECT_FALSE(broker_->messages("te.bt-a.fill").empty());
     const auto fill = std::get<dom::Fill>(ev::decode(broker_->messages("te.bt-a.fill").front().payload).event.payload);
     EXPECT_GT(fill.fees, tec::Money{});   // the settings' per-share fee
+
+    // Every report after the start carries the engine's own stage timings; the last has the whole run.
+    EXPECT_FALSE(all.front().metrics.has_value());
+    ASSERT_TRUE(all.back().metrics.has_value());
+    const auto& m = *all.back().metrics;
+    ASSERT_EQ(m.stages.size(), 5U);
+    EXPECT_EQ(m.stages[0].stage, "ingest");
+    EXPECT_EQ(m.stages[0].events, bars().size());
+    EXPECT_EQ(m.stages[0].latency.count, bars().size());
+    EXPECT_GT(m.stages[0].latency.p50_ns, 0U);
+    EXPECT_GT(m.end_to_end.count, 0U);
+    EXPECT_GE(m.end_to_end.p99_ns, m.end_to_end.p50_ns);
+    EXPECT_EQ(m.end_to_end_histogram.size(), an::SystemMetrics::kEndToEndBoundsUs.size());
 
     const auto beats = broker_->messages(ctl::engine_topic(ctl::kDefaultControlPrefix));
     ASSERT_FALSE(beats.empty());

@@ -77,7 +77,7 @@ commands from PowerShell with `python` and `.\build-kafka\bin\Release\trading_en
 | Orders, order trace | `order`: every status change is one message, so the history is the sequence of them | real |
 | Fills, positions, cash, equity, drawdown, trades | `fill` and marks, with the Portfolio Manager's accounting, from the run's starting cash | real |
 | Risk log | `<prefix>.risk_decision` (payload as `RiskDecision` in `contract.ts`); `kill_switch` rejections while engaged | real |
-| System page | message counts per topic; latency = gateway receive time minus `enqueued_at` (bus transit, not stage processing time; none for a backlog read at start-up) | real |
+| System page | the engine's own counts and timings from the run's status reports (`metrics`, ADR 0007): handler time per stage, per bar time end to end, queue depth; throughput is messages per second as the gateway reads them. A run whose reports carry none (`trading_engine run`) falls back to message counts per topic and gateway receive time minus `enqueued_at`, which a backtest's replay-time stamps leave empty | real |
 | Report | computed when the run completes or is stopped, from the derived equity and trades with ADR 0006 section 5's definitions (stands in for `PerformanceAnalyzer`) | real |
 
 Long runs: `/equity?points=N` and `/bars?symbol=X&points=N` return the last session as recorded and thin the sessions before it to about N points (equity keeps each stretch's lowest point, bars merge into candles); `?limit=N` on `/fills`, `/orders`, `/signals`, `/risk-decisions` and `/trades` returns the newest N. The portfolio and equity curve are kept up to date as events arrive, so a refresh costs only what is new.

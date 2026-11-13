@@ -46,13 +46,15 @@ export function System() {
     () => (m ? m.latency_histogram.map((b, i, all) => ({
       label: `≤${b.upper_us}`,
       value: b.count,
-      tip: `${int(b.count)} events ${i === 0 ? "at or under" : `over ${all[i - 1]!.upper_us} µs and up to`} ${b.upper_us} µs`,
+      tip: `${int(b.count)} ${m.source ? "bar times" : "events"} ${i === 0 ? "at or under" : `over ${all[i - 1]!.upper_us} µs and up to`} ${b.upper_us} µs`,
     })) : []),
     [m],
   );
 
   const latest = m?.history[m.history.length - 1];
-  const e2e = m?.stages.filter((s) => s.stage !== "persistence").reduce((a, s) => a + s.latency_us.p50, 0) ?? 0;
+  const measured = m?.end_to_end_us;
+  const e2e = measured?.p50 ?? m?.stages.filter((s) => s.stage !== "persistence").reduce((a, s) => a + s.latency_us.p50, 0) ?? 0;
+  const queueDepth = m?.queue_depth ?? latest?.queue_depth;
 
   return (
     <>
@@ -73,9 +75,11 @@ export function System() {
         <div className="figures">
           <Figure lead label="Events handled" value={int(m.total_events)} sub="all stages" />
           <Figure label={live ? "Throughput" : "Replay throughput"} value={latest ? `${compact(latest.events_per_sec)}/s` : "—"} sub={live ? "last second" : "last sample"} />
-          <Figure label="Pipeline p50" value={latency(e2e)} sub="ingest to portfolio" />
-          <Figure label="End-to-end p99" value={latest ? `≤ ${latency(latest.p99_us)}` : "—"} sub="histogram bucket" />
-          <Figure label="Queue depth" value={latest ? int(latest.queue_depth) : "—"} sub={`of ${compact(m.queue_capacity)}`} />
+          <Figure label="Pipeline p50" value={latency(e2e)} sub={measured ? "per bar time" : "ingest to portfolio"} />
+          {measured
+            ? <Figure label="End-to-end p99" value={latency(measured.p99)} sub={`max ${latency(measured.max)}`} />
+            : <Figure label="End-to-end p99" value={latest ? `≤ ${latency(latest.p99_us)}` : "—"} sub="histogram bucket" />}
+          <Figure label="Queue depth" value={queueDepth !== undefined ? int(queueDepth) : "—"} sub={m.queue_capacity ? `of ${compact(m.queue_capacity)}` : "in flight on Kafka"} />
           <Figure label="Errors" value={<span className={m.total_errors ? "down" : undefined}>{int(m.total_errors)}</span>} sub={`${int(m.dropped_events)} dropped`} />
         </div>
       ) : (
@@ -105,7 +109,7 @@ export function System() {
           ) : m ? <Empty title="Not enough samples yet" /> : <Loading height={220} />}
         </Panel>
 
-        <Panel title="End-to-end latency" hint="Per market event, ingest to portfolio" className="span-all">
+        <Panel title="End-to-end latency" hint={measured ? "Per bar time, from its first market event until every stage is done" : "Per market event, ingest to portfolio"} className="span-all">
           {m ? (
             histogram.some((b) => b.value > 0)
               ? <BarChart label="End-to-end latency distribution" data={histogram} height={220} format={(v) => compact(v)} xLabel="Microseconds" />

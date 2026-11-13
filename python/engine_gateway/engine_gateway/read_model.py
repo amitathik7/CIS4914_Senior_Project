@@ -286,6 +286,10 @@ class Run:
         self.fills: dict[int, dict[str, Any]] = {}
         self.latency_us: dict[str, deque[int]] = {t: deque(maxlen=LATENCY_SAMPLES) for t in wire.EVENT_TYPES}
         self.throughput: deque[tuple[int, int]] = deque(maxlen=120)   # (wall second, messages) for the System page
+        # The engine's own stage timings from its latest status report, and (wall second, queue depth, end-to-end
+        # p99 µs) as each report came; a run from an engine that sends none falls back to the gateway's view.
+        self.engine_metrics: dict[str, Any] | None = None
+        self.engine_samples: deque[tuple[int, int, float]] = deque(maxlen=120)
 
     # ---- applying events ---------------------------------------------------------------------------------------------
 
@@ -350,8 +354,22 @@ class Run:
         updated = _require_str(p, "updated_at")
         if not isinstance(p.get("config"), dict) or not isinstance(p.get("kill_switch"), dict):
             _fail("config")
+        m = p.get("metrics")
+        if m is not None and (not isinstance(m, dict) or not isinstance(m.get("stages"), list)
+                              or not isinstance(m.get("end_to_end_ns"), dict)):
+            _fail("metrics")
         if self.status_report is None or self.status_report["updated_at"] <= updated:
             self.status_report = dict(p)
+            if m is not None:
+                self._engine_report(m)
+
+    def _engine_report(self, m: dict[str, Any]) -> None:
+        self.engine_metrics = m
+        sample = (int(time.time()), int(m.get("queue_depth", 0)), _micros(m["end_to_end_ns"])["p99"])
+        if self.engine_samples and self.engine_samples[-1][0] == sample[0]:
+            self.engine_samples[-1] = sample
+        else:
+            self.engine_samples.append(sample)
 
     def _order(self, p: dict[str, Any]) -> None:
         order_id = int(p["id"]) if isinstance(p.get("id"), int) else _fail("order id")
@@ -651,6 +669,8 @@ class Run:
         return out
 
     def metrics(self, queue_capacity: int) -> dict[str, Any]:
+        if self.engine_metrics is not None:
+            return self._engine_view(queue_capacity)
         stages, histogram, all_samples = [], Counter(), []
         for event_type, stage in STAGE_FOR_TYPE.items():
             samples = sorted(self.latency_us[event_type])
@@ -667,6 +687,28 @@ class Run:
             "total_errors": self.decode_errors, "dropped_events": 0, "queue_capacity": queue_capacity,
             "stages": stages, "history": history,
             "latency_histogram": [{"upper_us": b, "count": histogram[b]} for b in HISTOGRAM_BOUNDS_US],
+        }
+
+    def _engine_view(self, queue_capacity: int) -> dict[str, Any]:
+        """The engine's measurements: handler time per stage, and per bar time from ingest until the bus is idle."""
+        m = self.engine_metrics or {}
+        stages = [{"stage": s["stage"], "events": s["events"], "errors": s["errors"],
+                   "latency_us": _micros(s["latency_ns"])} for s in m["stages"]]
+        samples = list(self.engine_samples)
+        history, k, depth, p99 = [], 0, 0, 0.0
+        for second, count in self.throughput:               # carry the latest engine sample at or before each second
+            while k < len(samples) and samples[k][0] <= second:
+                _, depth, p99 = samples[k]
+                k += 1
+            history.append({"time": datetime.fromtimestamp(second, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "events_per_sec": count, "queue_depth": depth, "p99_us": p99})
+        return {
+            "run_id": self.run_id, "as_of": utc_now(), "source": "engine",
+            "total_events": sum(s["events"] for s in stages),
+            "total_errors": sum(s["errors"] for s in stages) + self.decode_errors, "dropped_events": 0,
+            "queue_capacity": queue_capacity, "queue_depth": int(m.get("queue_depth", 0)),
+            "stages": stages, "history": history, "end_to_end_us": _micros(m["end_to_end_ns"]),
+            "latency_histogram": [{"upper_us": b["upper_us"], "count": b["count"]} for b in m.get("end_to_end_histogram", [])],
         }
 
 
@@ -699,6 +741,12 @@ def _sample_sd(values: list[float]) -> float:
         return 0.0
     mean = sum(values) / len(values)
     return math.sqrt(sum((v - mean) ** 2 for v in values) / max(1, len(values) - 1))
+
+
+def _micros(ns: dict[str, Any]) -> dict[str, Any]:
+    """An engine latency summary (count, min, p50, p99, max in ns) in microseconds, to the nanosecond."""
+    return {k: (int(ns.get(k, 0)) if k == "count" else round(int(ns.get(k, 0)) / 1000, 3))
+            for k in ("count", "min", "p50", "p99", "max")}
 
 
 def _latency(samples: list[int]) -> dict[str, int]:

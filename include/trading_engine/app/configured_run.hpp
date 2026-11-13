@@ -23,9 +23,12 @@
 //  Ownership: borrows the bus and the clock, which must outlive it.
 // -----------------------------------------------------------------------------
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <vector>
+
+#include "trading_engine/analytics/system_metrics.hpp"
 
 #include "trading_engine/app/order_flow.hpp"
 #include "trading_engine/app/pipeline.hpp"
@@ -75,10 +78,13 @@ public:
     [[nodiscard]] OrderFlow& flow() noexcept { return flow_; }
 
 private:
+    void record_end_to_end(std::chrono::steady_clock::time_point started);
+
     events::IEventBus&   bus_;
     common::ManualClock& clock_;
     Pipeline             pipeline_;
     OrderFlow            flow_;
+    analytics::SystemMetrics* metrics_;
 };
 
 }  // namespace trading_engine::app

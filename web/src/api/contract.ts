@@ -275,6 +275,11 @@ export interface SystemMetrics {
   stages: StageMetrics[];
   history: MetricsSample[];
   latency_histogram: { upper_us: number; count: number }[]; // end-to-end
+  // Present when the engine reports its own timings: stage latencies are handler times, and end to end is per bar
+  // time, from its first market event until every stage is done (Kafka round trips included).
+  source?: "engine";
+  end_to_end_us?: StageMetrics["latency_us"];
+  queue_depth?: number;
 }
 
 // Server -> client stream (SSE or WebSocket), one JSON object per message.
