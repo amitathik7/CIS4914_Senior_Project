@@ -74,6 +74,7 @@ LOG_DIR = ROOT / "out" / "logs"
 DEFAULT_BARS = Path("tests") / "fixtures" / "pipeline" / "demo_bars.csv"
 YEAR_BARS = Path("data") / "alpaca_year.csv"           # --year: fetched once with the user's own keys, never committed
 YEAR_SYMBOLS = "AAPL,MSFT,SPY"
+LAST_BARS = Path("out") / "start-bars.json"            # the bars the last start replayed, used again by default
 DOCKER_DESKTOP_EXE = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 
 COLORS = {"kafka": "35", "gateway": "36", "engine": "33", "lab": "34", "console": "32", "start": "1"}
@@ -568,6 +569,27 @@ def pick_gateway_port(requested: int | None) -> int:
 # -- main ---------------------------------------------------------------------------------------------------------
 
 
+def last_bars() -> list[str]:
+    """The bars the previous start replayed, if they are all still there."""
+    try:
+        bars = json.loads((ROOT / LAST_BARS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(bars, list) or not bars or not all(isinstance(b, str) and (ROOT / b).is_file() for b in bars):
+        return []
+    if bars != [str(DEFAULT_BARS)]:
+        say("start", f"replaying {', '.join(bars)} as last time (--demo for the demo bars, --bars to choose)")
+    return bars
+
+
+def remember_bars(bars: list[str]) -> None:
+    try:
+        (ROOT / LAST_BARS).parent.mkdir(exist_ok=True)
+        (ROOT / LAST_BARS).write_text(json.dumps(bars), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def fetch_year(engine: Path) -> None:
     """Downloads the last year of minute bars into YEAR_BARS, once; delete the file to download a newer year."""
     target = ROOT / YEAR_BARS
@@ -590,6 +612,7 @@ def fetch_year(engine: Path) -> None:
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Start Kafka, the engine, both gateways and the web console together.")
     p.add_argument("--bars", action="append", help=f"CSV of bars the engine can replay (repeatable; default {DEFAULT_BARS})")
+    p.add_argument("--demo", action="store_true", help=f"replay the demo bars ({DEFAULT_BARS}) again")
     p.add_argument("--year", action="store_true",
                    help=f"replay the last year of {YEAR_SYMBOLS} minute bars (downloaded once into {YEAR_BARS} with your "
                         "Alpaca keys; about 80 minutes per backtest at the default pace)")
@@ -640,9 +663,9 @@ def main(argv: list[str] | None = None) -> int:
         # 1. Check everything before starting anything.
         engine = (find_engine(args.engine, args.config) if args.check
                   else prepare_engine(args.engine, args.config, build=not args.no_build))
-        if args.year and args.bars:
-            raise LaunchError("--year and --bars both choose the bars to replay; use one")
-        bars = [str(YEAR_BARS)] if args.year else args.bars or [str(DEFAULT_BARS)]
+        if sum(map(bool, (args.year, args.bars, args.demo))) > 1:
+            raise LaunchError("--year, --bars and --demo each choose the bars to replay; use one")
+        bars = [str(YEAR_BARS)] if args.year else args.bars or ([] if args.demo else last_bars()) or [str(DEFAULT_BARS)]
         for b in bars:
             if not (ROOT / b).is_file() and not Path(b).is_file() and not args.year:
                 raise LaunchError(f"--bars {b}: no such file")
@@ -676,6 +699,7 @@ def main(argv: list[str] | None = None) -> int:
         ensure_alpaca_keys(args.set_keys)
         if args.year:
             fetch_year(engine)
+        remember_bars(bars)
         if web_deps_stale():
             run_step("console", [pnpm, "install"], cwd=ROOT / "web")
 

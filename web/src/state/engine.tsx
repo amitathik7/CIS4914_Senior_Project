@@ -27,10 +27,14 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     client.listRuns().then(setRuns, () => setRuns([]));
   }, [client]);
 
+  // Engine info too: an engine started after the page loaded (another start.py) can have different recorded bars.
   useEffect(() => {
-    client.info().then(setInfo, () => undefined);
-    refreshRuns();
-    const timer = window.setInterval(refreshRuns, 3000);
+    const refresh = () => {
+      client.info().then(setInfo, () => undefined);
+      refreshRuns();
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
     return () => window.clearInterval(timer);
   }, [client, refreshRuns]);
 
