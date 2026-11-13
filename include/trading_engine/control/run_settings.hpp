@@ -62,6 +62,7 @@ struct RunSettings {
     bool                             risk_policies{true};   // false: buying power / no-short only
     config::SimulationConfig         simulation{};
     double                           participation_cap{1.0};   // echoed; the fill model ignores it
+    std::string                      live_feed{"iex"};         // live mode: iex, sip or test (FAKEPACA only)
 
     // Every symbol any strategy trades, sorted, without duplicates.
     [[nodiscard]] std::vector<common::Symbol> symbols() const;

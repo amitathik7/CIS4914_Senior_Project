@@ -1,19 +1,28 @@
 // The command channel (docs/adr/0007-engine-command-channel.md): the control
 // messages and their codec, RunSettings validation, the RiskManager kill
-// switch, ConfiguredRun, and EngineService taking commands over the
-// in-memory broker exactly as `trading_engine serve` takes them over Kafka.
+// switch, ConfiguredRun with its stage metrics and results export, the live
+// feed loop, and EngineService taking commands over the in-memory broker
+// exactly as `trading_engine serve` takes them over Kafka.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "trading_engine/analytics/performance_analyzer.hpp"
+#include "trading_engine/analytics/results_export.hpp"
 #include "trading_engine/app/configured_run.hpp"
 #include "trading_engine/app/engine_service.hpp"
+#include "trading_engine/app/live_feed.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/timestamp_text.hpp"
 #include "trading_engine/control/control_codec.hpp"
@@ -28,6 +37,8 @@ namespace dom = trading_engine::domain;
 namespace tec = trading_engine::common;
 namespace app = trading_engine::app;
 namespace ctl = trading_engine::control;
+namespace an  = trading_engine::analytics;
+namespace md  = trading_engine::market_data;
 using namespace std::chrono;
 
 tec::Timestamp at(const char* text) { return *tec::parse_timestamp(text); }
@@ -100,6 +111,23 @@ TEST(ControlCodec, CommandRoundTripsWithTheConsoleRunConfig) {
     EXPECT_EQ(d.settings->strategies[1].kind, ctl::StrategyKind::MeanReversion);
     EXPECT_EQ(d.settings->strategies[1].entry_threshold, 1.5);
     EXPECT_EQ(d.settings->simulation.fees.per_share, tec::Money::from_double(0.005));
+}
+
+TEST(ControlCodec, StartLiveRoundTripsWithItsFeed) {
+    ctl::Command c;
+    c.command_id = "cmd-2";
+    c.action     = ctl::CommandAction::StartLive;
+    c.run_id     = "te.live-1";
+    c.settings   = settings();
+    c.settings->mode      = trading_engine::config::RunMode::Live;
+    c.settings->live_feed = "sip";
+    const std::string text = ctl::encode({"gw", 1, at("2026-10-30T10:00:01Z"), c});
+    EXPECT_NE(text.find(R"("action":"start_live")"), std::string::npos);
+    const auto d = std::get<ctl::Command>(ctl::decode_control(text).payload);
+    EXPECT_EQ(d.action, ctl::CommandAction::StartLive);
+    ASSERT_TRUE(d.settings.has_value());
+    EXPECT_EQ(d.settings->mode, trading_engine::config::RunMode::Live);
+    EXPECT_EQ(d.settings->live_feed, "sip");
 }
 
 TEST(ControlCodec, ReadsWhatTheConsoleSends) {
@@ -199,8 +227,11 @@ TEST(RunSettingsValidation, NamesTheFieldTheFormShows) {
     s.period_end   = at("2026-01-05T00:00:00Z");
     expect_field(s, "period");
     s = settings();
-    s.mode = trading_engine::config::RunMode::Live;
-    expect_field(s, "mode");
+    s.mode      = trading_engine::config::RunMode::Live;
+    s.live_feed = "nyse";
+    expect_field(s, "feed");
+    s.live_feed = "test";
+    EXPECT_NO_THROW(ctl::validate(s));
 }
 
 // --- the kill switch, through a whole run ------------------------------------------------
@@ -311,6 +342,125 @@ TEST(ConfiguredRun, FeedingBarsOneByOneEndsWhereTheReplayEnds) {
     fed.feed(input.front());   // an older event never moves the clock back
     EXPECT_EQ(live_clock.now(), input.back().exchange_time);
     fed.end();
+}
+
+TEST(ConfiguredRun, MetricsCountEveryStage) {
+    const auto s     = settings();
+    const auto input = app::ConfiguredRun::select_bars(bars(), s);
+    tec::ManualClock clock{input.front().exchange_time};
+    ev::InProcessEventBus bus{clock};
+    an::SystemMetrics metrics;
+    app::ConfiguredRun run{bus, clock, s, tec::RunId{1}, &metrics};
+    ASSERT_TRUE(run.replay(input));
+    const auto m = metrics.snapshot();
+    for (const auto stage : {an::Stage::Ingest, an::Stage::Strategy, an::Stage::Risk, an::Stage::Execution,
+                             an::Stage::Portfolio}) {
+        const auto& st = m.stages[static_cast<std::size_t>(stage)];
+        EXPECT_GT(st.events, 0U) << an::to_string(stage);
+        EXPECT_EQ(st.errors, 0U) << an::to_string(stage);
+        EXPECT_EQ(st.latency.count, stage == an::Stage::Ingest ? st.latency.count : st.events);
+    }
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(an::Stage::Ingest)].events, input.size());
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(an::Stage::Persistence)].events, 0U);
+}
+
+TEST(ResultsExport, WritesTheSummaryCurveFillsAndStages) {
+    const auto s     = settings();
+    const auto input = app::ConfiguredRun::select_bars(bars(), s);
+    tec::ManualClock clock{input.front().exchange_time};
+    ev::InProcessEventBus bus{clock};
+    an::RunResults r;
+    bus.subscribe(ev::EventType::Fill, [&](const ev::Event& e) { r.fills.push_back(std::get<dom::Fill>(e.payload)); });
+    an::SystemMetrics metrics;
+    app::ConfiguredRun run{bus, clock, s, tec::RunId{1}, &metrics};
+    r.equity_curve.push_back(run.pipeline().portfolio().snapshot());
+    ASSERT_TRUE(run.replay(input, [&](const app::ReplayProgress&) {
+        r.equity_curve.push_back(run.pipeline().portfolio().snapshot());
+        return true;
+    }));
+    r.name    = "te.bt-x";
+    r.mode    = "backtest";
+    r.source  = "bars \"quoted\".csv";
+    r.symbols = {"AAPL", "MSFT"};
+    r.report  = an::PerformanceAnalyzer{}.analyze(r.equity_curve, r.fills);
+    r.metrics = metrics.snapshot();
+    ASSERT_FALSE(r.fills.empty());
+
+    std::ostringstream out;
+    an::write_results_json(out, r);
+    const std::string json = out.str();
+    const std::string source = R"("source": "bars \"quoted\".csv")";
+    const std::string first  = R"({"time": "2026-01-05T14:30:00.000000000Z", "equity": 50000, "cash": 50000})";
+    EXPECT_NE(json.find(R"("schema": "trading_engine.results/1")"), std::string::npos);
+    EXPECT_NE(json.find(source), std::string::npos) << json.substr(0, 200);
+    EXPECT_NE(json.find(first), std::string::npos) << json.substr(0, 1200);
+    EXPECT_NE(json.find(R"("sharpe": )"), std::string::npos);
+    EXPECT_NE(json.find(R"("stage": "strategy")"), std::string::npos);
+    EXPECT_EQ(json.find(R"("stage": "persistence")"), std::string::npos);
+    std::size_t fills = 0;
+    for (auto at_ = json.find("\"order_id\""); at_ != std::string::npos; at_ = json.find("\"order_id\"", at_ + 1)) {
+        ++fills;
+    }
+    EXPECT_EQ(fills, r.fills.size());
+}
+
+// A live source double: pushes `events` from its own thread, then either
+// keeps running until stopped or gives up with `failure`.
+class FakeLiveSource final : public md::IMarketDataSource {
+public:
+    FakeLiveSource(md::IMarketEventSink& sink, std::vector<dom::MarketEvent> events, std::optional<std::string> failure)
+        : sink_{sink}, events_{std::move(events)}, failure_{std::move(failure)} {}
+    ~FakeLiveSource() override { stop(); }
+
+    void start() override {
+        running_ = true;
+        thread_  = std::thread{[this] {
+            for (const auto& e : events_) {
+                sink_.on_market_event(e);
+            }
+            if (failure_) {
+                running_ = false;
+            }
+        }};
+    }
+    void stop() override {
+        running_ = false;
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+    [[nodiscard]] bool is_running() const override { return running_; }
+    [[nodiscard]] std::optional<std::string> failure() const { return failure_; }
+
+private:
+    md::IMarketEventSink&         sink_;
+    std::vector<dom::MarketEvent> events_;
+    std::optional<std::string>    failure_;
+    std::atomic<bool>             running_{false};
+    std::thread                   thread_;
+};
+
+app::LiveFeed fake_feed(md::IMarketEventSink& sink, std::vector<dom::MarketEvent> events,
+                        std::optional<std::string> failure = std::nullopt) {
+    auto source  = std::make_unique<FakeLiveSource>(sink, std::move(events), std::move(failure));
+    auto* handle = source.get();
+    return {std::move(source), [handle] { return handle->failure(); }};
+}
+
+TEST(LiveFeed, FeedsEveryEventUntilTheSourceGivesUp) {
+    const auto s     = settings();
+    const auto input = app::ConfiguredRun::select_bars(bars(30), s);
+    tec::ManualClock clock{input.front().exchange_time};
+    ev::InProcessEventBus bus{clock};
+    app::ConfiguredRun run{bus, clock, s};
+    app::LiveEventQueue queue;
+    auto feed = fake_feed(queue, input, "connection refused");
+    std::size_t fed = 0;
+    app::LiveHooks hooks;
+    hooks.after_feed = [&](const dom::MarketEvent&) { ++fed; };
+    EXPECT_EQ(app::feed_live(run, feed, queue, input.front().exchange_time, hooks), "connection refused");
+    EXPECT_EQ(fed, input.size());
+    EXPECT_EQ(run.pipeline().market_data().stats().accepted, input.size());
 }
 
 // --- EngineService over the in-memory broker ----------------------------------------------
@@ -509,6 +659,99 @@ TEST_F(EngineServiceTest, AKillSwitchEngagedMidRunRejectsFromThenOn) {
     }
     EXPECT_GT(before, 0U);
     EXPECT_GT(after, 0U);
+}
+
+TEST_F(EngineServiceTest, RefusesALiveRunWithoutALiveFeed) {
+    auto service = make();
+    service->start();
+    auto c   = start("te.live-none", "c1");
+    c.action = ctl::CommandAction::StartLive;
+    send(c);
+    const auto r = answer("te.live-none", "c1");
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->status, ctl::RunState::Failed);
+    EXPECT_EQ(r->error, "This engine has no live feed; start it with Alpaca credentials set.");
+}
+
+TEST_F(EngineServiceTest, RunsALiveRunBesideTheQueueUntilStopped) {
+    std::vector<std::string> finished;
+    std::mutex finished_mutex;
+    std::vector<tec::Symbol> asked;
+    app::EngineServiceConfig config;
+    config.live_feed = [&](const std::vector<tec::Symbol>& symbols, const std::string& feed,
+                           md::IMarketEventSink& sink, const tec::IClock&) {
+        asked = symbols;
+        EXPECT_EQ(feed, "test");
+        return fake_feed(sink, bars(20));
+    };
+    config.on_run_finished = [&](const std::string& run_id, const an::SystemMetrics::Snapshot& m) {
+        const std::lock_guard lock{finished_mutex};
+        EXPECT_GT(m.total_events, 0U);
+        finished.push_back(run_id);
+    };
+    auto service = make(config);
+    service->start();
+
+    auto live   = start("te.live-a", "c1");
+    live.action = ctl::CommandAction::StartLive;
+    live.settings->live_feed = "test";
+    send(live);
+    auto second   = start("te.live-b", "c2");
+    second.action = ctl::CommandAction::StartLive;
+    send(second);
+    const auto refused = answer("te.live-b", "c2");
+    ASSERT_TRUE(refused.has_value());
+    EXPECT_EQ(refused->error, "A live run is already running on this engine; stop it first.");
+
+    send(start("te.bt-beside", "c3"));   // the backtest queue is not blocked by it
+    ASSERT_TRUE(answer("te.bt-beside", "c3").has_value());
+    for (int i = 0; i < 400 && reports("te.bt-beside").back().status != ctl::RunState::Completed; ++i) {
+        std::this_thread::sleep_for(milliseconds{10});
+    }
+    EXPECT_EQ(reports("te.bt-beside").back().status, ctl::RunState::Completed);
+
+    for (int i = 0; i < 400 && broker_->messages("te.live-a.market_data").size() < 40; ++i) {
+        std::this_thread::sleep_for(milliseconds{10});
+    }
+    EXPECT_EQ(broker_->messages("te.live-a.market_data").size(), 40U);
+    EXPECT_EQ(asked, (std::vector<tec::Symbol>{"AAPL", "MSFT"}));
+    const auto running = reports("te.live-a").back();
+    EXPECT_EQ(running.status, ctl::RunState::Running);
+    EXPECT_FALSE(running.progress.has_value());
+    EXPECT_EQ(running.settings.mode, trading_engine::config::RunMode::Live);
+    EXPECT_TRUE(running.settings.period_start.has_value());
+    EXPECT_FALSE(running.settings.period_end.has_value());
+    const auto a = service->announcement();
+    EXPECT_NE(std::find(a.runs.begin(), a.runs.end(), "te.live-a"), a.runs.end());
+
+    ctl::Command stop;
+    stop.command_id = "c4";
+    stop.action     = ctl::CommandAction::StopRun;
+    stop.run_id     = "te.live-a";
+    send(stop);
+    const auto stopped = answer("te.live-a", "c4");
+    ASSERT_TRUE(stopped.has_value());
+    EXPECT_EQ(stopped->status, ctl::RunState::Stopped);
+    ASSERT_TRUE(service->wait_until_idle(seconds{10}));
+    const std::lock_guard lock{finished_mutex};
+    EXPECT_EQ(finished, (std::vector<std::string>{"te.bt-beside", "te.live-a"}));
+}
+
+TEST_F(EngineServiceTest, ALiveFeedThatGivesUpFailsTheRun) {
+    app::EngineServiceConfig config;
+    config.live_feed = [&](const std::vector<tec::Symbol>&, const std::string&, md::IMarketEventSink& sink,
+                           const tec::IClock&) { return fake_feed(sink, bars(3), "auth failed"); };
+    auto service = make(config);
+    service->start();
+    auto live   = start("te.live-f", "c1");
+    live.action = ctl::CommandAction::StartLive;
+    send(live);
+    ASSERT_TRUE(answer("te.live-f", "c1").has_value());
+    std::this_thread::sleep_for(milliseconds{50});
+    ASSERT_TRUE(service->wait_until_idle(seconds{10}));
+    const auto last = reports("te.live-f").back();
+    EXPECT_EQ(last.status, ctl::RunState::Failed);
+    EXPECT_EQ(last.error, "auth failed");
 }
 
 }  // namespace

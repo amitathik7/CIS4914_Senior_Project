@@ -91,6 +91,7 @@ Cash reserved for an open buy is estimated as remaining quantity x limit price
 | Console | Endpoint | What the gateway does |
 |---|---|---|
 | New backtest | `POST /v1/runs` | 503 unless an engine heartbeat arrived lately; picks a run id (`bt-<time>-<hex>`), sends `start_backtest` with the form as the run's settings, waits up to 10 s for the engine's answer. 201 with the queued (or running) run, or 400 with the engine's refusal and the form `field` it names (`strategies.0.long_window`), or 504 |
+| New live run | `POST /v1/runs` with `"mode": "live"`, `"feed": "iex"\|"sip"\|"test"` | as New backtest, without a period; run id `live-<time>-<hex>`, sends `start_live`. The engine refuses it with no live feed (no credentials) or while another live run is going; it runs until stopped |
 | Stop | `POST /v1/runs/{id}/stop` | sends `stop`; a queued run ends at once, a running one after the current bar time |
 | Kill switch | `PUT /v1/runs/{id}/kill-switch` | sends `set_kill_switch`, returns the run detail once the engine confirms. While engaged the Risk Manager rejects every new signal (`kill_switch`) |
 

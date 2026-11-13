@@ -1,5 +1,5 @@
 import type {
-  ApiError, BacktestRequest, Bar, EngineInfo, EquityPoint, Fill, Order, PortfolioSnapshot,
+  ApiError, BacktestRequest, Bar, EngineInfo, EquityPoint, Fill, LiveRunRequest, Order, PortfolioSnapshot,
   RiskDecision, RunDetail, RunEvent, RunSummary, SystemMetrics, Trade, TradeSignal,
 } from "./contract";
 
@@ -8,6 +8,7 @@ export interface EngineClient {
   listRuns(): Promise<RunSummary[]>;
   getRun(runId: string): Promise<RunDetail>;
   createBacktest(request: BacktestRequest): Promise<RunSummary>;
+  createLiveRun(request: LiveRunRequest): Promise<RunSummary>;
   stopRun(runId: string): Promise<RunSummary>;
   setKillSwitch(runId: string, engaged: boolean, reason?: string): Promise<RunDetail>;
   portfolio(runId: string): Promise<PortfolioSnapshot>;
@@ -57,6 +58,8 @@ export class HttpEngineClient implements EngineClient {
   listRuns = () => this.request<RunSummary[]>("/runs");
   getRun = (id: string) => this.run<RunDetail>(id, "");
   createBacktest = (body: BacktestRequest) =>
+    this.request<RunSummary>("/runs", { method: "POST", body: JSON.stringify(body) });
+  createLiveRun = (body: LiveRunRequest) =>
     this.request<RunSummary>("/runs", { method: "POST", body: JSON.stringify(body) });
   stopRun = (id: string) =>
     this.request<RunSummary>(`/runs/${encodeURIComponent(id)}/stop`, { method: "POST" });

@@ -33,8 +33,8 @@ TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {
 }
 
 TEST(ScaffoldContract, NotImplementedCarriesTheCallSiteInItsMessage) {
-    const tec::NotImplemented e{"HistoricalReplay::run"};
+    const tec::NotImplemented e{"PostgresRepository::save"};
     const std::string_view what{e.what()};
-    EXPECT_NE(what.find("HistoricalReplay::run"), std::string_view::npos);
+    EXPECT_NE(what.find("PostgresRepository::save"), std::string_view::npos);
     EXPECT_NE(what.find("not implemented"), std::string_view::npos);
 }

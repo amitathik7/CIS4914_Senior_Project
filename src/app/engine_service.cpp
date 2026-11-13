@@ -5,6 +5,7 @@
 #include <exception>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <utility>
 
 #include "trading_engine/app/configured_run.hpp"
@@ -72,8 +73,9 @@ void EngineService::start() {
     control_ = transports_(config_.control_prefix);
     control_->subscribe({control::command_topic(config_.control_prefix)});
     announce();
-    reader_ = std::thread{[this] { read_commands(); }};
-    worker_ = std::thread{[this] { work(); }};
+    reader_      = std::thread{[this] { read_commands(); }};
+    worker_      = std::thread{[this] { work(queue_, current_); }};
+    live_worker_ = std::thread{[this] { work(live_queue_, live_current_); }};
 }
 
 void EngineService::stop() noexcept {
@@ -83,20 +85,25 @@ void EngineService::stop() noexcept {
             return;
         }
         stopping_ = true;
-        if (current_) {
-            current_->stop = true;
+        for (auto* run : {current_.get(), live_current_.get()}) {
+            if (run != nullptr) {
+                run->stop = true;
+            }
         }
     }
     changed_.notify_all();
     if (reader_.joinable()) reader_.join();
     if (worker_.joinable()) worker_.join();
+    if (live_worker_.joinable()) live_worker_.join();
     {
         const std::lock_guard lock{mutex_};
-        for (auto& run : queue_) {   // never started
-            run->state = RunState::Stopped;
-            report(*run, {}, std::string{"The engine shut down before the run started."});
+        for (auto* queue : {&queue_, &live_queue_}) {
+            for (auto& run : *queue) {   // never started
+                run->state = RunState::Stopped;
+                report(*run, {}, std::string{"The engine shut down before the run started."});
+            }
+            queue->clear();
         }
-        queue_.clear();
     }
     if (control_) {
         (void)control_->flush(std::chrono::seconds{5});
@@ -105,7 +112,9 @@ void EngineService::stop() noexcept {
 
 bool EngineService::wait_until_idle(std::chrono::milliseconds timeout) {
     std::unique_lock lock{mutex_};
-    return changed_.wait_for(lock, timeout, [&] { return queue_.empty() && !current_; });
+    return changed_.wait_for(lock, timeout, [&] {
+        return queue_.empty() && !current_ && live_queue_.empty() && !live_current_;
+    });
 }
 
 EngineService::Stats EngineService::stats() const {
@@ -124,11 +133,15 @@ control::EngineAnnouncement EngineService::announcement() const {
     a.last_session  = last_session_;
     const std::lock_guard lock{mutex_};
     a.started_at = started_at_;
-    if (current_) {
-        a.runs.push_back(current_->run_id);
+    for (const auto* run : {current_.get(), live_current_.get()}) {
+        if (run != nullptr) {
+            a.runs.push_back(run->run_id);
+        }
     }
-    for (const auto& run : queue_) {
-        a.runs.push_back(run->run_id);
+    for (const auto* queue : {&queue_, &live_queue_}) {
+        for (const auto& run : *queue) {
+            a.runs.push_back(run->run_id);
+        }
     }
     return a;
 }
@@ -204,7 +217,8 @@ void EngineService::handle(const control::Command& command) {
         ++stats_.commands;
         const auto found = runs_.find(command.run_id);
 
-        if (command.action == control::CommandAction::StartBacktest) {
+        const bool live = command.action == control::CommandAction::StartLive;
+        if (live || command.action == control::CommandAction::StartBacktest) {
             if (found != runs_.end()) {
                 // A redelivered command is a no-op; anything else must not
                 // overwrite another run's status topic.
@@ -224,6 +238,8 @@ void EngineService::handle(const control::Command& command) {
             run->start_command = command.command_id;
             run->settings      = command.settings.value_or(control::RunSettings{});
             run->state         = RunState::Failed;
+            run->live          = live;
+            run->settings.mode = live ? config::RunMode::Live : config::RunMode::Backtest;
             std::optional<std::string> problem;
             if (!command.settings) {
                 problem = command.settings_error_field.value_or("settings") + ": " +
@@ -235,7 +251,16 @@ void EngineService::handle(const control::Command& command) {
                     problem = e.field() + ": " + e.message();
                 }
             }
-            if (!problem) {
+            if (!problem && live) {
+                if (!config_.live_feed) {
+                    problem = "This engine has no live feed; start it with Alpaca credentials set.";
+                } else if (!live_queue_.empty() || live_current_) {
+                    problem = "A live run is already running on this engine; stop it first.";
+                } else {
+                    run->settings.period_start = wall_.now();
+                    run->settings.period_end.reset();
+                }
+            } else if (!problem) {
                 const auto bars = ConfiguredRun::select_bars(config_.bars, run->settings);
                 if (bars.empty()) {
                     problem = "No recorded bars match the strategies' symbols in that period.";
@@ -259,7 +284,7 @@ void EngineService::handle(const control::Command& command) {
                 return;
             }
             run->state = RunState::Queued;
-            queue_.push_back(run);
+            (live ? live_queue_ : queue_).push_back(run);
             report(*run, command.command_id);
         } else {
             if (found == runs_.end()) {
@@ -274,12 +299,14 @@ void EngineService::handle(const control::Command& command) {
             }
             if (command.action == control::CommandAction::StopRun) {
                 if (run.state == RunState::Queued) {
-                    queue_.erase(std::remove(queue_.begin(), queue_.end(), found->second), queue_.end());
+                    for (auto* queue : {&queue_, &live_queue_}) {
+                        queue->erase(std::remove(queue->begin(), queue->end(), found->second), queue->end());
+                    }
                     run.state = RunState::Stopped;
                     ++stats_.stopped;
                     report(run, command.command_id);
                 } else {
-                    run.stop         = true;   // the worker reports "stopped" when the replay ends
+                    run.stop         = true;   // the worker reports "stopped" when the run ends
                     run.stop_command = command.command_id;
                 }
             } else {
@@ -296,23 +323,23 @@ void EngineService::handle(const control::Command& command) {
     changed_.notify_all();
 }
 
-void EngineService::work() {
+void EngineService::work(std::deque<std::shared_ptr<Run>>& queue, std::shared_ptr<Run>& current) {
     while (true) {
         std::shared_ptr<Run> run;
         {
             std::unique_lock lock{mutex_};
-            changed_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
+            changed_.wait(lock, [&] { return stopping_ || !queue.empty(); });
             if (stopping_) {
                 return;
             }
-            run = queue_.front();
-            queue_.pop_front();
-            current_ = run;
+            run = queue.front();
+            queue.pop_front();
+            current = run;
         }
         execute(run);
         {
             const std::lock_guard lock{mutex_};
-            current_.reset();
+            current.reset();
         }
         changed_.notify_all();
         announce();
@@ -322,15 +349,23 @@ void EngineService::work() {
 void EngineService::execute(const std::shared_ptr<Run>& run) {
     std::optional<std::string> error;
     bool complete = false;
+    bool started  = false;
+    analytics::SystemMetrics metrics;
     try {
-        const auto bars = ConfiguredRun::select_bars(config_.bars, run->settings);
-        common::ManualClock clock{bars.empty() ? common::Timestamp{} : bars.front().exchange_time};
+        const auto bars = run->live ? std::vector<domain::MarketEvent>{}
+                                    : ConfiguredRun::select_bars(config_.bars, run->settings);
+        common::ManualClock clock{run->live ? wall_.now() : bars.empty() ? common::Timestamp{} : bars.front().exchange_time};
         auto transport = transports_(run->run_id);
         events::TopicEventBusOptions options;
         options.topic_prefix  = run->run_id;
         options.poll_interval = std::chrono::milliseconds{5};
         events::TopicEventBus bus{*transport, clock, options};
-        ConfiguredRun configured{bus, clock, run->settings};
+        ConfiguredRun configured{bus, clock, run->settings, common::RunId{1}, &metrics};
+        LiveEventQueue events;
+        LiveFeed feed;
+        if (run->live) {
+            feed = config_.live_feed(run->settings.symbols(), run->settings.live_feed, events, clock);
+        }
 
         // Hands the RiskManager to handle() for the kill switch, and takes it
         // back before the run is destroyed, whichever way this block exits.
@@ -346,48 +381,83 @@ void EngineService::execute(const std::shared_ptr<Run>& run) {
             const std::lock_guard lock{mutex_};
             run->risk  = &configured.flow().risk();
             run->state = RunState::Running;
-            run->progress = 0.0;
+            if (!run->live) {
+                run->progress = 0.0;
+            }
             if (run->kill.engaged) {
                 const auto k = run->risk->set_kill_switch(true, run->kill.reason);
                 run->kill    = {k.engaged, k.changed_at, k.reason};
             }
             report(*run);
         }
-
-        double reported = 0.0;
-        auto last_report = std::chrono::steady_clock::now();
-        complete = configured.replay(bars, [&](const ReplayProgress& p) {
-            std::unique_lock lock{mutex_};
-            run->progress = static_cast<double>(p.done) / static_cast<double>(p.total);
-            run->clock    = p.clock;
-            const auto now = std::chrono::steady_clock::now();
-            if (*run->progress - reported >= 0.02 || now - last_report >= std::chrono::milliseconds{500}) {
-                reported    = *run->progress;
-                last_report = now;
-                report(*run);
-            }
-            if (config_.instant_delay.count() > 0) {
-                changed_.wait_for(lock, config_.instant_delay, [&] { return run->stop || stopping_; });
-            }
-            return !(run->stop || stopping_);
-        });
+        started  = true;
+        complete = run->live ? trade_live(*run, configured, clock, events, feed) : replay(*run, configured, bars);
     } catch (const std::exception& e) {
         error = e.what();
     }
 
+    if (started && config_.on_run_finished) {
+        config_.on_run_finished(run->run_id, metrics.snapshot());
+    }
     const std::lock_guard lock{mutex_};
     if (error) {
         run->state = RunState::Failed;
         ++stats_.failed;
     } else if (complete) {
-        run->state    = RunState::Completed;
-        run->progress = 1.0;
+        run->state = RunState::Completed;
+        if (!run->live) {
+            run->progress = 1.0;
+        }
         ++stats_.completed;
     } else {
         run->state = RunState::Stopped;
         ++stats_.stopped;
     }
     report(*run, run->stop_command, error);
+}
+
+bool EngineService::replay(Run& run, ConfiguredRun& configured, const std::vector<domain::MarketEvent>& bars) {
+    double reported = 0.0;
+    auto last_report = std::chrono::steady_clock::now();
+    return configured.replay(bars, [&](const ReplayProgress& p) {
+        std::unique_lock lock{mutex_};
+        run.progress = static_cast<double>(p.done) / static_cast<double>(p.total);
+        run.clock    = p.clock;
+        const auto now = std::chrono::steady_clock::now();
+        if (*run.progress - reported >= 0.02 || now - last_report >= std::chrono::milliseconds{500}) {
+            reported    = *run.progress;
+            last_report = now;
+            report(run);
+        }
+        if (config_.instant_delay.count() > 0) {
+            changed_.wait_for(lock, config_.instant_delay, [&] { return run.stop || stopping_; });
+        }
+        return !(run.stop || stopping_);
+    });
+}
+
+bool EngineService::trade_live(Run& run, ConfiguredRun& configured, common::ManualClock& clock,
+                               LiveEventQueue& events, LiveFeed& feed) {
+    auto last_report = std::chrono::steady_clock::now();
+    LiveHooks hooks;
+    hooks.keep_going = [&] {
+        const std::lock_guard lock{mutex_};
+        return !(run.stop || stopping_);
+    };
+    hooks.after_feed = [&](const domain::MarketEvent&) {
+        const std::lock_guard lock{mutex_};
+        run.clock      = clock.now();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_report >= std::chrono::seconds{1}) {
+            last_report = now;
+            report(run);
+        }
+    };
+    if (const auto failure = feed_live(configured, feed, events, wall_.now(), hooks)) {
+        throw std::runtime_error(*failure);
+    }
+    const std::lock_guard lock{mutex_};
+    return !(run.stop || stopping_);
 }
 
 }  // namespace trading_engine::app

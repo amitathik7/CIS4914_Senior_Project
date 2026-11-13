@@ -112,10 +112,10 @@ downloaded with `trading_engine fetch-alpaca` ([`docs/ALPACA.md`](docs/ALPACA.md
 `trading_engine run --alpaca-live SYMBOLS` trades Alpaca's live minute bars
 through the same pipeline (simulated fills only), and `run --config FILE` reads
 risk and simulation settings from a JSON file ([`config/README.md`](config/README.md)).
-PostgreSQL persistence, the source-driven `HistoricalReplay` and the Python
-charts are still stubs that throw `NotImplemented`. `SystemMetrics` is real and
-wired into `MarketDataService` and both buses, but no executable creates one
-yet. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+The console can start live runs too (`serve` trades the live feed for them).
+`run --report FILE` writes the run's results as JSON, which
+`python/visualization/plot_performance.py` charts; `run` and `serve` print
+per-stage `SystemMetrics`. PostgreSQL persistence is still a stub. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 for the milestone-by-milestone status.
 
 | Area | State |
@@ -130,16 +130,16 @@ for the milestone-by-milestone status.
 | `PortfolioManager` (+ `PortfolioBusBridge`, reservation ledger) | ✅ real + tested |
 | `PerformanceAnalyzer` (return, volatility, drawdown, Sharpe, profit factor, trades) | ✅ real + tested |
 | `trading_engine run` / `serve`, `app::Backtest`, `app::OrderFlow` | ✅ real + tested |
-| Engine gateway (console API from the Kafka topics) and command channel (New backtest, Stop, kill switch) | ✅ real + tested ([docs](docs/ENGINE_GATEWAY.md)) |
+| Engine gateway (console API from the Kafka topics) and command channel (New backtest, New live run, Stop, kill switch) | ✅ real + tested ([docs](docs/ENGINE_GATEWAY.md)) |
 | Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest; 17 built-in datasets incl. five large synthetic ones) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
 | `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
-| `SystemMetrics` (per-stage counts, fixed-size latency histogram with p50/p99, queue depth) | ✅ real + tested; wired into `MarketDataService` and both buses, not yet created by `run` / `serve` |
-| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live` | ⛔ stubs (`NotImplemented`) |
+| `SystemMetrics` (per-stage counts, fixed-size latency histogram with p50/p99, queue depth) | ✅ real + tested; every stage timed in `run` and `serve` |
+| `trading_engine run --report` results JSON + `python/visualization/plot_performance.py` charts | ✅ real + tested ([docs](python/visualization/README.md)) |
 | `config::load_config` + `trading_engine run --config FILE` | ✅ real + tested ([docs](config/README.md)) |
 | `AlpacaHistoricalSource` (REST bars, paging, retries) + `trading_engine fetch-alpaca` | ✅ real + tested on recorded responses ([docs](docs/ALPACA.md)); needs libcurl |
 | `AlpacaLiveSource` (WebSocket stream, reconnect) + `trading_engine run --alpaca-live` | ✅ real + tested on a scripted socket; checked against Alpaca's test stream ([docs](docs/ALPACA.md)) |
-| `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
+| `PostgresRepository` + migrations | ⛔ stubs, not started |
 | `trading_engine_bench` + baseline | ✅ measured ([docs](docs/PERFORMANCE.md)) |
 | Performance targets and optimisations, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
@@ -184,7 +184,7 @@ apps/strategy_lab/        optional strategy replay + diagnostics tool (off by de
 tests/                    unit/ (default), integration/ (opt-in), fixtures/, support/ (test doubles)
 python/engine_gateway/    serves the console's API from the Kafka topics
 python/strategy_lab/      Strategy Lab gateway and Streamlit UI
-python/visualization/     plot_performance.py outline + requirements.txt
+python/visualization/     plot_performance.py: charts a run's --report file
 web/                      engine console (React + TypeScript); real engine via the gateway, or an in-browser demo engine
 build-kafka/, out/        local build and run output (gitignored): Kafka build, Strategy Lab tools, out/logs/
 ```
@@ -286,10 +286,12 @@ cd web && VITE_ENGINE_API=/api pnpm dev                    # ENGINE_GATEWAY=http
 On Windows the engine is `.\build-kafka\bin\Release\trading_engine.exe`, and in PowerShell the console line is
 `$env:VITE_ENGINE_API="/api"; pnpm dev`. See [`web/README.md`](web/README.md).
 
-## Python visualization (syntax check only for now)
+## Charts
 
 ```bash
-python -m py_compile python/visualization/plot_performance.py
+pip install -r python/visualization/requirements.txt
+./build/bin/trading_engine run --bars tests/fixtures/pipeline/demo_bars.csv --report run.json
+python python/visualization/plot_performance.py --input run.json --output charts/
 ```
 
 ## Contributing (team)

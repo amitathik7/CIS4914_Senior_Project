@@ -23,9 +23,9 @@ class CommandError(Exception):
     """The command could not be handed to the broker."""
 
 
-def new_run_id() -> str:
-    """A fresh topic prefix for a console backtest: bt-20261030-101500-3f2a."""
-    return f"bt-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+def new_run_id(kind: str = "bt") -> str:
+    """A fresh topic prefix for a console run: bt-20261030-101500-3f2a, or live-... for a live run."""
+    return f"{kind}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
 
 
 class CommandSender:

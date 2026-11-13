@@ -1,6 +1,6 @@
 import type { EngineClient } from "../api/client";
 import { EngineApiError } from "../api/client";
-import type { BacktestRequest, RunConfig, RunDetail, RunEvent, RunStatus, RunSummary } from "../api/contract";
+import type { BacktestRequest, LiveRunRequest, RunConfig, RunDetail, RunEvent, RunStatus, RunSummary } from "../api/contract";
 import { toMicros } from "../lib/decimal";
 import { LAST_BACKTEST_SESSION, LIVE_SESSION, SYMBOLS, barAt, minutesBetween, nextMinute, sessionDates, sessionOpen } from "./market";
 import { LIVE_CONFIG, PRESET_BACKTESTS, sma, DEFAULT_RISK, DEFAULT_SIMULATION } from "./presets";
@@ -21,6 +21,9 @@ interface RunEntry {
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
+
+export const LIVE_NEEDS_ENGINE =
+  "Live runs need the engine: the demo simulator has no live feed. Connect the console to trading_engine serve with Alpaca credentials set.";
 
 function storedRequests(): BacktestRequest[] {
   try {
@@ -342,6 +345,11 @@ export class MockEngineClient implements EngineClient {
       validateBacktest(request);
       storeRequest(request);
       return this.summary(this.startBacktest(request, iso(Date.now()), false));
+    });
+
+  createLiveRun = (_request: LiveRunRequest) =>
+    this.respond<RunSummary>(() => {
+      throw new EngineApiError(501, "not_supported", LIVE_NEEDS_ENGINE);
     });
 
   stopRun = (runId: string) =>

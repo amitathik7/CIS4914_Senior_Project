@@ -5,7 +5,7 @@
 //  (`trading_engine serve`; docs/adr/0007-engine-command-channel.md).
 //
 //      console ─▶ gateway ─▶ <control>.command ─▶ EngineService
-//                                                     │ start_backtest: queue a run
+//                                                     │ start_backtest / start_live: a run
 //                                                     │ stop / set_kill_switch
 //                                                     ▼
 //              <run>.market_data/.signal/...  ◀── ConfiguredRun on its own TopicEventBus
@@ -18,12 +18,18 @@
 //  command chose -- so it appears in the console exactly like a
 //  `trading_engine run`.
 //
+//  Live runs (start_live) trade the feed EngineServiceConfig::live_feed opens
+//  on their own thread, beside the backtest queue, until stopped. One at a
+//  time; refused when the engine has no live feed.
+//
 //  Commands:
 //   * start_backtest -- validates the settings; refused (a "failed" report)
 //     when they are invalid, the run id is taken or not a valid topic
 //     prefix, the queue is full, or no recorded bar matches. Otherwise a
 //     "queued" report, then "running" with progress, then "completed",
 //     "stopped" or "failed".
+//   * start_live -- the same checks, minus the bars; "running" (no progress)
+//     until stopped, or "failed" if the feed gives up.
 //   * stop -- a queued run ends "stopped" without starting; a running one
 //     stops after the current timestamp.
 //   * set_kill_switch -- engages or releases the run's RiskManager kill
@@ -32,7 +38,8 @@
 //  Commands for a run this engine does not own are ignored: another engine
 //  on the same cluster may own it.
 //
-//  Threads: one reads commands and sends the heartbeat; one runs the queue.
+//  Threads: one reads commands and sends the heartbeat; one runs the queue;
+//  one runs the live run.
 //  Every public method may be called from any thread.
 // -----------------------------------------------------------------------------
 
@@ -50,6 +57,8 @@
 #include <thread>
 #include <vector>
 
+#include "trading_engine/analytics/system_metrics.hpp"
+#include "trading_engine/app/live_feed.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/control/control_codec.hpp"
 #include "trading_engine/control/control_messages.hpp"
@@ -74,6 +83,9 @@ struct EngineServiceConfig {
     std::chrono::milliseconds        instant_delay{0};    // pause after each timestamp, to watch a run
     std::size_t                      max_queued{8};       // queued + running
     std::chrono::milliseconds        poll_interval{std::chrono::milliseconds{50}};
+    LiveFeedFactory                  live_feed{};         // unset: start_live is refused
+    // Called on the run's thread when a run that started ends, with its stage metrics.
+    std::function<void(const std::string& run_id, const analytics::SystemMetrics::Snapshot&)> on_run_finished{};
 };
 
 class EngineService {
@@ -118,14 +130,19 @@ private:
         std::string                         start_command;   // the command that created it
         std::string                         stop_command;    // answered when the replay ends
         bool                                stop{false};
+        bool                                live{false};
         risk::RiskManager*                  risk{nullptr};   // while running
         std::optional<double>               progress{};
         std::optional<common::Timestamp>    clock{};
     };
 
     void read_commands();
-    void work();
+    void work(std::deque<std::shared_ptr<Run>>& queue, std::shared_ptr<Run>& current);
     void execute(const std::shared_ptr<Run>& run);
+    // Feeds the run until it ends; returns false when stopped early.
+    bool replay(Run& run, ConfiguredRun& configured, const std::vector<domain::MarketEvent>& bars);
+    bool trade_live(Run& run, ConfiguredRun& configured, common::ManualClock& clock, LiveEventQueue& events,
+                    LiveFeed& feed);
     // Callers hold mutex_. Sends the run's whole state on <run>.run.
     void report(const Run& run, const std::string& command_id = {}, std::optional<std::string> error = {});
     void send(const std::string& topic, const std::string& key, control::ControlPayload payload);
@@ -149,11 +166,14 @@ private:
     bool                           stopping_{false};
     std::deque<std::shared_ptr<Run>> queue_{};
     std::shared_ptr<Run>           current_{};
+    std::deque<std::shared_ptr<Run>> live_queue_{};   // at most one, until live_worker_ takes it
+    std::shared_ptr<Run>           live_current_{};
     std::map<std::string, std::shared_ptr<Run>> runs_{};   // every run this engine has owned
     Stats                          stats_{};
 
     std::thread                    reader_;
     std::thread                    worker_;
+    std::thread                    live_worker_;
 };
 
 }  // namespace trading_engine::app

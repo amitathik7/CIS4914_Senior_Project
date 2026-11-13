@@ -1,32 +1,18 @@
 # Visualization
 
-Offline charts for a run's performance. Reads a file the C++ engine exports --
-**never** the database or the live process.
-
-## Status
-
-Outline only. [`plot_performance.py`](plot_performance.py) has a full function
-skeleton with docstrings; every function raises `NotImplementedError`. The
-export schema it will consume is undecided
-([`docs/OPEN_QUESTIONS.md`](../../docs/OPEN_QUESTIONS.md)).
-
-## Setup
+Charts one finished run from the results file `trading_engine run --report`
+writes (schema in
+[`results_export.hpp`](../../include/trading_engine/analytics/results_export.hpp)).
+Reads only that file, never the database or a running engine.
 
 ```bash
-python -m venv .venv
-# Windows:  . .venv/Scripts/activate
-# POSIX:    source .venv/bin/activate
 pip install -r requirements.txt
+trading_engine run --bars tests/fixtures/pipeline/demo_bars.csv --report run.json
+python plot_performance.py --input run.json --output charts/
 ```
 
-## Intended usage
+Writes `charts/<name>_report.png`: equity with each fill marked, drawdown,
+per-sample returns and the summary table. `--show` also opens a window.
 
-```bash
-python plot_performance.py --input run_42_performance.json --output charts/
-```
-
-## Syntax check
-
-```bash
-python -m py_compile plot_performance.py
-```
+Tests: `python -m unittest discover -s tests` (the PNG test skips without
+matplotlib).

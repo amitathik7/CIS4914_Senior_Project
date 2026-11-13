@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { EngineApiError } from "../api/client";
-import type { BacktestRequest, StrategyConfig } from "../api/contract";
+import type { BacktestRequest, LiveFeed, LiveRunRequest, RunMode, StrategyConfig } from "../api/contract";
 import { IconPlus, IconX } from "../components/icons";
 import { Notice, Panel, Segmented } from "../components/ui";
+import { parseSymbols } from "../lib/symbols";
 import { useEngine } from "../state/engine";
 import { CARRIES_TEXT, destinationText, isCarried, NOT_CARRIED_TEXT, PLAIN_DECIMAL, type CarriedStrategy } from "../strategies/backtestHandoff";
 
@@ -14,6 +15,7 @@ interface StrategyDraft {
   kind: Kind;
   strategy_id: string;
   symbols: string[];
+  liveSymbols: string; // typed, for a live run
   quantity: string;
   short_window: string;
   long_window: string;
@@ -29,7 +31,7 @@ function draft(kind: Kind, taken: string[], symbol: string): StrategyDraft {
   let id = base;
   for (let n = 2; taken.includes(id); n++) id = `${base}_${n}`;
   return {
-    key: nextKey++, kind, strategy_id: id, symbols: symbol ? [symbol] : [], quantity: kind === "sma_crossover" ? "100" : "50",
+    key: nextKey++, kind, strategy_id: id, symbols: symbol ? [symbol] : [], liveSymbols: symbol, quantity: kind === "sma_crossover" ? "100" : "50",
     short_window: "5", long_window: "20", lookback: "20", entry: "2", rearm: "0.5",
   };
 }
@@ -47,7 +49,7 @@ function Field({ label, hint, error, children, prefix }: { label: string; hint?:
 // A strategy carried over from the Strategies section: every setting arrives as the text that was typed there.
 function fromCarried(c: CarriedStrategy): StrategyDraft {
   return {
-    key: nextKey++, kind: c.kind, strategy_id: c.strategy_id, symbols: c.symbols, quantity: c.quantity,
+    key: nextKey++, kind: c.kind, strategy_id: c.strategy_id, symbols: c.symbols, liveSymbols: c.symbols.join(", "), quantity: c.quantity,
     short_window: c.short_window ?? "5", long_window: c.long_window ?? "20", lookback: c.lookback ?? "20", entry: c.entry ?? "2", rearm: c.rearm ?? "0.5",
   };
 }
@@ -60,6 +62,14 @@ export function NewBacktest() {
   const { client, info, refreshRuns } = useEngine();
   const navigate = useNavigate();
   const location = useLocation();
+  const [params, setParams] = useSearchParams();
+  const mode: RunMode = params.get("mode") === "live" ? "live" : "backtest";
+  const live = mode === "live";
+  const setMode = (next: RunMode) => {
+    setError(undefined);
+    setParams(next === "live" ? { mode: "live" } : {}, { replace: true, state: location.state });
+  };
+  const [feed, setFeed] = useState<LiveFeed>("iex");
   const handoff = isCarried(location.state) ? location.state : undefined;
   const coverage = info?.market_data;
   const symbols = coverage?.symbols ?? [];
@@ -105,14 +115,21 @@ export function NewBacktest() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(undefined);
-    const request: BacktestRequest = {
-      name: name.trim() || `${strategies.map((s) => s.strategy_id).join(" + ")}, ${start} to ${end}`,
-      period_start: `${start}T13:30:00Z`,
-      period_end: `${end}T20:00:00Z`,
-      strategies: strategies.map((s) => ({
+    const typed = strategies.map((s) => parseSymbols(s.liveSymbols));
+    if (live) {
+      const bad = typed.findIndex((t) => t.invalid !== undefined);
+      if (bad >= 0) {
+        setError({ field: `strategies.${bad}.symbols`, message: `"${typed[bad]!.invalid}" is not a ticker symbol.` });
+        return;
+      }
+    }
+    const ids = strategies.map((s) => s.strategy_id).join(" + ");
+    const base = {
+      name: name.trim() || (live ? `${ids}, live ${feed.toUpperCase()}` : `${ids}, ${start} to ${end}`),
+      strategies: strategies.map((s, i) => ({
         kind: s.kind,
         strategy_id: s.strategy_id.trim(),
-        symbols: s.symbols,
+        symbols: live ? typed[i]!.symbols : s.symbols,
         requested_quantity: int(s.quantity),
         ...(s.kind === "sma_crossover"
           ? { short_window: int(s.short_window), long_window: int(s.long_window) }
@@ -136,11 +153,19 @@ export function NewBacktest() {
     };
     setSubmitting(true);
     try {
-      const run = await client.createBacktest(request);
-      refreshRuns();
-      navigate(`/runs/${run.run_id}/report`);
+      if (live) {
+        const request: LiveRunRequest = { ...base, mode: "live", feed };
+        const run = await client.createLiveRun(request);
+        refreshRuns();
+        navigate(`/runs/${run.run_id}/overview`);
+      } else {
+        const request: BacktestRequest = { ...base, period_start: `${start}T13:30:00Z`, period_end: `${end}T20:00:00Z` };
+        const run = await client.createBacktest(request);
+        refreshRuns();
+        navigate(`/runs/${run.run_id}/report`);
+      }
     } catch (err) {
-      setError(err instanceof EngineApiError ? { field: err.field, message: err.message } : { message: "The engine did not accept the backtest. Try again." });
+      setError(err instanceof EngineApiError ? { field: err.field, message: err.message } : { message: `The engine did not accept the ${live ? "live run" : "backtest"}. Try again.` });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setSubmitting(false);
@@ -151,12 +176,16 @@ export function NewBacktest() {
     <form onSubmit={submit} noValidate>
       <div className="page-head">
         <div>
-          <h1>New backtest</h1>
-          <p>Replay recorded one-minute bars through strategies, risk and the execution simulator.</p>
+          <h1>{live ? "New live run" : "New backtest"}</h1>
+          <p>
+            {live
+              ? "Trade Alpaca’s live one-minute bars through strategies, risk and the execution simulator until you stop it. Fills are simulated; no order reaches a broker."
+              : "Replay recorded one-minute bars through strategies, risk and the execution simulator."}
+          </p>
         </div>
         <div className="page-actions">
           <Link to="/backtests" className="btn btn-ghost">Cancel</Link>
-          <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? "Starting…" : "Run backtest"}</button>
+          <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? "Starting…" : live ? "Start live run" : "Run backtest"}</button>
         </div>
       </div>
 
@@ -177,18 +206,50 @@ export function NewBacktest() {
         <section className="form-section">
           <header>
             <h2>Run</h2>
-            <p>{coverage ? `Recorded data covers ${coverage.first_session} to ${coverage.last_session}.` : ""}</p>
+            <p>
+              {live
+                ? "Bars arrive as each minute closes, during market hours. The engine needs ALPACA_API_KEY and ALPACA_API_SECRET; one live run at a time."
+                : coverage ? `Recorded data covers ${coverage.first_session} to ${coverage.last_session}.` : ""}
+            </p>
           </header>
+          <div style={{ marginBottom: 14 }}>
+            <Segmented
+              label="Market data"
+              value={mode}
+              onChange={setMode}
+              options={[{ value: "backtest", label: "Recorded bars" }, { value: "live", label: "Live (Alpaca)" }]}
+            />
+          </div>
           <div className="form-grid">
             <Field label="Name" hint="Optional" error={fieldError("name")}>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Describe what you are testing" />
             </Field>
-            <Field label="First session" error={fieldError("period")}>
-              <input className="input" type="date" value={start} min={coverage?.first_session} max={last} onChange={(e) => setStart(e.target.value)} required />
-            </Field>
-            <Field label="Last session">
-              <input className="input" type="date" value={end} min={start} max={last} onChange={(e) => setEnd(e.target.value)} required />
-            </Field>
+            {live ? (
+              <Field label="Feed" hint={feed === "test" ? "Always on; carries FAKEPACA only" : feed === "sip" ? "All US exchanges; needs a paid plan" : "IEX only; free plan"} error={fieldError("feed")}>
+                <select
+                  className="select"
+                  value={feed}
+                  onChange={(e) => {
+                    const next = e.target.value as LiveFeed;
+                    setFeed(next);
+                    if (next === "test") setStrategies((list) => list.map((s) => ({ ...s, liveSymbols: "FAKEPACA" })));
+                  }}
+                >
+                  <option value="iex">IEX</option>
+                  <option value="sip">SIP</option>
+                  <option value="test">Test stream</option>
+                </select>
+              </Field>
+            ) : (
+              <>
+                <Field label="First session" error={fieldError("period")}>
+                  <input className="input" type="date" value={start} min={coverage?.first_session} max={last} onChange={(e) => setStart(e.target.value)} required />
+                </Field>
+                <Field label="Last session">
+                  <input className="input" type="date" value={end} min={start} max={last} onChange={(e) => setEnd(e.target.value)} required />
+                </Field>
+              </>
+            )}
           </div>
         </section>
 
@@ -206,7 +267,7 @@ export function NewBacktest() {
                     <Segmented
                       label="Strategy kind"
                       value={s.kind}
-                      onChange={(kind) => update(s.key, { ...draft(kind, strategies.filter((x) => x.key !== s.key).map((x) => x.strategy_id), ""), key: s.key, symbols: s.symbols })}
+                      onChange={(kind) => update(s.key, { ...draft(kind, strategies.filter((x) => x.key !== s.key).map((x) => x.strategy_id), ""), key: s.key, symbols: s.symbols, liveSymbols: s.liveSymbols })}
                       options={[{ value: "sma_crossover", label: "Moving-average crossover" }, { value: "mean_reversion", label: "Mean reversion" }]}
                     />
                     {strategies.length > 1 && (
@@ -245,6 +306,13 @@ export function NewBacktest() {
                       </>
                     )}
                   </div>
+                  {live ? (
+                    <div style={{ marginTop: 14 }}>
+                      <Field label="Symbols" hint="Comma or space separated, e.g. AAPL, MSFT" error={fieldError(`${at}.symbols`)}>
+                        <input className="input" value={s.liveSymbols} onChange={(e) => update(s.key, { liveSymbols: e.target.value })} spellCheck={false} autoCapitalize="characters" />
+                      </Field>
+                    </div>
+                  ) : (
                   <div className="field" style={{ marginTop: 14 }} data-invalid={fieldError(`${at}.symbols`) ? "true" : undefined}>
                     <span>Symbols</span>
                     <div className="chips" role="group" aria-label="Symbols">
@@ -259,6 +327,7 @@ export function NewBacktest() {
                     </div>
                     {fieldError(`${at}.symbols`) && <small>{fieldError(`${at}.symbols`)}</small>}
                   </div>
+                  )}
                 </div>
               );
             })}

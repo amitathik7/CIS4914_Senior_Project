@@ -9,16 +9,20 @@ namespace trading_engine::app {
 
 namespace {
 
-PipelineConfig pipeline_config(const control::RunSettings& s, common::RunId run_id) {
+PipelineConfig pipeline_config(const control::RunSettings& s, common::RunId run_id,
+                               analytics::SystemMetrics* metrics) {
     PipelineConfig c;
+    c.metrics       = metrics;
     c.run_id        = run_id;
     c.starting_cash = s.simulation.starting_cash;
     c.fees          = s.simulation.fees;
     return c;
 }
 
-OrderFlowConfig flow_config(const control::RunSettings& s, common::RunId run_id) {
+OrderFlowConfig flow_config(const control::RunSettings& s, common::RunId run_id,
+                            analytics::SystemMetrics* metrics) {
     OrderFlowConfig c;
+    c.metrics       = metrics;
     c.run_id        = run_id;
     c.risk          = s.risk;
     c.simulation    = s.simulation;
@@ -29,11 +33,12 @@ OrderFlowConfig flow_config(const control::RunSettings& s, common::RunId run_id)
 }  // namespace
 
 ConfiguredRun::ConfiguredRun(events::IEventBus& bus, common::ManualClock& clock,
-                             const control::RunSettings& settings, common::RunId run_id)
+                             const control::RunSettings& settings, common::RunId run_id,
+                             analytics::SystemMetrics* metrics)
     : bus_{bus},
       clock_{clock},
-      pipeline_{bus, clock, pipeline_config(settings, run_id)},
-      flow_{pipeline_, bus, clock, flow_config(settings, run_id)} {
+      pipeline_{bus, clock, pipeline_config(settings, run_id, metrics)},
+      flow_{pipeline_, bus, clock, flow_config(settings, run_id, metrics)} {
     for (auto& strategy : control::make_strategies(settings)) {
         pipeline_.add_strategy(std::move(strategy));
     }

@@ -10,8 +10,10 @@ namespace trading_engine::app {
 
 OrderFlow::OrderFlow(Pipeline& pipeline, events::IEventBus& bus, const common::IClock& clock,
                      OrderFlowConfig config)
-    : execution_{fill_model_, bus, clock, config.simulation, config.run_id},
-      risk_{pipeline.portfolio(), bus, clock, config.risk,
+    : execution_bus_{bus, config.metrics, analytics::Stage::Execution},
+      risk_bus_{bus, config.metrics, analytics::Stage::Risk},
+      execution_{fill_model_, execution_bus_, clock, config.simulation, config.run_id},
+      risk_{pipeline.portfolio(), risk_bus_, clock, config.risk,
             config.risk_policies ? risk::starter_policies()
                                  : std::vector<std::shared_ptr<risk::IRiskPolicy>>{}} {
     risk_.set_run_id(config.run_id);

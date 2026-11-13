@@ -9,10 +9,12 @@ namespace trading_engine::app {
 
 Pipeline::Pipeline(events::IEventBus& bus, const common::IClock& clock, PipelineConfig config)
     : bus_{bus},
+      strategy_bus_{bus, config.metrics, analytics::Stage::Strategy},
+      portfolio_bus_{bus, config.metrics, analytics::Stage::Portfolio},
       portfolio_{config.run_id, config.starting_cash, clock, config.fees},
-      market_data_{bus, clock, config.market_data},
-      strategies_{bus, clock},
-      bridge_{bus, portfolio_} {}
+      market_data_{bus, clock, config.market_data, nullptr, config.metrics},
+      strategies_{strategy_bus_, clock},
+      bridge_{portfolio_bus_, portfolio_} {}
 
 Pipeline::~Pipeline() { finish(); }
 

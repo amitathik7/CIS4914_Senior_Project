@@ -104,7 +104,7 @@ as JSON numbers, quantities are integers, times are RFC 3339 UTC.
 
 ## 6. Not yet
 
-Source-driven `HistoricalReplay` (Alpaca / PostgreSQL), order latency, the participation cap
+Replay straight from a PostgreSQL repository, order latency, the participation cap
 and partial fills, shorting, and persistence of runs are open. The kill switch exists
 (`RiskManager::set_kill_switch`, engaged from the console through `trading_engine serve`) but does
 not cancel working orders. Risk and execution on the live bus path (`trading_engine run`, any

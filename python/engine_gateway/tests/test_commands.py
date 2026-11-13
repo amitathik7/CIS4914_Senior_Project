@@ -64,7 +64,7 @@ class FakeEngine:
     def _answer(self, c: dict) -> None:
         time.sleep(0.05)
         run, cid = c["run_id"], c["command_id"]
-        if c["action"] == "start_backtest":
+        if c["action"] in ("start_backtest", "start_live"):
             if self.refuse:
                 self.store.ingest(f"{run}.run", report(run, "failed", cid, error=self.refuse, config=c["settings"]))
             else:
@@ -136,6 +136,24 @@ class Commands(unittest.TestCase):
         self.assertEqual(detail["strategies"], ["fast"])
         self.assertEqual(detail["symbols"], ["AAPL"])
         self.assertEqual(detail["kill_switch"], {"engaged": False})
+
+    def test_start_a_live_run(self):
+        self.store.ingest("trading_engine.control.engine", announcement())
+        request = {**self.request(), "mode": "live", "feed": "test"}
+        status, summary = self.call("/v1/runs", request, "POST")
+        self.assertEqual(status, 201, summary)
+        self.assertTrue(summary["run_id"].startswith("live-"))
+        self.assertEqual(summary["mode"], "live")
+        (command,) = self.engine.commands
+        self.assertEqual(command["action"], "start_live")
+        self.assertEqual((command["settings"]["mode"], command["settings"]["feed"]), ("live", "test"))
+        self.assertNotIn("period_start", command["settings"])
+
+        status, body = self.call("/v1/runs", {**request, "feed": "nyse"}, "POST")
+        self.assertEqual((status, body["error"]["field"]), (400, "feed"))
+        status, body = self.call("/v1/runs", {**request, "mode": "paper"}, "POST")
+        self.assertEqual((status, body["error"]["field"]), (400, "mode"))
+        self.assertEqual(len(self.engine.commands), 1)
 
     def test_a_refusal_names_the_field(self):
         self.store.ingest("trading_engine.control.engine", announcement())

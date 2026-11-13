@@ -2,11 +2,10 @@
 
 > Status (2026-10-30): the downstream pipeline below runs end to end on recorded
 > CSV bars, on the in-process bus and on Kafka (`trading_engine run` / `serve`,
-> [`EVENT_BUS.md`](EVENT_BUS.md), [`BACKTESTING.md`](BACKTESTING.md)). Not built yet:
-> the Alpaca live and historical sources, the source-driven `HistoricalReplay`,
+> [`EVENT_BUS.md`](EVENT_BUS.md), [`BACKTESTING.md`](BACKTESTING.md)), from
+> Alpaca's live stream, and timed per stage by `SystemMetrics`. Not built yet:
 > every persistence step (`IMarketDataRepository`, `ITradeRepository`), order
-> latency and partial fills. `SystemMetrics` is wired into ingest and the buses
-> only.
+> latency and partial fills.
 
 Two entry points feed one identical downstream pipeline: a **live** WebSocket
 feed and a **historical replay**. Everything after "Market Data Service" is the
@@ -68,9 +67,9 @@ throughput, error counts.
 
 | Step | Detail |
 |---|---|
-| Clock | `ManualClock` — advanced by `HistoricalReplay` to each event's `exchange_time`. No wall-clock waits. |
+| Clock | `ManualClock` — advanced by `app::ConfiguredRun` to each event's `exchange_time`. No wall-clock waits. |
 | Source | `AlpacaHistoricalSource` (REST) **or** `IMarketDataRepository.load(symbol, range)` for previously stored data. |
-| Ordering | `HistoricalReplay` guarantees ascending `exchange_time`; multi-symbol streams are merged into one time-ordered sequence. |
+| Ordering | Bars are sorted by `exchange_time` (stable), so multi-symbol files replay as one time-ordered sequence. |
 | Pacing | `replay_speed = 0` → as fast as possible (CI, parameter sweeps). `replay_speed > 0` → fraction of real time for demos. |
 | Determinism | Same input + same config ⇒ identical `PerformanceReport`, because time, ordering, and (seeded) fill models are all controlled. |
 | Termination | Source exhausted (or `max_events` hit) → run `PerformanceAnalyzer`, persist the report, export for charts. |

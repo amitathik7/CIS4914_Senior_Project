@@ -30,6 +30,7 @@
 
 #include <memory>
 
+#include "trading_engine/app/metered_bus.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/identifiers.hpp"
 #include "trading_engine/common/types.hpp"
@@ -49,6 +50,7 @@ struct PipelineConfig {
     common::Money                    starting_cash{common::Money::from_units(100'000)};
     config::FeeModelConfig           fees{};
     market_data::MarketDataPolicy    market_data{};
+    analytics::SystemMetrics*        metrics{nullptr};   // optional; must outlive the pipeline
 };
 
 class Pipeline {
@@ -77,6 +79,8 @@ private:
     enum class State : std::uint8_t { Built, Running, Finished };
 
     events::IEventBus&            bus_;
+    MeteredBus                    strategy_bus_;
+    MeteredBus                    portfolio_bus_;
     portfolio::PortfolioManager   portfolio_;
     market_data::MarketDataService market_data_;
     strategy::StrategyEngine      strategies_;

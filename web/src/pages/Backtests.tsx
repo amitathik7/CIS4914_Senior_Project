@@ -44,6 +44,7 @@ export function Backtests() {
           <p>Replays of recorded market data through the same strategy, risk, execution and portfolio stages as live runs.</p>
         </div>
         <div className="page-actions">
+          <Link className="btn" to="/backtests/new?mode=live">New live run</Link>
           <Link className="btn btn-primary" to="/backtests/new">
             <IconPlus />
             New backtest

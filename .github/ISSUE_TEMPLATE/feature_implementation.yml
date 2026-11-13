@@ -66,7 +66,7 @@ body:
         - "events (IEventBus / InProcessEventBus)"
         - "app (TradingEngine composition root)"
         - "market_data (sources / MarketDataService / Alpaca adapter)"
-        - "backtesting (HistoricalReplay)"
+        - "backtesting (ConfiguredRun, app::Backtest)"
         - "strategy (IStrategy / StrategyEngine / reference strategies)"
         - "risk (IRiskPolicy / RiskManager / policies)"
         - "execution (IFillModel / ExecutionSimulator)"

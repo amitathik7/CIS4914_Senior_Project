@@ -5,8 +5,8 @@
 > event bus (in-process and Kafka), market data from CSV bars, the strategy engine
 > and three strategies, risk, simulated execution, portfolio and performance
 > analytics run end to end ([`EVENT_BUS.md`](EVENT_BUS.md),
-> [`BACKTESTING.md`](BACKTESTING.md)). Persistence and the source-driven
-> `HistoricalReplay` are still stubs. The
+> [`BACKTESTING.md`](BACKTESTING.md)). Persistence is still a stub; replay in
+> market time is `app::ConfiguredRun`. The
 > console reaches the engine through the engine gateway and command channel
 > ([ADR 0006](adr/0006-web-frontend-api-contract.md), [ADR 0007](adr/0007-engine-command-channel.md)).
 
@@ -79,7 +79,7 @@ code: `RiskManager` holds a `const portfolio::IPortfolioView&`.
 | **AlpacaHistoricalSource** | *(future)* REST adapter for historical bars/trades, emitted in time order. | Same adapter target; no HTTP client in core. |
 | **MarketDataService** | Validate + normalise + stamp + sequence raw data into canonical `MarketEvent`s; tap for raw-data persistence; publish to the bus. | Doesn't parse vendor payloads (sources do) and doesn't run strategies. |
 | **EventBus** (`IEventBus`) | Bounded, thread-safe delivery of typed events between stages; lifecycle (start / shutdown / drain); backpressure. | Doesn't interpret payloads. |
-| **HistoricalReplay** | Drive the pipeline from a historical source in timestamp order, advancing a `ManualClock`; deterministic at `replay_speed = 0`. | Backtest-only; not used in live mode. |
+| **ConfiguredRun** | Drive the pipeline from recorded bars in timestamp order, advancing a `ManualClock` (`replay`), or from a live feed as events arrive (`feed`). | Builds the run from `RunSettings`; owns no I/O. |
 | **Strategy** (`IStrategy`) | Pure decision logic: market events in, `TradeSignal`s out. | No sizing against the portfolio, no risk checks, no I/O, no blocking. |
 | **StrategyEngine** | Own registered strategies, route events, stamp and publish emitted signals. | Doesn't judge signals -- risk does. |
 | **RiskPolicy** (`IRiskPolicy`) | One composable rule: pure function of (signal, portfolio snapshot, context). | Stateless, side-effect free, thread-safe. |
