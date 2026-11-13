@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <future>
@@ -147,16 +148,21 @@ TEST(
         &metrics};
 
     latch entered{1};
+    atomic<bool> first{true};
 
     promise<void> release;
 
     auto released =
         release.get_future().share();
 
+    // only the first delivery may count down: a second one would take the
+    // latch below zero, which MSVC's debug runtime aborts on
     bus.subscribe(
         ev::EventType::MarketData,
         [&](const ev::Event&) {
-            entered.count_down();
+            if (first.exchange(false)) {
+                entered.count_down();
+            }
             released.wait();
         });
 
@@ -243,16 +249,21 @@ TEST(
         &metrics};
 
     latch entered{1};
+    atomic<bool> first{true};
 
     promise<void> release;
 
     auto released =
         release.get_future().share();
 
+    // only the first delivery may count down: a second one would take the
+    // latch below zero, which MSVC's debug runtime aborts on
     bus.subscribe(
         ev::EventType::MarketData,
         [&](const ev::Event&) {
-            entered.count_down();
+            if (first.exchange(false)) {
+                entered.count_down();
+            }
             released.wait();
         });
 
