@@ -109,9 +109,10 @@ Linux and Windows on every push and pull request.
 
 Market data comes from CSV files, which can be recorded fixtures or real Alpaca bars
 downloaded with `trading_engine fetch-alpaca` ([`docs/ALPACA.md`](docs/ALPACA.md)).
-The live Alpaca feed, PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
+The live Alpaca feed, PostgreSQL persistence, config-file loading, the source-driven
 `HistoricalReplay` and the Python charts are still stubs that throw
-`NotImplemented`. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+`NotImplemented`. `SystemMetrics` is real and wired into `MarketDataService` and
+both buses, but no executable creates one yet. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 for the milestone-by-milestone status.
 
 | Area | State |
@@ -130,7 +131,8 @@ for the milestone-by-milestone status.
 | Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest; 17 built-in datasets incl. five large synthetic ones) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
 | `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
-| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
+| `SystemMetrics` (per-stage counts, fixed-size latency histogram with p50/p99, queue depth) | ✅ real + tested; wired into `MarketDataService` and both buses, not yet created by `run` / `serve` |
+| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config` | ⛔ stubs (`NotImplemented`) |
 | `AlpacaHistoricalSource` (REST bars, paging, retries) + `trading_engine fetch-alpaca` | ✅ real + tested on recorded responses ([docs](docs/ALPACA.md)); needs libcurl |
 | Alpaca live source, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
 | Benchmarks, `docs/PERFORMANCE.md`, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
