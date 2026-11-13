@@ -46,10 +46,13 @@ std::string price_text(const std::optional<tec::Price>& p) { return p ? tec::for
 // --- protocol --------------------------------------------------------------------
 
 TEST(AlpacaStreamProtocol, ClientMessagesAreTheDocumentedJson) {
-    EXPECT_EQ(md::alpaca_stream_auth_message({"id", "se\"cret"}),
-              R"({"action":"auth","key":"id","secret":"se\"cret"})");
-    EXPECT_EQ(md::alpaca_stream_subscribe_message({{"AAPL", "MSFT"}, {}, {"SPY"}}),
-              R"({"action":"subscribe","bars":["AAPL","MSFT"],"trades":[],"quotes":["SPY"]})");
+    // Outside the macro: MSVC mis-lexes escapes in raw strings passed as macro arguments.
+    const md::AlpacaCredentials credentials{"id", "se\"cret"};
+    const std::string auth = R"({"action":"auth","key":"id","secret":"se\"cret"})";
+    const std::string subscribe =
+        R"({"action":"subscribe","bars":["AAPL","MSFT"],"trades":[],"quotes":["SPY"]})";
+    EXPECT_EQ(md::alpaca_stream_auth_message(credentials), auth);
+    EXPECT_EQ(md::alpaca_stream_subscribe_message({{"AAPL", "MSFT"}, {}, {"SPY"}}), subscribe);
 }
 
 TEST(AlpacaStreamProtocol, ParsesControlMessagesBarsTradesAndQuotes) {
