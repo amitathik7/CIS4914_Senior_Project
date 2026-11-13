@@ -86,18 +86,17 @@ export function NewBacktest() {
   const [toOrder, setToOrder] = useState("1");
   const [toFill, setToFill] = useState("5");
   const [maxQty, setMaxQty] = useState("1000");
-  const [maxPosition, setMaxPosition] = useState("25000");
+  const [maxPosition, setMaxPosition] = useState("100000"); // room for 100 shares of a $700 stock such as SPY
   const [maxGross, setMaxGross] = useState("100000");
   const [maxLoss, setMaxLoss] = useState("5000");
   const [maxOpen, setMaxOpen] = useState("50");
   const [error, setError] = useState<{ field?: string; message: string }>();
 
-  // The defaults suit the demo engine's data. Once the engine says what it has recorded, move a period that lies
-  // outside it onto the last recorded week (or less), so the first click does not ask for bars that do not exist.
+  // Once the engine says what it has recorded, start on the last recorded week (or less): recordings can have gaps,
+  // so a period merely inside first..last may still hold no bars.
   useEffect(() => {
     if (!coverage?.first_session || !coverage.last_session) return;
     const { first_session: first, last_session: lastDay } = coverage;
-    if (start >= first && end <= lastDay && start <= end) return;
     const weekBack = new Date(`${lastDay}T00:00:00Z`);
     weekBack.setUTCDate(weekBack.getUTCDate() - 4);
     const from = weekBack.toISOString().slice(0, 10);
