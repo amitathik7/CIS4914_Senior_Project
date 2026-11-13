@@ -12,12 +12,14 @@ export interface EngineClient {
   stopRun(runId: string): Promise<RunSummary>;
   setKillSwitch(runId: string, engaged: boolean, reason?: string): Promise<RunDetail>;
   portfolio(runId: string): Promise<PortfolioSnapshot>;
-  equity(runId: string): Promise<EquityPoint[]>;
-  bars(runId: string, symbol: string): Promise<Bar[]>;
+  /** `points` thins all but the last session to about that many points (a chart needs no more than its width). */
+  equity(runId: string, points?: number): Promise<EquityPoint[]>;
+  bars(runId: string, symbol: string, points?: number): Promise<Bar[]>;
   signals(runId: string): Promise<TradeSignal[]>;
-  riskDecisions(runId: string): Promise<RiskDecision[]>;
+  /** `limit` keeps only the newest that many. */
+  riskDecisions(runId: string, limit?: number): Promise<RiskDecision[]>;
   orders(runId: string): Promise<Order[]>;
-  fills(runId: string): Promise<Fill[]>;
+  fills(runId: string, limit?: number): Promise<Fill[]>;
   trades(runId: string): Promise<Trade[]>;
   metrics(runId: string): Promise<SystemMetrics>;
   subscribe(runId: string, onEvent: (event: RunEvent) => void): () => void;
@@ -69,12 +71,13 @@ export class HttpEngineClient implements EngineClient {
       body: JSON.stringify({ engaged, reason }),
     });
   portfolio = (id: string) => this.run<PortfolioSnapshot>(id, "/portfolio");
-  equity = (id: string) => this.run<EquityPoint[]>(id, "/equity");
-  bars = (id: string, symbol: string) => this.run<Bar[]>(id, `/bars?symbol=${encodeURIComponent(symbol)}`);
+  equity = (id: string, points?: number) => this.run<EquityPoint[]>(id, `/equity${points ? `?points=${points}` : ""}`);
+  bars = (id: string, symbol: string, points?: number) =>
+    this.run<Bar[]>(id, `/bars?symbol=${encodeURIComponent(symbol)}${points ? `&points=${points}` : ""}`);
   signals = (id: string) => this.run<TradeSignal[]>(id, "/signals");
-  riskDecisions = (id: string) => this.run<RiskDecision[]>(id, "/risk-decisions");
+  riskDecisions = (id: string, limit?: number) => this.run<RiskDecision[]>(id, `/risk-decisions${limit ? `?limit=${limit}` : ""}`);
   orders = (id: string) => this.run<Order[]>(id, "/orders");
-  fills = (id: string) => this.run<Fill[]>(id, "/fills");
+  fills = (id: string, limit?: number) => this.run<Fill[]>(id, `/fills${limit ? `?limit=${limit}` : ""}`);
   trades = (id: string) => this.run<Trade[]>(id, "/trades");
   metrics = (id: string) => this.run<SystemMetrics>(id, "/metrics");
 

@@ -373,9 +373,9 @@ export class MockEngineClient implements EngineClient {
   equity = (id: string) => this.respond(() => this.get(id).sim.equity);
   bars = (id: string, symbol: string) => this.respond(() => this.get(id).sim.bars.get(symbol) ?? []);
   signals = (id: string) => this.respond(() => this.get(id).sim.signals);
-  riskDecisions = (id: string) => this.respond(() => this.get(id).sim.decisions);
+  riskDecisions = (id: string, limit?: number) => this.respond(() => newest(this.get(id).sim.decisions, limit));
   orders = (id: string) => this.respond(() => this.get(id).sim.orderList());
-  fills = (id: string) => this.respond(() => this.get(id).sim.fills);
+  fills = (id: string, limit?: number) => this.respond(() => newest(this.get(id).sim.fills, limit));
   trades = (id: string) => this.respond(() => this.get(id).sim.trades);
   metrics = (id: string) => this.respond(() => this.get(id).sim.metrics(iso(Date.now())));
 
@@ -391,4 +391,8 @@ export class MockEngineClient implements EngineClient {
   get liveRunId() {
     return this.liveId;
   }
+}
+
+function newest<T>(items: T[], limit?: number): T[] {
+  return limit ? items.slice(-limit) : items;
 }

@@ -106,7 +106,7 @@ export function Report() {
   const run = useCurrentRun();
   const { client } = useEngine();
   const detail = useRunResource(runId, (c, id) => c.getRun(id));
-  const equity = useRunResource(runId, (c, id) => c.equity(id));
+  const equity = useRunResource(runId, (c, id) => c.equity(id, 1500));
   const trades = useRunResource(runId, (c, id) => c.trades(id));
   const r = detail.data?.report;
   const multiDay = run?.mode === "backtest";

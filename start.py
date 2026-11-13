@@ -3,6 +3,7 @@
 
     python3 start.py                 # Kafka, engine, engine gateway, Strategy Lab gateway, web console
     python3 start.py --pace-ms 200   # slower replay, more time to press Stop or the kill switch
+    python3 start.py --year          # a year of real minute bars (downloaded once), about 80 minutes per backtest
     python3 start.py --set-keys      # enter (or replace) your Alpaca keys for live runs
     python3 start.py --check         # only check prerequisites, start nothing
     python3 start.py --help          # every option
@@ -37,6 +38,7 @@ Standard library only; works on Windows, macOS and Linux.
 from __future__ import annotations
 
 import argparse
+import datetime
 import getpass
 import hashlib
 import json
@@ -70,6 +72,8 @@ CONSOLE_PORT = 5173
 LAB_PORT = 8765
 LOG_DIR = ROOT / "out" / "logs"
 DEFAULT_BARS = Path("tests") / "fixtures" / "pipeline" / "demo_bars.csv"
+YEAR_BARS = Path("data") / "alpaca_year.csv"           # --year: fetched once with the user's own keys, never committed
+YEAR_SYMBOLS = "AAPL,MSFT,SPY"
 DOCKER_DESKTOP_EXE = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 
 COLORS = {"kafka": "35", "gateway": "36", "engine": "33", "lab": "34", "console": "32", "start": "1"}
@@ -564,9 +568,31 @@ def pick_gateway_port(requested: int | None) -> int:
 # -- main ---------------------------------------------------------------------------------------------------------
 
 
+def fetch_year(engine: Path) -> None:
+    """Downloads the last year of minute bars into YEAR_BARS, once; delete the file to download a newer year."""
+    target = ROOT / YEAR_BARS
+    if target.is_file():
+        say("data", f"replaying {YEAR_BARS} (delete it to download a newer year)")
+        return
+    if not all(os.environ.get(v) for v in KEY_VARS):
+        raise LaunchError(f"--year downloads the bars with your Alpaca keys, and none are saved. Add them with {LAUNCH} "
+                          "--set-keys, then try again.")
+    end = datetime.date.today() - datetime.timedelta(days=1)
+    start = end - datetime.timedelta(days=365)
+    partial = target.with_suffix(".partial")
+    target.parent.mkdir(exist_ok=True)
+    say("data", f"downloading {start} to {end} of {YEAR_SYMBOLS} minute bars from Alpaca (once, about a minute)")
+    run_step("data", [str(engine), "fetch-alpaca", "--symbols", YEAR_SYMBOLS, "--start", start.isoformat(),
+                      "--end", end.isoformat(), "--timeframe", "1Min", "--out", str(partial)])
+    partial.replace(target)
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Start Kafka, the engine, both gateways and the web console together.")
     p.add_argument("--bars", action="append", help=f"CSV of bars the engine can replay (repeatable; default {DEFAULT_BARS})")
+    p.add_argument("--year", action="store_true",
+                   help=f"replay the last year of {YEAR_SYMBOLS} minute bars (downloaded once into {YEAR_BARS} with your "
+                        "Alpaca keys; about 80 minutes per backtest at the default pace)")
     p.add_argument("--pace-ms", type=int, default=50, help="pause after each bar time so runs can be watched (default 50)")
     p.add_argument("--config", choices=["Debug", "Release", "RelWithDebInfo"],
                    help="which trading_engine build to use (default: the most recently built)")
@@ -614,9 +640,11 @@ def main(argv: list[str] | None = None) -> int:
         # 1. Check everything before starting anything.
         engine = (find_engine(args.engine, args.config) if args.check
                   else prepare_engine(args.engine, args.config, build=not args.no_build))
-        bars = args.bars or [str(DEFAULT_BARS)]
+        if args.year and args.bars:
+            raise LaunchError("--year and --bars both choose the bars to replay; use one")
+        bars = [str(YEAR_BARS)] if args.year else args.bars or [str(DEFAULT_BARS)]
         for b in bars:
-            if not (ROOT / b).is_file() and not Path(b).is_file():
+            if not (ROOT / b).is_file() and not Path(b).is_file() and not args.year:
                 raise LaunchError(f"--bars {b}: no such file")
         pnpm = find_pnpm()
         if not port_free(CONSOLE_PORT):
@@ -646,6 +674,8 @@ def main(argv: list[str] | None = None) -> int:
             say("start", "prerequisites OK; nothing started (--check)")
             return 0
         ensure_alpaca_keys(args.set_keys)
+        if args.year:
+            fetch_year(engine)
         if web_deps_stale():
             run_step("console", [pnpm, "install"], cwd=ROOT / "web")
 

@@ -86,6 +86,7 @@ cmake --build out/strategy_lab --config Release --target strategy_lab_replay str
 
 | Flag | What it does |
 |---|---|
+| `--year` | replay the last year of AAPL, MSFT and SPY minute bars, downloaded once into `data/alpaca_year.csv` with your Alpaca keys (about 80 minutes per backtest at the default pace; delete the file to download a newer year) |
 | `--pace-ms N` | pause N ms after each bar time so a run can be watched, stopped or kill-switched (default 50; e.g. `--pace-ms 200` for a slower replay, `0` for full speed) |
 | `--set-keys` | enter (or replace) your Alpaca keys for live runs; `--forget-keys` deletes the saved ones |
 | `--no-build` | don't bring `build-kafka/` up to date before starting (it is by default) |

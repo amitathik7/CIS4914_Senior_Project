@@ -121,17 +121,22 @@ class Api:
         run = self._run(run_id)
         if resource == "":
             return run.detail()
+        # ?points=N thins a chart series (the last session stays whole); ?limit=N keeps a list's newest N.
+        points, limit = _count(query, "points"), _count(query, "limit")
         if resource == "/bars":
-            return run.bars_for((query.get("symbol") or [""])[0])
+            return run.bars_for((query.get("symbol") or [""])[0], points)
+        if resource == "/equity":
+            return run.equity(points)
         readers: dict[str, Callable[[], Any]] = {
-            "/portfolio": run.portfolio, "/equity": run.equity, "/signals": lambda: list(run.signals),
+            "/portfolio": run.portfolio, "/signals": lambda: list(run.signals),
             "/risk-decisions": lambda: list(run.risk_decisions), "/orders": run.order_list, "/fills": run.fill_list,
             "/trades": run.trades, "/metrics": lambda: run.metrics(self.store.queue_capacity),
         }
         reader = readers.get(resource)
         if reader is None:
             raise ApiError(404, "not_found", f"/runs/{{id}}{resource} is not served.")
-        return reader()
+        result = reader()
+        return result[-limit:] if limit and isinstance(result, list) else result
 
     # ---- commands (ADR 0007) -----------------------------------------------------------------------------------------
 
@@ -211,6 +216,15 @@ class Api:
             raise ApiError(409, "not_running", answer["error"])
         with self.store.lock:
             return self._run(run_id).detail()
+
+
+def _count(query: dict[str, list[str]], name: str) -> int | None:
+    text = (query.get(name) or [""])[0]
+    if not text:
+        return None
+    if not text.isdigit() or int(text) == 0:
+        raise ApiError(400, "invalid_query", f"{name} must be a positive whole number.", field=name)
+    return int(text)
 
 
 def _refusal(error: str) -> ApiError:
