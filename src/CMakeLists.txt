@@ -72,22 +72,25 @@ set_target_properties(trading_engine_core PROPERTIES
 #  dependency never becomes transitive to the core or to strategies.
 # -----------------------------------------------------------------------------
 
-# Alpaca market-data adapter. The REST source uses libcurl when CMake finds it
+# Alpaca market-data adapter. The REST source and the live stream's WebSocket
+# client (libcurl connect-only + our RFC 6455 framing) use libcurl when CMake finds it
 # (macOS SDK, apt libcurl4-openssl-dev, vcpkg curl); without it the adapter
 # still builds and its HTTP client throws a clear error at run time. JSON uses
 # the core's private reader in events/json.hpp.
 find_package(CURL QUIET)
 if(CURL_FOUND)
-    set(_te_http_client market_data/curl_http_client.cpp)
-    message(STATUS "libcurl: ${CURL_VERSION_STRING} (Alpaca REST enabled)")
+    set(_te_http_client market_data/curl_http_client.cpp market_data/curl_websocket.cpp)
+    message(STATUS "libcurl: ${CURL_VERSION_STRING} (Alpaca REST and live stream enabled)")
 else()
-    set(_te_http_client market_data/no_http_client.cpp)
-    message(STATUS "libcurl: not found (Alpaca REST disabled)")
+    set(_te_http_client market_data/no_http_client.cpp market_data/no_websocket.cpp)
+    message(STATUS "libcurl: not found (Alpaca REST and live stream disabled)")
 endif()
 
 add_library(trading_engine_alpaca_adapter STATIC
     market_data/alpaca_live_source.cpp
     market_data/alpaca_historical_source.cpp
+    market_data/alpaca_stream.cpp
+    market_data/websocket_protocol.cpp
     ${_te_http_client})
 if(CURL_FOUND)
     target_link_libraries(trading_engine_alpaca_adapter PRIVATE CURL::libcurl)
@@ -99,7 +102,6 @@ trading_engine_set_warnings(trading_engine_alpaca_adapter)
 set_target_properties(trading_engine_alpaca_adapter PROPERTIES
     FOLDER "trading_engine/adapters"
     POSITION_INDEPENDENT_CODE ON)
-# TODO(alpaca): the live WebSocket client -- PRIVATE to this target.
 
 # PostgreSQL persistence adapter (future: libpq / libpqxx).
 add_library(trading_engine_postgres_adapter STATIC

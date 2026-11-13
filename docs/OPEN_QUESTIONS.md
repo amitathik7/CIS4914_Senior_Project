@@ -54,11 +54,13 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
 - **Owner:** systems/perf lead · **By:** M1
 
 ## 4. Alpaca client libraries
-> **Partly answered (2026-11-13):** the historical REST source uses **libcurl**
+> **Answered (2026-11-13):** the historical REST source uses **libcurl**
 > (found by CMake, private to the adapter; without it the adapter builds and
 > reports at run time) and the core's private JSON reader (`src/events/json.hpp`),
 > which keeps numbers as text so prices parse exactly. TLS is whatever libcurl
-> was built with. The WebSocket library for the live source is still open.
+> was built with. The live source's WebSocket client uses libcurl only for the
+> TCP/TLS connection (`CURLOPT_CONNECT_ONLY`) with our own RFC 6455 framing,
+> because the system libcurl on macOS and Ubuntu has no WebSocket support.
 
 - WebSocket: Boost.Beast, `websocketpp`, `libwebsockets`, or IXWebSocket?
 - HTTP (historical REST): `libcurl`, `cpr`, Boost.Beast, or `httplib`?

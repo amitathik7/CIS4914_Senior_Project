@@ -282,6 +282,37 @@ TEST(ConfiguredRun, SelectsTheSettingsSymbolsAndPeriodAndCanStopEarly) {
     EXPECT_EQ(run.pipeline().market_data().stats().accepted, 4U);
 }
 
+// A live feed is the same run with the bars arriving one by one.
+TEST(ConfiguredRun, FeedingBarsOneByOneEndsWhereTheReplayEnds) {
+    const auto s = settings();
+    const auto input = app::ConfiguredRun::select_bars(bars(), s);
+
+    tec::ManualClock replay_clock{input.front().exchange_time};
+    ev::InProcessEventBus replay_bus{replay_clock};
+    app::ConfiguredRun replayed{replay_bus, replay_clock, s};
+    ASSERT_TRUE(replayed.replay(input));
+
+    tec::ManualClock live_clock{input.front().exchange_time};
+    ev::InProcessEventBus live_bus{live_clock};
+    app::ConfiguredRun fed{live_bus, live_clock, s};
+    fed.begin(input.front().exchange_time);
+    for (const auto& bar : input) {
+        fed.feed(bar);
+    }
+
+    const auto a = replayed.pipeline().portfolio().snapshot();
+    const auto b = fed.pipeline().portfolio().snapshot();
+    EXPECT_EQ(a.cash, b.cash);
+    EXPECT_EQ(a.total_equity, b.total_equity);
+    EXPECT_EQ(replayed.pipeline().strategies().stats().signals_published,
+              fed.pipeline().strategies().stats().signals_published);
+    EXPECT_EQ(fed.pipeline().market_data().stats().accepted, input.size());
+
+    fed.feed(input.front());   // an older event never moves the clock back
+    EXPECT_EQ(live_clock.now(), input.back().exchange_time);
+    fed.end();
+}
+
 // --- EngineService over the in-memory broker ----------------------------------------------
 
 class EngineServiceTest : public ::testing::Test {

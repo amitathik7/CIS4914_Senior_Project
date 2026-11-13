@@ -17,7 +17,8 @@
 //   trading_engine fetch-alpaca --symbols SYM[,SYM...] --start T --end T
 //                      [--timeframe TF] [--adjustment KIND] [--feed iex|sip]
 //                      [--out FILE]
-//   trading_engine run --bars FILE [--bus inprocess|topics|kafka|kafka-mock]
+//   trading_engine run --bars FILE | --alpaca-live SYM[,SYM...] [--feed iex|sip|test]
+//                      [--minutes N] [--record FILE] [--bus inprocess|topics|kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
 //                      [--cash N] [--risk on|off]
@@ -28,8 +29,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdlib>
+#include <deque>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -51,11 +55,16 @@
 #include "trading_engine/events/event_codec.hpp"
 #include "trading_engine/events/message_transport.hpp"
 #include "trading_engine/events/topic_event_bus.hpp"
+#include "trading_engine/market_data/alpaca_live_source.hpp"
 #include "trading_engine/version.hpp"
 
 #if defined(TRADING_ENGINE_HAVE_KAFKA)
 #include "trading_engine/kafka/rdkafka_transport.hpp"
 #endif
+
+std::atomic<bool> g_interrupted{false};
+
+extern "C" void on_signal(int) { g_interrupted = true; }
 
 namespace {
 
@@ -64,6 +73,15 @@ using namespace trading_engine;   // NOLINT(build/namespaces) -- small main only
 constexpr const char* kUsage =
     "usage:\n"
     "  trading_engine run --bars FILE [options]\n"
+    "  trading_engine run --alpaca-live SYM[,SYM...] [--feed iex|sip|test] [--minutes N]\n"
+    "                     [--record FILE] [options]\n"
+    "\n"
+    "  --alpaca-live SYMBOLS   trade Alpaca's live minute bars instead of a file (simulated\n"
+    "                          fills only; needs ALPACA_API_KEY and ALPACA_API_SECRET)\n"
+    "  --feed iex|sip|test     live feed (default iex); test is Alpaca's always-on test\n"
+    "                          stream, whose only symbol is FAKEPACA\n"
+    "  --minutes N             stop after N minutes (default: until Ctrl+C)\n"
+    "  --record FILE           also write the live bars to FILE, readable by --bars\n"
     "\n"
     "options:\n"
     "  --bus inprocess|topics|kafka|kafka-mock   event bus (default inprocess)\n"
@@ -97,6 +115,10 @@ struct Options {
     std::string command{"run"};
     std::vector<std::string> bar_files;
     std::string bars;
+    std::vector<common::Symbol> live_symbols;
+    std::string live_feed{"iex"};
+    std::size_t live_minutes{0};
+    std::string record;
     std::string bus{"inprocess"};
     std::string brokers{"localhost:9092"};
     std::string topic_prefix{"trading_engine"};
@@ -172,6 +194,27 @@ Options parse(int argc, char** argv) {
             o.quantity = static_cast<common::Quantity>(to_size(value, "--quantity"));
         } else if (flag == "--cash") {
             o.cash = static_cast<std::int64_t>(to_size(value, "--cash"));
+        } else if (o.command == "run" && flag == "--alpaca-live") {
+            std::string symbol;
+            for (const char c : value + ",") {
+                if (c == ',') {
+                    if (!symbol.empty()) {
+                        o.live_symbols.push_back(symbol);
+                    }
+                    symbol.clear();
+                } else if (c != ' ') {
+                    symbol.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                }
+            }
+        } else if (o.command == "run" && flag == "--feed") {
+            if (value != "iex" && value != "sip" && value != "test") {
+                usage_error("--feed needs iex, sip or test");
+            }
+            o.live_feed = value;
+        } else if (o.command == "run" && flag == "--minutes") {
+            o.live_minutes = to_size(value, "--minutes");
+        } else if (o.command == "run" && flag == "--record") {
+            o.record = value;
         } else if (flag == "--risk") {
             if (value != "on" && value != "off") {
                 usage_error("--risk needs on or off");
@@ -181,8 +224,12 @@ Options parse(int argc, char** argv) {
             usage_error("unknown option " + flag);
         }
     }
-    if (o.bars.empty()) {
-        usage_error(o.command + " needs --bars FILE");
+    if (!o.bars.empty() && !o.live_symbols.empty()) {
+        usage_error("run takes --bars FILE or --alpaca-live SYMBOLS, not both");
+    }
+    if (o.bars.empty() && o.live_symbols.empty()) {
+        usage_error(o.command == "run" ? "run needs --bars FILE or --alpaca-live SYMBOLS"
+                                       : o.command + " needs --bars FILE");
     }
     if (o.command == "serve" && o.bus != "kafka" && o.bus != "kafka-mock") {
         usage_error("serve needs --bus kafka or kafka-mock: the console reaches it through Kafka");
@@ -274,8 +321,10 @@ control::RunSettings settings_from(const Options& o, const std::vector<common::S
                                    const std::vector<domain::MarketEvent>& bars) {
     control::RunSettings s;
     s.name          = o.topic_prefix;
-    s.period_start  = bars.front().exchange_time;
-    s.period_end    = bars.back().exchange_time;
+    if (!bars.empty()) {
+        s.period_start = bars.front().exchange_time;
+        s.period_end   = bars.back().exchange_time;
+    }
     s.risk_policies = o.risk_policies;
     s.simulation.starting_cash = common::Money::from_units(o.cash);
     control::StrategySettings sma;
@@ -313,24 +362,128 @@ void publish_status(const Options& o, BusStack& stack, const control::RunSetting
     (void)stack.transport->send({control::run_topic(o.topic_prefix), o.topic_prefix, control::encode(envelope)});
 }
 
-int run(const Options& o) {
-    std::vector<domain::MarketEvent> bars = cli::read_bar_csv(o.bars);
-    std::stable_sort(bars.begin(), bars.end(), [](const auto& a, const auto& b) {
-        return a.exchange_time < b.exchange_time;
-    });
-    std::set<common::Symbol> symbol_set;
-    for (const auto& bar : bars) {
-        if (!bar.symbol.empty()) {
-            symbol_set.insert(bar.symbol);
+// Hands live events from the source's I/O thread to the run's thread.
+class EventQueue final : public market_data::IMarketEventSink {
+public:
+    void on_market_event(const domain::MarketEvent& event) override {
+        {
+            const std::lock_guard lock{mutex_};
+            queue_.push_back(event);
         }
-    }
-    const std::vector<common::Symbol> symbols(symbol_set.begin(), symbol_set.end());
-    if (symbols.empty()) {
-        std::cerr << "trading_engine: " << o.bars << " has no rows with a symbol\n";
-        return 1;
+        ready_.notify_one();
     }
 
-    common::ManualClock clock{bars.empty() ? common::Timestamp{} : bars.front().exchange_time};
+    std::optional<domain::MarketEvent> pop(std::chrono::milliseconds timeout) {
+        std::unique_lock lock{mutex_};
+        if (!ready_.wait_for(lock, timeout, [this] { return !queue_.empty(); })) {
+            return std::nullopt;
+        }
+        domain::MarketEvent event = std::move(queue_.front());
+        queue_.pop_front();
+        return event;
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<domain::MarketEvent> queue_;
+};
+
+// Feeds Alpaca's live bars into `configured` until Ctrl+C, --minutes or a
+// failure the source cannot recover from, which it returns.
+std::optional<std::string> run_live(const Options& o, const std::vector<common::Symbol>& symbols,
+                                    common::ManualClock& clock, app::ConfiguredRun& configured,
+                                    std::mutex& out_mutex) {
+    config::AlpacaConfig alpaca;
+    alpaca.symbols    = symbols;
+    alpaca.data_feed  = o.live_feed == "sip" ? "sip" : "iex";
+    alpaca.stream_url = o.live_feed == "test" ? std::string(market_data::kAlpacaTestStreamUrl)
+                                              : "wss://stream.data.alpaca.markets/v2/" + o.live_feed;
+
+    std::ofstream record;
+    if (!o.record.empty()) {
+        record.open(o.record);
+        if (!record) {
+            throw std::runtime_error("cannot write " + o.record);
+        }
+        cli::write_bar_csv(record, {});
+        record.flush();
+    }
+
+    EventQueue queue;
+    market_data::AlpacaLiveOptions options;
+    options.on_status = [&](market_data::LiveStatus status, const std::string& detail) {
+        const std::lock_guard lock{out_mutex};
+        std::cout << "[live] " << market_data::to_string(status) << (detail.empty() ? "" : ": " + detail) << '\n'
+                  << std::flush;
+    };
+    market_data::AlpacaLiveSource source{alpaca, queue, clock, options};
+
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    source.start();
+    configured.begin(common::SystemClock{}.now());
+
+    const auto feed = [&](const domain::MarketEvent& event) {
+        {
+            const std::lock_guard lock{out_mutex};
+            std::cout << "bar " << event.symbol << "  " << common::format_timestamp(event.exchange_time)
+                      << "  close " << (event.price ? common::format_decimal(*event.price) : "-") << "  volume "
+                      << event.volume.value_or(0) << '\n'
+                      << std::flush;
+        }
+        if (record.is_open()) {
+            cli::write_bar_csv_row(record, event);
+            record.flush();
+        }
+        configured.feed(event);
+    };
+
+    using Steady = std::chrono::steady_clock;
+    const auto stop_at = o.live_minutes == 0 ? Steady::time_point::max()
+                                             : Steady::now() + std::chrono::minutes{o.live_minutes};
+    while (!g_interrupted && Steady::now() < stop_at) {
+        if (const auto event = queue.pop(std::chrono::milliseconds{250})) {
+            feed(*event);
+        } else if (!source.is_running()) {
+            break;
+        }
+    }
+    source.stop();
+    while (const auto event = queue.pop(std::chrono::milliseconds{0})) {
+        feed(*event);
+    }
+    configured.end();
+    return source.failure();
+}
+
+int run(const Options& o) {
+    const bool live = !o.live_symbols.empty();
+    if (live && !market_data::websocket_available()) {
+        std::cerr << "trading_engine: this build has no libcurl, so no live feed; install it and reconfigure\n";
+        return 1;
+    }
+    std::vector<domain::MarketEvent> bars;
+    std::vector<common::Symbol> symbols = o.live_symbols;
+    if (!live) {
+        bars = cli::read_bar_csv(o.bars);
+        std::stable_sort(bars.begin(), bars.end(), [](const auto& a, const auto& b) {
+            return a.exchange_time < b.exchange_time;
+        });
+        std::set<common::Symbol> symbol_set;
+        for (const auto& bar : bars) {
+            if (!bar.symbol.empty()) {
+                symbol_set.insert(bar.symbol);
+            }
+        }
+        symbols.assign(symbol_set.begin(), symbol_set.end());
+        if (symbols.empty()) {
+            std::cerr << "trading_engine: " << o.bars << " has no rows with a symbol\n";
+            return 1;
+        }
+    }
+
+    common::ManualClock clock{live ? common::SystemClock{}.now() : bars.front().exchange_time};
     BusStack stack;
     make_bus(o, clock, stack);
     const control::RunSettings settings = settings_from(o, symbols, bars);
@@ -396,11 +549,25 @@ int run(const Options& o) {
     auto& pipeline = configured.pipeline();
     auto& flow     = configured.flow();
 
-    std::cout << "bus: " << o.bus << ", bars: " << bars.size() << " from " << o.bars
-              << ", symbols: " << symbols.size() << "\n\n";
+    if (live) {
+        std::cout << "bus: " << o.bus << ", live Alpaca bars (" << o.live_feed << " feed), symbols:";
+        for (const auto& symbol : symbols) {
+            std::cout << ' ' << symbol;
+        }
+        std::cout << (o.live_minutes == 0 ? ". Ctrl+C stops it." : "") << "\n\n";
+    } else {
+        std::cout << "bus: " << o.bus << ", bars: " << bars.size() << " from " << o.bars
+                  << ", symbols: " << symbols.size() << "\n\n";
+    }
     publish_status(o, stack, settings, control::RunState::Running, std::nullopt, 1);
-    (void)configured.replay(bars);
-    publish_status(o, stack, settings, control::RunState::Completed, bars.back().exchange_time, 2);
+    std::optional<std::string> live_failure;
+    if (live) {
+        live_failure = run_live(o, symbols, clock, configured, out_mutex);
+    } else {
+        (void)configured.replay(bars);
+    }
+    publish_status(o, stack, settings, control::RunState::Completed,
+                   live ? clock.now() : bars.back().exchange_time, 2);
     if (stack.transport) {
         (void)stack.transport->flush(std::chrono::seconds{10});
     }
@@ -441,14 +608,17 @@ int run(const Options& o) {
         std::cout << "in-process    published " << s.published << ", delivered " << s.delivered
                   << ", high water " << s.high_water_mark << '\n';
     }
+    if (live) {
+        if (live_failure) {
+            std::cerr << "trading_engine: live feed stopped: " << *live_failure << '\n';
+            return 1;
+        }
+        return 0;
+    }
     return md.accepted == 0 ? 1 : 0;
 }
 
 }  // namespace
-
-std::atomic<bool> g_interrupted{false};
-
-extern "C" void on_signal(int) { g_interrupted = true; }
 
 int serve(const Options& o) {
 #if defined(TRADING_ENGINE_HAVE_KAFKA)
