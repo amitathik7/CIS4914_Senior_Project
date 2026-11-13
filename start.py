@@ -3,7 +3,8 @@
 
     python3 start.py                 # Kafka, engine, engine gateway, Strategy Lab gateway, web console
     python3 start.py --pace-ms 200   # slower replay, more time to press Stop or the kill switch
-    python3 start.py --year          # a year of real minute bars (downloaded once), about 80 minutes per backtest
+    python3 start.py --year 2025     # one calendar year of real minute bars instead of the last 365 days
+    python3 start.py --demo          # the 90-minute demo bars, for a quick look
     python3 start.py --set-keys      # enter (or replace) your Alpaca keys for live runs
     python3 start.py --check         # only check prerequisites, start nothing
     python3 start.py --help          # every option
@@ -17,14 +18,16 @@ First it sets itself up, so a fresh clone needs nothing else run by hand:
                (Homebrew on macOS, vcpkg on Windows)
   * keys       ALPACA_API_KEY / ALPACA_API_SECRET from the environment, else the ones saved earlier (macOS
                Keychain, or a file in your user folder elsewhere; never in the project), else it asks once.
-               Enter skips: backtests need no keys, only live runs do
+               Enter skips: backtests then replay the demo bars, and live runs are off
+  * data       with keys, downloads the last 365 days of AAPL, MSFT and SPY minute bars into data/ once
+               (gitignored); if that fails, this start replays the demo bars and the next one tries again
   * web        pnpm install when web/node_modules is missing or older than the lockfile
 
 Then it does, in order, what docs/ENGINE_GATEWAY.md and the README describe by hand:
 
   1. Kafka      docker compose -f docker-compose.kafka.yml up -d (starts Docker Desktop if needed)
   2. gateway    python python/engine_gateway/serve.py --port <8080, or a free port if 8080 is taken>
-  3. engine     trading_engine serve --bars tests/fixtures/pipeline/demo_bars.csv --pace-ms 50
+  3. engine     trading_engine serve --bars data/alpaca_year.csv --pace-ms 50
   4. lab        python python/strategy_lab/lab_gateway.py (Strategies > Backtest)
   5. console    pnpm dev in web/, with VITE_ENGINE_API=/api and ENGINE_GATEWAY pointed at the gateway
 
@@ -71,8 +74,8 @@ KAFKA_PORT = 9092
 CONSOLE_PORT = 5173
 LAB_PORT = 8765
 LOG_DIR = ROOT / "out" / "logs"
-DEFAULT_BARS = Path("tests") / "fixtures" / "pipeline" / "demo_bars.csv"
-YEAR_BARS = Path("data") / "alpaca_year.csv"           # --year: fetched once with the user's own keys, never committed
+DEMO_BARS = Path("tests") / "fixtures" / "pipeline" / "demo_bars.csv"
+YEAR_BARS = Path("data") / "alpaca_year.csv"           # the default: fetched once with the user's own keys, never committed
 YEAR_SYMBOLS = "AAPL,MSFT,SPY"
 LAST_BARS = Path("out") / "start-bars.json"            # the bars the last start replayed, used again by default
 DOCKER_DESKTOP_EXE = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
@@ -505,8 +508,9 @@ def forget_keys() -> None:
 
 
 def ask_keys() -> tuple[str, str] | None:
-    say("start", "Live runs trade Alpaca's live bars and need your Alpaca keys (free paper account: alpaca.markets,")
-    say("start", f"then API Keys). They are saved once, in {key_store()}, never in the project. Enter skips.")
+    say("start", "Your Alpaca keys download a year of real market data for backtests and run live trading (free paper")
+    say("start", f"account: alpaca.markets, then API Keys). They are saved once, in {key_store()}, never in the project.")
+    say("start", "Enter skips: backtests then replay 90 minutes of demo bars.")
     try:
         key = input("        Alpaca key ID: ").strip()
         secret = getpass.getpass("        Alpaca secret (hidden): ").strip() if key else ""
@@ -526,13 +530,13 @@ def ensure_alpaca_keys(set_keys: bool) -> None:
         say("start", f"Alpaca keys: from {key_store()}")
     else:
         if not set_keys and (skip.exists() or not sys.stdin.isatty()):
-            say("start", f"Alpaca keys: none saved, so live runs are off ({LAUNCH} --set-keys adds them)")
+            say("start", f"Alpaca keys: none saved, so no real data or live runs ({LAUNCH} --set-keys adds them)")
             return
         keys = ask_keys()
         if keys is None:
             key_dir().mkdir(parents=True, exist_ok=True)
             skip.touch()
-            say("start", f"skipped: backtests work, live runs are off. {LAUNCH} --set-keys adds the keys later")
+            say("start", f"skipped: backtests replay the demo bars, live runs are off. {LAUNCH} --set-keys adds the keys later")
             return
         save_keys(*keys)
         skip.unlink(missing_ok=True)
@@ -577,12 +581,16 @@ def last_bars() -> list[str]:
         return []
     if not isinstance(bars, list) or not bars or not all(isinstance(b, str) and (ROOT / b).is_file() for b in bars):
         return []
-    if bars != [str(DEFAULT_BARS)]:
+    if bars == [str(DEMO_BARS)]:
+        return []           # written by older versions after a plain start; the year of real bars replaces it now
+    if bars != [str(YEAR_BARS)]:
         say("start", f"replaying {', '.join(bars)} as last time (--demo for the demo bars, --bars to choose)")
     return bars
 
 
 def remember_bars(bars: list[str]) -> None:
+    if bars == [str(DEMO_BARS)]:
+        return              # --demo is for one start; the next goes back to the real bars
     try:
         (ROOT / LAST_BARS).parent.mkdir(exist_ok=True)
         (ROOT / LAST_BARS).write_text(json.dumps(bars), encoding="utf-8")
@@ -590,32 +598,67 @@ def remember_bars(bars: list[str]) -> None:
         pass
 
 
-def fetch_year(engine: Path) -> None:
-    """Downloads the last year of minute bars into YEAR_BARS, once; delete the file to download a newer year."""
-    target = ROOT / YEAR_BARS
+def year_file(year: int | None) -> Path:
+    return YEAR_BARS if year is None else Path("data") / f"alpaca_{year}.csv"
+
+
+def year_range(year: int | None, today: datetime.date) -> tuple[datetime.date, datetime.date]:
+    """The 365 days up to yesterday, or one calendar year (the current one up to yesterday)."""
+    end = today - datetime.timedelta(days=1)
+    if year is None:
+        return end - datetime.timedelta(days=365), end
+    if year > end.year:
+        raise LaunchError(f"--year {year}: no trading day of {year} has finished yet")
+    return datetime.date(year, 1, 1), min(datetime.date(year, 12, 31), end)
+
+
+def fetch_year(engine: Path, year: int | None, required: bool) -> bool:
+    """Downloads a year of minute bars once. False, after saying why, when the automatic download can't happen."""
+    path = year_file(year)
+    target = ROOT / path
     if target.is_file():
-        say("data", f"replaying {YEAR_BARS} (delete it to download a newer year)")
-        return
+        say("data", f"replaying {path} (delete it to download it again)")
+        return True
     if not all(os.environ.get(v) for v in KEY_VARS):
-        raise LaunchError(f"--year downloads the bars with your Alpaca keys, and none are saved. Add them with {LAUNCH} "
-                          "--set-keys, then try again.")
-    end = datetime.date.today() - datetime.timedelta(days=1)
-    start = end - datetime.timedelta(days=365)
-    partial = target.with_suffix(".partial")
+        if required:
+            raise LaunchError(f"--year downloads the bars with your Alpaca keys, and none are saved. Add them with "
+                              f"{LAUNCH} --set-keys, then try again.")
+        say("data", f"replaying the demo bars; once you add Alpaca keys ({LAUNCH} --set-keys) a year of real "
+                    "bars is downloaded instead")
+        return False
+    start, end = year_range(year, datetime.date.today())
+    partial = target.with_name(target.name + ".partial")
     target.parent.mkdir(exist_ok=True)
-    say("data", f"downloading {start} to {end} of {YEAR_SYMBOLS} minute bars from Alpaca (once, about a minute)")
-    run_step("data", [str(engine), "fetch-alpaca", "--symbols", YEAR_SYMBOLS, "--start", start.isoformat(),
-                      "--end", end.isoformat(), "--timeframe", "1Min", "--out", str(partial)])
-    partial.replace(target)
+    say("data", f"downloading {start} to {end} of {YEAR_SYMBOLS} minute bars from Alpaca into {path} (once, about a minute)")
+    try:
+        run_step("data", [str(engine), "fetch-alpaca", "--symbols", YEAR_SYMBOLS, "--start", start.isoformat(),
+                          "--end", end.isoformat(), "--timeframe", "1Min", "--out", str(partial)])
+    except LaunchError:
+        partial.unlink(missing_ok=True)
+        if required:
+            raise
+        say("data", "WARNING: the download failed (the reason is above), so this start replays the demo bars; "
+                    "the next start tries again")
+        return False
+    os.replace(partial, target)
+    return True
+
+
+def year_arg(text: str) -> int:
+    if not (text.isascii() and text.isdigit() and len(text) == 4):
+        raise argparse.ArgumentTypeError(f"expected a year such as 2025, not {text!r}")
+    return int(text)
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Start Kafka, the engine, both gateways and the web console together.")
-    p.add_argument("--bars", action="append", help=f"CSV of bars the engine can replay (repeatable; default {DEFAULT_BARS})")
-    p.add_argument("--demo", action="store_true", help=f"replay the demo bars ({DEFAULT_BARS}) again")
-    p.add_argument("--year", action="store_true",
-                   help=f"replay the last year of {YEAR_SYMBOLS} minute bars (downloaded once into {YEAR_BARS} with your "
-                        "Alpaca keys; about 80 minutes per backtest at the default pace)")
+    p.add_argument("--bars", action="append",
+                   help=f"CSV of bars the engine can replay (repeatable; default: the last year of {YEAR_SYMBOLS} minute "
+                        f"bars, downloaded once into {YEAR_BARS} with your Alpaca keys)")
+    p.add_argument("--demo", action="store_true", help=f"replay the 90-minute demo bars ({DEMO_BARS}) this time")
+    p.add_argument("--year", nargs="?", const=0, type=year_arg, metavar="YYYY",
+                   help=f"replay one calendar year of {YEAR_SYMBOLS} minute bars instead (downloaded once into "
+                        "data/alpaca_YYYY.csv); without YYYY, the last 365 days, as by default")
     p.add_argument("--pace-ms", type=int, default=50, help="pause after each bar time so runs can be watched (default 50)")
     p.add_argument("--config", choices=["Debug", "Release", "RelWithDebInfo"],
                    help="which trading_engine build to use (default: the most recently built)")
@@ -632,6 +675,24 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--no-browser", action="store_true", help="don't open the console in a browser")
     p.add_argument("--check", action="store_true", help="check prerequisites and exit")
     return p.parse_args(argv)
+
+
+def choose_bars(args: argparse.Namespace) -> tuple[list[str], bool, int | None]:
+    """The bars to replay, whether they still have to be downloaded, and which year (None: the last 365 days)."""
+    if sum((args.year is not None, bool(args.bars), args.demo)) > 1:
+        raise LaunchError("--year, --bars and --demo each choose the bars to replay; use one")
+    year = args.year or None
+    if args.year is not None:
+        return [str(year_file(year))], True, year
+    if args.demo:
+        return [str(DEMO_BARS)], False, None
+    if args.bars:
+        for b in args.bars:
+            if not (ROOT / b).is_file() and not Path(b).is_file():
+                raise LaunchError(f"--bars {b}: no such file")
+        return args.bars, False, None
+    bars = last_bars() or [str(YEAR_BARS)]
+    return bars, bars == [str(YEAR_BARS)], None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -663,12 +724,7 @@ def main(argv: list[str] | None = None) -> int:
         # 1. Check everything before starting anything.
         engine = (find_engine(args.engine, args.config) if args.check
                   else prepare_engine(args.engine, args.config, build=not args.no_build))
-        if sum(map(bool, (args.year, args.bars, args.demo))) > 1:
-            raise LaunchError("--year, --bars and --demo each choose the bars to replay; use one")
-        bars = [str(YEAR_BARS)] if args.year else args.bars or ([] if args.demo else last_bars()) or [str(DEFAULT_BARS)]
-        for b in bars:
-            if not (ROOT / b).is_file() and not Path(b).is_file() and not args.year:
-                raise LaunchError(f"--bars {b}: no such file")
+        bars, download, year = choose_bars(args)
         pnpm = find_pnpm()
         if not port_free(CONSOLE_PORT):
             raise LaunchError(f"port {CONSOLE_PORT} is in use: is the console (or an earlier start.py) already running?")
@@ -691,14 +747,14 @@ def main(argv: list[str] | None = None) -> int:
             if web_deps_stale():
                 missing.append("web/node_modules")
             if not all(os.environ.get(v) for v in KEY_VARS) and stored_keys() is None:
-                missing.append("Alpaca keys (asked once; only live runs need them)")
+                missing.append("Alpaca keys (asked once; live runs and the year of real bars need them)")
             if missing:
                 say("start", "will install on first start: " + ", ".join(missing))
             say("start", "prerequisites OK; nothing started (--check)")
             return 0
         ensure_alpaca_keys(args.set_keys)
-        if args.year:
-            fetch_year(engine)
+        if download and not fetch_year(engine, year, required=args.year is not None):
+            bars = [str(DEMO_BARS)]
         remember_bars(bars)
         if web_deps_stale():
             run_step("console", [pnpm, "install"], cwd=ROOT / "web")

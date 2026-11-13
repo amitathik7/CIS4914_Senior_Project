@@ -3,6 +3,7 @@
 #   engine-linux    C++ build with the Kafka adapter and the Strategy Lab tools, full ctest
 #                   (the Kafka tests use librdkafka's in-process mock cluster: no broker needed)
 #   engine-windows  the same C++ build with MSVC (Kafka off, as the default Windows build)
+#   start           start.py's bar choice and year download, on Linux, macOS and Windows
 #   web             console typecheck, vitest (including the real-engine tests) and production build
 #   python          engine gateway and Strategy Lab UI unittest suites, against the real executable
 #
@@ -126,6 +127,25 @@ jobs:
 
       - name: Build
         run: pnpm exec vite build
+
+  start:
+    name: start.py (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Standard library only: no network, no keys, nothing built.
+      - name: start.py tests
+        run: python -m unittest discover -s tests/start
 
   python:
     name: Python gateways

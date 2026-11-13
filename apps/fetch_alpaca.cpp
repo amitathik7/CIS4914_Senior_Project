@@ -130,7 +130,8 @@ int fetch_alpaca(int argc, char** argv) {
     }
 
     if (!market_data::http_client_available()) {
-        std::cerr << "trading_engine fetch-alpaca: this build has no libcurl; install it and reconfigure\n";
+        std::cerr << "trading_engine fetch-alpaca: this build has no libcurl; install it (brew install curl / apt "
+                     "install libcurl4-openssl-dev / vcpkg install curl:x64-windows) and reconfigure\n";
         return 1;
     }
 

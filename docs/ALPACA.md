@@ -18,6 +18,11 @@ sent to Alpaca's trading API.
    start after that; `python3 start.py --set-keys` replaces them. Never put
    them in a file in this repo: it is public.
 
+   With the keys saved, `start.py` downloads the last 365 days of AAPL, MSFT
+   and SPY minute bars into `data/alpaca_year.csv` once and replays them;
+   `python3 start.py --year 2025` does the same for one calendar year
+   (`data/alpaca_2025.csv`). `data/` is gitignored.
+
    For `trading_engine run --alpaca-live` or `fetch-alpaca` outside
    `start.py`, set `ALPACA_API_KEY` and `ALPACA_API_SECRET` in the shell.
 

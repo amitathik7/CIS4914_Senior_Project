@@ -25,11 +25,14 @@ On a fresh clone it first sets itself up, so there is nothing else to run by han
 - **Engine**: if there is no Kafka build of `trading_engine`, configures `build-kafka/`; on every start it
   brings that build up to date, so a pull never runs a stale engine. If librdkafka (the Kafka C library) is
   missing it offers to install it (Homebrew on macOS, vcpkg on Windows; on Linux it prints the apt command).
-- **Alpaca keys** (only live runs need them): the first time, it asks for your key ID and secret and saves
-  them outside the project (the macOS Keychain, or a file only you can read in your user folder elsewhere).
-  After that it loads them silently. Press Enter to skip; `python3 start.py --set-keys` adds or replaces them
-  later. Use your own free paper account: Alpaca allows one live stream per account, so shared keys
-  disconnect each other.
+- **Alpaca keys**: the first time, it asks for your key ID and secret and saves them outside the project (the
+  macOS Keychain, or a file only you can read in your user folder elsewhere). After that it loads them
+  silently. Press Enter to skip; `python3 start.py --set-keys` adds or replaces them later. Use your own free
+  paper account: Alpaca allows one live stream per account, so shared keys disconnect each other.
+- **Market data**: with keys, it downloads the last 365 days of AAPL, MSFT and SPY minute bars into
+  `data/alpaca_year.csv` once (about a minute; `data/` is gitignored, so each person downloads their own).
+  Without keys, or if the download fails, it replays the 90-minute demo bars in
+  `tests/fixtures/pipeline/demo_bars.csv`, and the next start tries the download again.
 - **Web**: `pnpm install` in `web/` when needed.
 
 Then it runs, in order, and shows each process's output with a name prefix:
@@ -38,8 +41,9 @@ Then it runs, in order, and shows each process's output with a name prefix:
    it starts Docker Desktop first if it isn't running).
 2. **gateway**: the engine gateway (`python/engine_gateway/serve.py`), which serves the console's API from
    the Kafka topics, on port 8080, or on 18080 / 8081 / 18081 when 8080 is taken (for example by Apache).
-3. **engine**: `trading_engine serve --bars tests/fixtures/pipeline/demo_bars.csv --pace-ms 50`, which waits
-   for the console to start backtests.
+3. **engine**: `trading_engine serve --bars data/alpaca_year.csv --pace-ms 50`, which waits for the console
+   to start backtests. New backtest picks the last recorded week by default (about two minutes at this pace);
+   widen the dates for a longer run, up to about 80 minutes for the whole year.
 4. **lab**: the Strategy Lab gateway (`python/strategy_lab/lab_gateway.py`, port 8765) for the Strategies pages.
 5. **console**: `pnpm dev` in `web/` with `VITE_ENGINE_API=/api`, pointed at the engine gateway.
 
@@ -86,14 +90,14 @@ cmake --build out/strategy_lab --config Release --target strategy_lab_replay str
 
 | Flag | What it does |
 |---|---|
-| `--demo` | go back to the demo bars |
-| `--year` | replay the last year of AAPL, MSFT and SPY minute bars, downloaded once into `data/alpaca_year.csv` with your Alpaca keys (about 80 minutes per backtest at the default pace; delete the file to download a newer year) |
+| `--year YYYY` | replay one calendar year of AAPL, MSFT and SPY minute bars instead of the last 365 days, downloaded once into `data/alpaca_YYYY.csv` (the current year: January 1st to yesterday). Delete a `data/` file to download it again |
+| `--demo` | replay the 90-minute demo bars for this start only (no keys or download needed) |
 | `--pace-ms N` | pause N ms after each bar time so a run can be watched, stopped or kill-switched (default 50; e.g. `--pace-ms 200` for a slower replay, `0` for full speed) |
-| `--set-keys` | enter (or replace) your Alpaca keys for live runs; `--forget-keys` deletes the saved ones |
+| `--set-keys` | enter (or replace) your Alpaca keys; `--forget-keys` deletes the saved ones |
 | `--no-build` | don't bring `build-kafka/` up to date before starting (it is by default) |
 | `--reset-kafka` | delete the broker's topics, i.e. all earlier runs, before starting (`docker compose down`, then `up`) |
 | `--check` | check prerequisites (engine build, pnpm, free ports, Docker) and exit without starting anything |
-| `--bars FILE` | a CSV of bars the engine can replay; repeatable (default `tests/fixtures/pipeline/demo_bars.csv`). The next start replays the same bars until you choose others |
+| `--bars FILE` | a CSV of bars the engine can replay; repeatable. The next start replays the same bars (or year) until you choose others |
 | `--config Debug\|Release\|RelWithDebInfo` | which `trading_engine` build to use (default: the most recently built) |
 | `--engine PATH` | use this `trading_engine` instead of searching `build-kafka/` and `build/` |
 | `--gateway-port N` | engine gateway port (default 8080, or the first free one of 18080, 8081, 18081) |
