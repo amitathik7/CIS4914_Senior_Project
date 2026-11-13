@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "trading_engine/analytics/system_metrics.hpp"
+
 namespace trading_engine::events {
 
 IEventBus::~IEventBus() = default;
@@ -75,10 +77,14 @@ std::size_t SubscriptionRegistry::count(EventType type) const {
 
 // --- InProcessEventBus ------------------------------------------------------------
 
-InProcessEventBus::InProcessEventBus(const common::IClock& clock, InProcessEventBusOptions options)
-    : clock_{clock}, options_{options} {
+InProcessEventBus::InProcessEventBus(const common::IClock& clock, InProcessEventBusOptions options,
+                                     analytics::SystemMetrics* metrics)
+    : clock_{clock}, options_{options}, metrics_{metrics} {
     if (options_.capacity == 0) {
         throw std::invalid_argument("InProcessEventBus: capacity must be > 0");
+    }
+    if (metrics_ != nullptr) {
+        metrics_->set_queue_depth("event_bus", 0);
     }
 }
 
@@ -117,6 +123,9 @@ bool InProcessEventBus::publish(Event event) {
     queue_.push_back(std::move(event));
     ++stats_.published;
     stats_.high_water_mark = std::max(stats_.high_water_mark, queue_.size());
+    if (metrics_ != nullptr) {
+        metrics_->set_queue_depth("event_bus", queue_.size());
+    }
     lock.unlock();
     not_empty_.notify_one();
     return true;
@@ -198,6 +207,9 @@ void InProcessEventBus::run() {
         }
         Event event = std::move(queue_.front());
         queue_.pop_front();
+        if (metrics_ != nullptr) {
+            metrics_->set_queue_depth("event_bus", queue_.size());
+        }
         busy_ = true;
         lock.unlock();
         not_full_.notify_one();

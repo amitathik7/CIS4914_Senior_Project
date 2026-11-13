@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "trading_engine/analytics/system_metrics.hpp"
 #include "trading_engine/events/event_codec.hpp"
 
 namespace trading_engine::events {
@@ -38,17 +39,25 @@ bool valid_topic_prefix(const std::string& prefix) {
     return true;
 }
 
+// own messages sent but not yet read back; 0 if a reused origin makes received exceed sent
+std::size_t in_flight(std::uint64_t sent, std::uint64_t received) {
+    return sent > received ? static_cast<std::size_t>(sent - received) : 0;
+}
+
 }  // namespace
 
 TopicEventBus::TopicEventBus(IMessageTransport& transport, const common::IClock& clock,
-                             TopicEventBusOptions options)
-    : transport_{transport}, clock_{clock}, options_{std::move(options)} {
+                             TopicEventBusOptions options, analytics::SystemMetrics* metrics)
+    : transport_{transport}, clock_{clock}, options_{std::move(options)}, metrics_{metrics} {
     if (!valid_topic_prefix(options_.topic_prefix)) {
         throw std::invalid_argument("TopicEventBus: topic_prefix '" + options_.topic_prefix +
                                     "' must be 1-200 characters of [A-Za-z0-9._-]");
     }
     if (options_.origin.empty()) {
         options_.origin = random_origin();
+    }
+    if (metrics_ != nullptr) {
+        metrics_->set_queue_depth("kafka", 0);
     }
 }
 
@@ -91,6 +100,10 @@ bool TopicEventBus::publish(Event event) {
     sequence_ = event.sequence;
     ++sent_own_;
     ++stats_.published;
+    if (metrics_ != nullptr) {
+        metrics_->set_queue_depth(
+            "kafka", in_flight(sent_own_, stats_.received_own));
+    }
     return true;
 }
 
@@ -166,7 +179,7 @@ void TopicEventBus::wait_until_drained() {
 
 std::size_t TopicEventBus::depth() const {
     const std::lock_guard lock{mutex_};
-    return static_cast<std::size_t>(sent_own_ - stats_.received_own);
+    return in_flight(sent_own_, stats_.received_own);
 }
 
 TopicEventBus::Stats TopicEventBus::stats() const {
@@ -217,6 +230,10 @@ void TopicEventBus::run() {
             stats_.handler_errors += errors;
             if (own) {
                 ++stats_.received_own;
+                if (metrics_ != nullptr) {
+                    metrics_->set_queue_depth(
+                        "kafka", in_flight(sent_own_, stats_.received_own));
+                }
             }
         }
         idle_.notify_all();
