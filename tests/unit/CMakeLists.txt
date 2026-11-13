@@ -1,4 +1,4 @@
-## Fast unit tests -- no network, no database, no threads.
+# Fast unit tests -- no network, no database, no threads.
 
 # Proves the GoogleTest target builds, links against the core library, and runs.
 trading_engine_add_component_test(smoke

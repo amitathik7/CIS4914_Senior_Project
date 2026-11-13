@@ -185,4 +185,58 @@ TEST(SystemMetrics, SnapshotDoesNotResetRecordedData) {
         second.stages[portfolio].latency.p50);
 }
 
+// check that every value maps to a bucket whose lower bound is within 1/64 of it
+TEST(LatencyHistogram, BucketsStayWithinTheRelativeErrorBound) {
+    using H = an::LatencyHistogram;
+
+    for (uint64_t v = 0; v < H::kExactLimit; ++v) {
+        EXPECT_EQ(H::bucket_lower_bound(H::bucket_index(v)), v);
+    }
+
+    for (unsigned exponent = 7; exponent < 64; ++exponent) {
+        const uint64_t base = uint64_t{1} << exponent;
+
+        for (const uint64_t v : {base, base + base / 3, base + (base - 1)}) {
+            const size_t index = H::bucket_index(v);
+            const uint64_t lower = H::bucket_lower_bound(index);
+
+            ASSERT_LT(index, H::kBucketCount);
+            EXPECT_LE(lower, v);
+            EXPECT_LE(v - lower, v / H::kSubBuckets);
+        }
+    }
+
+    EXPECT_EQ(H::bucket_index(UINT64_MAX), H::kBucketCount - 1);
+}
+
+// check that percentiles over many samples land within the bucket error
+TEST(LatencyHistogram, PercentilesOverManySamplesAreAccurate) {
+    an::LatencyHistogram histogram;
+
+    for (int64_t i = 1; i <= 1'000'000; ++i) {
+        histogram.record(nanoseconds{i});
+    }
+
+    EXPECT_EQ(histogram.count(), 1'000'000u);
+    EXPECT_EQ(histogram.min(), nanoseconds{1});
+    EXPECT_EQ(histogram.max(), nanoseconds{1'000'000});
+
+    const auto p50 = histogram.percentile(50).count();
+    const auto p99 = histogram.percentile(99).count();
+
+    EXPECT_NEAR(static_cast<double>(p50), 500'000.0, 500'000.0 / 64);
+    EXPECT_NEAR(static_cast<double>(p99), 990'000.0, 990'000.0 / 64);
+}
+
+// check that negative durations count as zero instead of corrupting the histogram
+TEST(LatencyHistogram, NegativeDurationsRecordAsZero) {
+    an::LatencyHistogram histogram;
+
+    histogram.record(nanoseconds{-5});
+
+    EXPECT_EQ(histogram.count(), 1u);
+    EXPECT_EQ(histogram.min(), nanoseconds{0});
+    EXPECT_EQ(histogram.percentile(99), nanoseconds{0});
+}
+
 } // namespace

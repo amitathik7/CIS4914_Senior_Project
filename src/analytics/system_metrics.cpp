@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 
 namespace trading_engine::analytics {
 
@@ -18,14 +19,15 @@ constexpr array<Stage, kStageCount> kStages{
     Stage::Persistence
 };
 
-// finds the nearest rank index for a requested percentile
-size_t percentile_index(size_t count, size_t percentile) {
-    if (count == 0) {
-        return 0;
-    }
+// log2 of the sub-bucket count: each power-of-two range above the exact
+// region is split into this many equal-width buckets
+constexpr unsigned kSubBucketBits = 6;
+static_assert(LatencyHistogram::kSubBuckets == (size_t{1} << kSubBucketBits));
 
-    const size_t rank = (percentile * count + 99) / 100;
-    return rank == 0 ? 0 : rank - 1;
+// finds the 1-based nearest rank for a requested percentile
+uint64_t percentile_rank(uint64_t count, size_t percent) {
+    const uint64_t rank = (percent * count + 99) / 100;
+    return max<uint64_t>(rank, 1);
 }
 
 } // namespace
@@ -50,6 +52,72 @@ string_view to_string(Stage stage) noexcept {
     return "invalid";
 }
 
+// --- LatencyHistogram -------------------------------------------------------
+
+size_t LatencyHistogram::bucket_index(uint64_t nanos) noexcept {
+    if (nanos < kExactLimit) {
+        return static_cast<size_t>(nanos);
+    }
+
+    const unsigned exponent = static_cast<unsigned>(bit_width(nanos)) - 1;
+    const unsigned shift = exponent - kSubBucketBits;
+    const size_t sub = static_cast<size_t>(nanos >> shift) - kSubBuckets;
+
+    return kExactLimit + (exponent - kSubBucketBits - 1) * kSubBuckets + sub;
+}
+
+uint64_t LatencyHistogram::bucket_lower_bound(size_t index) noexcept {
+    if (index < kExactLimit) {
+        return index;
+    }
+
+    const size_t offset = index - kExactLimit;
+    const unsigned shift = static_cast<unsigned>(offset / kSubBuckets) + 1;
+    const uint64_t sub = offset % kSubBuckets;
+
+    return (kSubBuckets + sub) << shift;
+}
+
+void LatencyHistogram::record(common::Duration elapsed) noexcept {
+    const uint64_t nanos =
+        elapsed.count() < 0 ? 0 : static_cast<uint64_t>(elapsed.count());
+
+    ++buckets_[bucket_index(nanos)];
+    ++count_;
+    min_ = std::min(min_, nanos);
+    max_ = std::max(max_, nanos);
+}
+
+common::Duration LatencyHistogram::min() const noexcept {
+    return count_ == 0 ? common::Duration{} : common::Duration{static_cast<int64_t>(min_)};
+}
+
+common::Duration LatencyHistogram::max() const noexcept {
+    return common::Duration{static_cast<int64_t>(max_)};
+}
+
+common::Duration LatencyHistogram::percentile(size_t percent) const noexcept {
+    if (count_ == 0) {
+        return common::Duration{};
+    }
+
+    const uint64_t rank = percentile_rank(count_, percent);
+    uint64_t seen = 0;
+
+    for (size_t i = 0; i < kBucketCount; ++i) {
+        seen += buckets_[i];
+
+        if (seen >= rank) {
+            const uint64_t value = clamp(bucket_lower_bound(i), min_, max_);
+            return common::Duration{static_cast<int64_t>(value)};
+        }
+    }
+
+    return max();
+}
+
+// --- SystemMetrics ----------------------------------------------------------
+
 SystemMetrics::SystemMetrics() = default;
 
 SystemMetrics::~SystemMetrics() = default;
@@ -63,7 +131,7 @@ size_t SystemMetrics::stage_index(Stage stage) noexcept {
 void SystemMetrics::record_latency(Stage stage, common::Duration elapsed) {
     const lock_guard lock{mutex_};
 
-    latencies_[stage_index(stage)].push_back(elapsed);
+    latencies_[stage_index(stage)].record(elapsed);
 }
 
 // updates the current depth of a named queue
@@ -87,27 +155,6 @@ void SystemMetrics::increment_errors(Stage stage, uint64_t n) {
     errors_[stage_index(stage)] += n;
 }
 
-// calculates basic latency statistics from a copy of the samples
-SystemMetrics::LatencyStats SystemMetrics::summarize_latency(
-    vector<common::Duration> samples) {
-
-    LatencyStats stats;
-
-    if (samples.empty()) {
-        return stats;
-    }
-
-    sort(samples.begin(), samples.end());
-
-    stats.count = static_cast<uint64_t>(samples.size());
-    stats.min = samples.front();
-    stats.max = samples.back();
-    stats.p50 = samples[percentile_index(samples.size(), 50)];
-    stats.p99 = samples[percentile_index(samples.size(), 99)];
-
-    return stats;
-}
-
 // builds a consistent snapshot without changing the stored metrics
 SystemMetrics::Snapshot SystemMetrics::snapshot() const {
     const lock_guard lock{mutex_};
@@ -115,12 +162,20 @@ SystemMetrics::Snapshot SystemMetrics::snapshot() const {
     Snapshot result;
 
     for (size_t i = 0; i < kStageCount; ++i) {
+        const LatencyHistogram& histogram = latencies_[i];
+
         StageStats stats;
 
         stats.stage = kStages[i];
         stats.events = events_[i];
         stats.errors = errors_[i];
-        stats.latency = summarize_latency(latencies_[i]);
+        stats.latency = LatencyStats{
+            .count = histogram.count(),
+            .min = histogram.min(),
+            .max = histogram.max(),
+            .p50 = histogram.percentile(50),
+            .p99 = histogram.percentile(99)
+        };
 
         result.stages[i] = stats;
 

@@ -39,6 +39,11 @@ bool valid_topic_prefix(const std::string& prefix) {
     return true;
 }
 
+// own messages sent but not yet read back; 0 if a reused origin makes received exceed sent
+std::size_t in_flight(std::uint64_t sent, std::uint64_t received) {
+    return sent > received ? static_cast<std::size_t>(sent - received) : 0;
+}
+
 }  // namespace
 
 TopicEventBus::TopicEventBus(IMessageTransport& transport, const common::IClock& clock,
@@ -97,7 +102,7 @@ bool TopicEventBus::publish(Event event) {
     ++stats_.published;
     if (metrics_ != nullptr) {
         metrics_->set_queue_depth(
-            "kafka", static_cast<std::size_t>(sent_own_ - stats_.received_own));
+            "kafka", in_flight(sent_own_, stats_.received_own));
     }
     return true;
 }
@@ -174,7 +179,7 @@ void TopicEventBus::wait_until_drained() {
 
 std::size_t TopicEventBus::depth() const {
     const std::lock_guard lock{mutex_};
-    return static_cast<std::size_t>(sent_own_ - stats_.received_own);
+    return in_flight(sent_own_, stats_.received_own);
 }
 
 TopicEventBus::Stats TopicEventBus::stats() const {
@@ -227,7 +232,7 @@ void TopicEventBus::run() {
                 ++stats_.received_own;
                 if (metrics_ != nullptr) {
                     metrics_->set_queue_depth(
-                        "kafka", static_cast<std::size_t>(sent_own_ - stats_.received_own));
+                        "kafka", in_flight(sent_own_, stats_.received_own));
                 }
             }
         }

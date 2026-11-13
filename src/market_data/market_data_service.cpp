@@ -1,7 +1,8 @@
 #include "trading_engine/market_data/market_data_service.hpp"
 
-#include <utility>
+#include <chrono>
 #include <optional>
+#include <utility>
 
 #include "trading_engine/analytics/system_metrics.hpp"
 #include "trading_engine/common/errors.hpp"
@@ -33,7 +34,9 @@ namespace trading_engine::market_data
 
     void MarketDataService::on_market_event(const domain::MarketEvent &event)
     {
-        const auto started_at = this->clock_.now();
+        // Wall time, not clock_: backtests run on a ManualClock that does not
+        // advance while an event is being processed.
+        const auto started_at = std::chrono::steady_clock::now();
 
         const auto record_metrics = [&](bool accepted, bool error)
         {
@@ -54,7 +57,8 @@ namespace trading_engine::market_data
 
             this->metrics_->record_latency(
                 analytics::Stage::Ingest,
-                this->clock_.now() - started_at);
+                std::chrono::duration_cast<common::Duration>(
+                    std::chrono::steady_clock::now() - started_at));
         };
 
         // TODO: validate against policy_ (positive prices, ordering, spike filter),
