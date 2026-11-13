@@ -5,8 +5,8 @@
 > event bus (in-process and Kafka), market data from CSV bars, the strategy engine
 > and three strategies, risk, simulated execution, portfolio and performance
 > analytics run end to end ([`EVENT_BUS.md`](EVENT_BUS.md),
-> [`BACKTESTING.md`](BACKTESTING.md)). persistence, config loading,
-> `SystemMetrics` and the source-driven `HistoricalReplay` are still stubs. The
+> [`BACKTESTING.md`](BACKTESTING.md)). Persistence, config loading and the
+> source-driven `HistoricalReplay` are still stubs. The
 > console reaches the engine through the engine gateway and command channel
 > ([ADR 0006](adr/0006-web-frontend-api-contract.md), [ADR 0007](adr/0007-engine-command-channel.md)).
 
@@ -116,8 +116,9 @@ code: `RiskManager` holds a `const portfolio::IPortfolioView&`.
   (stages) on separate threads.
 - `PortfolioManager` written from the execution/bus thread, read from the risk
   thread → needs a lock-free snapshot or a mutex-guarded copy.
-- `SystemMetrics` written from every stage → lock-free counters / per-thread
-  accumulation.
+- `SystemMetrics` written from every stage → one mutex around O(1) updates
+  (counters and a fixed-size latency histogram per stage); lock-free counters
+  are an M8 option if profiling shows contention.
 - Strategy callbacks are single-threaded per strategy so `IStrategy`
   implementations need no internal locking.
 

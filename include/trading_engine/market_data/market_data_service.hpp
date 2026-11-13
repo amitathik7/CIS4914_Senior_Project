@@ -22,6 +22,11 @@
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/market_data/market_data_source.hpp"
 
+namespace trading_engine::analytics
+{
+    class SystemMetrics;
+}
+
 namespace trading_engine::events
 {
     class IEventBus;
@@ -53,7 +58,8 @@ namespace trading_engine::market_data
         MarketDataService(events::IEventBus &bus,
                           const common::IClock &clock,
                           MarketDataPolicy policy,
-                          persistence::IMarketDataRepository *repository = nullptr);
+                          persistence::IMarketDataRepository *repository = nullptr,
+                          analytics::SystemMetrics *metrics = nullptr);
         ~MarketDataService() override;
 
         // Validate + normalise + (optionally) persist + publish.
@@ -74,12 +80,12 @@ namespace trading_engine::market_data
         const common::IClock &clock_;
         MarketDataPolicy policy_;
         [[maybe_unused]] persistence::IMarketDataRepository *repository_{nullptr};
+        analytics::SystemMetrics *metrics_{nullptr};
         std::unordered_map<common::Symbol, std::uint64_t> symbol_sequence_counters_;
 
         Stats running_counts_;
 
-        // TODO: per-symbol last exchange_time + sequence, spike-filter state,
-        //       counters wired to SystemMetrics.
+        // TODO: per-symbol last exchange_time + sequence, spike-filter state.
     };
 
 } // namespace trading_engine::market_data
