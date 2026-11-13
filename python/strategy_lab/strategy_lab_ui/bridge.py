@@ -46,8 +46,9 @@ ARGS_FILE = "args.txt"
 DATASET_FILE = "dataset.csv"
 
 BUILD_HELP = (
-    'cmake -S . -B out/strategy_lab -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=OFF '
-    "-DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON\n"
+    ('cmake -S . -B out/strategy_lab -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=OFF '
+     if os.name == "nt" else "cmake -S . -B out/strategy_lab -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF ")
+    + "-DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON\n"
     "cmake --build out/strategy_lab --config Release --target strategy_lab_replay"
 )
 

@@ -80,6 +80,8 @@ commands from PowerShell with `python` and `.\build-kafka\bin\Release\trading_en
 | System page | message counts per topic; latency = gateway receive time minus `enqueued_at` (bus transit, not stage processing time; none for a backlog read at start-up) | real |
 | Report | computed when the run completes or is stopped, from the derived equity and trades with ADR 0006 section 5's definitions (stands in for `PerformanceAnalyzer`) | real |
 
+Long runs: `/equity?points=N` and `/bars?symbol=X&points=N` return the last session as recorded and thin the sessions before it to about N points (equity keeps each stretch's lowest point, bars merge into candles); `?limit=N` on `/fills`, `/orders`, `/signals`, `/risk-decisions` and `/trades` returns the newest N. The portfolio and equity curve are kept up to date as events arrive, so a refresh costs only what is new.
+
 The portfolio is **derived** from fills and marks with the same rules as
 `PortfolioManager` (fees charged to realised P&L, average cost blended on adds,
 a flip opens the remainder at the fill price, integer millionths throughout).
@@ -91,6 +93,7 @@ Cash reserved for an open buy is estimated as remaining quantity x limit price
 | Console | Endpoint | What the gateway does |
 |---|---|---|
 | New backtest | `POST /v1/runs` | 503 unless an engine heartbeat arrived lately; picks a run id (`bt-<time>-<hex>`), sends `start_backtest` with the form as the run's settings, waits up to 10 s for the engine's answer. 201 with the queued (or running) run, or 400 with the engine's refusal and the form `field` it names (`strategies.0.long_window`), or 504 |
+| New live run | `POST /v1/runs` with `"mode": "live"`, `"feed": "iex"\|"sip"\|"test"` | as New backtest, without a period; run id `live-<time>-<hex>`, sends `start_live`. The engine refuses it with no live feed (no credentials) or while another live run is going; it runs until stopped |
 | Stop | `POST /v1/runs/{id}/stop` | sends `stop`; a queued run ends at once, a running one after the current bar time |
 | Kill switch | `PUT /v1/runs/{id}/kill-switch` | sends `set_kill_switch`, returns the run detail once the engine confirms. While engaged the Risk Manager rejects every new signal (`kill_switch`) |
 

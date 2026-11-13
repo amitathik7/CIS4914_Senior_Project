@@ -35,7 +35,8 @@ inline constexpr std::string_view kDefaultControlPrefix = "trading_engine.contro
 enum class CommandAction : std::uint8_t {
     StartBacktest = 0,   // run_id is the new run's topic prefix; settings required
     StopRun,             // finish the run early (status "stopped")
-    SetKillSwitch        // engaged / reason
+    SetKillSwitch,       // engaged / reason
+    StartLive            // like StartBacktest, on the live Alpaca feed until stopped
 };
 
 enum class RunState : std::uint8_t { Queued = 0, Running, Completed, Failed, Stopped };
@@ -47,8 +48,8 @@ struct Command {
     std::string                command_id{};   // chosen by the sender; echoed on the status it causes
     CommandAction              action{CommandAction::StartBacktest};
     std::string                run_id{};
-    std::optional<RunSettings> settings{};     // start_backtest
-    // start_backtest whose settings could not be read: the field path and the
+    std::optional<RunSettings> settings{};     // start_backtest, start_live
+    // start_backtest / start_live whose settings could not be read: the field path and the
     // problem, so the engine can report the refusal on the run's topic.
     std::optional<std::string> settings_error_field{};
     std::string                settings_error{};

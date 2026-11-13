@@ -40,13 +40,14 @@ add_library(trading_engine_core STATIC
     persistence/repositories.cpp
     analytics/performance_analyzer.cpp
     analytics/system_metrics.cpp
-    backtesting/historical_replay.cpp
+    analytics/results_export.cpp
     app/backtest.cpp
     app/configured_run.cpp
     app/engine_service.cpp
+    app/live_feed.cpp
+    app/metered_bus.cpp
     app/order_flow.cpp
-    app/pipeline.cpp
-    app/trading_engine.cpp)
+    app/pipeline.cpp)
 add_library(trading_engine::core ALIAS trading_engine_core)
 
 target_include_directories(trading_engine_core PUBLIC

@@ -196,7 +196,7 @@ namespace trading_engine::market_data
         }
         if (!missing.empty())
         {
-            throw common::ConfigError("Alpaca credentials: set " + missing + " in the environment");
+            throw common::ConfigError("Alpaca keys missing: set " + missing + " in the environment (python3 start.py --set-keys saves them for the console)");
         }
         return credentials;
     }

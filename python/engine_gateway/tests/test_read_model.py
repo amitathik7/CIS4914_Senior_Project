@@ -47,6 +47,12 @@ class MarketDataAndSignals(unittest.TestCase):
         self.assertEqual(store.decode_errors, 2)
         self.assertIn("te.market_data", store.last_error)
 
+    def test_runs_are_dated_by_their_first_message_not_by_when_the_gateway_read_them(self):
+        store = store_with(("late.market_data", bar("AAPL", 40, "1")), ("early.market_data", bar("AAPL", 10, "1")),
+                           ("early.market_data", bar("AAPL", 5, "1")))
+        self.assertEqual(store.get("early").summary()["created_at"], "2026-01-05T14:05:00.000000000Z")
+        self.assertGreater(store.get("late").summary()["created_at"], store.get("early").summary()["created_at"])
+
     def test_no_market_data_no_equity(self):
         store = store_with(("te.signal", signal(1, "AAPL", "buy", 31)))
         run = store.get("te")

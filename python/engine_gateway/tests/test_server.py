@@ -54,7 +54,11 @@ class Server(unittest.TestCase):
                             ("/orders", lambda d: d[0]["history"][0]["status"] == "filled"),
                             ("/fills", lambda d: d[0]["side"] == "buy"),
                             ("/trades", lambda d: d == []),
-                            ("/metrics", lambda d: d["total_events"] == 4)]:
+                            ("/metrics", lambda d: d["total_events"] == 4),
+                            ("/equity?points=1500", lambda d: len(d) == 1),
+                            ("/bars?symbol=AAPL&points=10", lambda d: d[0]["price"] == "100"),
+                            ("/fills?limit=1", lambda d: len(d) == 1),
+                            ("/signals?limit=5", lambda d: len(d) == 1)]:
             with self.subTest(path=path):
                 status, body = self.get(f"/v1/runs/te.demo{path}")
                 self.assertEqual(status, 200)
@@ -73,6 +77,10 @@ class Server(unittest.TestCase):
         status, body = self.get("/v1/engine", headers={"Host": "evil.example:8080"})
         self.assertEqual((status, body["error"]["code"]), (403, "host_refused"))
         self.assertEqual(self.get("/v1/engine", headers={"Origin": "http://127.0.0.1:5173"})[0], 200)
+        for query in ("points=0", "points=abc", "limit=-1"):
+            with self.subTest(query=query):
+                status, body = self.get(f"/v1/runs/te.demo/equity?{query}")
+                self.assertEqual((status, body["error"]["code"]), (400, "invalid_query"))
 
     def test_stream_reports_new_events(self):
         response = urllib.request.urlopen(self.base + "/v1/runs/te.demo/stream", timeout=5)

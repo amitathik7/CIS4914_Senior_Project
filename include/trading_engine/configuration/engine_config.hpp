@@ -96,16 +96,6 @@ struct SimulationConfig {
     //       for shorts, random seed for stochastic fill models.
 };
 
-// --- Logging ---------------------------------------------------------
-struct LoggingConfig {
-    std::string level{"info"};    // trace|debug|info|warn|error
-    std::string format{"json"};   // json|text
-    std::string sink{"stderr"};   // stderr|stdout|file
-    std::string file_path{"logs/trading_engine.log"};
-
-    // TODO: per-module levels, rotation policy, structured-field conventions.
-};
-
 // --- Top-level -------------------------------------------------------
 struct EngineConfig {
     RunMode          mode{RunMode::Backtest};
@@ -113,7 +103,6 @@ struct EngineConfig {
     PostgresConfig   postgres{};
     RiskLimits       risk{};
     SimulationConfig simulation{};
-    LoggingConfig    logging{};
 };
 
 // Non-secret defaults, safe to use in tests. This is configuration, not market

@@ -21,7 +21,7 @@
 //                      [--minutes N] [--record FILE] [--bus inprocess|topics|kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
-//                      [--cash N] [--risk on|off] [--config FILE]
+//                      [--cash N] [--risk on|off] [--config FILE] [--report FILE]
 //   trading_engine serve --bars FILE [--bars FILE...] [--bus kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--control-prefix NAME]
 //                      [--engine-id NAME] [--pace-ms N] [--heartbeat-ms N]
@@ -29,16 +29,16 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <csignal>
 #include <cstdlib>
-#include <deque>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <set>
 #include <string>
 #include <thread>
@@ -46,8 +46,12 @@
 
 #include "bar_csv.hpp"
 #include "fetch_alpaca.hpp"
+#include "trading_engine/analytics/performance_analyzer.hpp"
+#include "trading_engine/analytics/results_export.hpp"
+#include "trading_engine/analytics/system_metrics.hpp"
 #include "trading_engine/app/configured_run.hpp"
 #include "trading_engine/app/engine_service.hpp"
+#include "trading_engine/app/live_feed.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/decimal_text.hpp"
 #include "trading_engine/common/timestamp_text.hpp"
@@ -103,12 +107,16 @@ constexpr const char* kUsage =
     "                          from a JSON file (config/config.example.json); with\n"
     "                          \"mode\": \"live\" it trades the file's alpaca symbols and\n"
     "                          feed. Flags override the file\n"
+    "  --report FILE           write the summary, equity curve and fills as JSON\n"
+    "                          (python/visualization/plot_performance.py charts it)\n"
     "  With a topic bus, the run's settings are published on <prefix>.run.\n"
     "\n"
     "  trading_engine serve --bars FILE [options]\n"
     "\n"
-    "  Waits for commands from the console (start a backtest, stop it, kill switch)\n"
-    "  on <control-prefix>.command and replays the recorded bars for each backtest.\n"
+    "  Waits for commands from the console (start a backtest or live run, stop it,\n"
+    "  kill switch) on <control-prefix>.command, replays the recorded bars for each\n"
+    "  backtest, and trades Alpaca's live bars for a live run (needs ALPACA_API_KEY\n"
+    "  and ALPACA_API_SECRET).\n"
     "  --bars FILE             recorded bars to offer (repeatable)\n"
     "  --bus kafka|kafka-mock  (default kafka)\n"
     "  --brokers HOST:PORT     Kafka bootstrap servers (default localhost:9092)\n"
@@ -135,6 +143,7 @@ struct Options {
     std::optional<std::int64_t> cash;   // unset: the config's starting cash
     bool risk_policies{true};
     std::string config_file;
+    std::string report;
     config::EngineConfig engine{config::default_config()};
     // serve
     std::string control_prefix{control::kDefaultControlPrefix};
@@ -224,6 +233,8 @@ Options parse(int argc, char** argv) {
             o.live_feed = value;
         } else if (o.command == "run" && flag == "--minutes") {
             o.live_minutes = to_size(value, "--minutes");
+        } else if (o.command == "run" && flag == "--report") {
+            o.report = value;
         } else if (o.command == "run" && flag == "--record") {
             o.record = value;
         } else if (flag == "--risk") {
@@ -382,32 +393,22 @@ void publish_status(const Options& o, BusStack& stack, const control::RunSetting
     (void)stack.transport->send({control::run_topic(o.topic_prefix), o.topic_prefix, control::encode(envelope)});
 }
 
-// Hands live events from the source's I/O thread to the run's thread.
-class EventQueue final : public market_data::IMarketEventSink {
-public:
-    void on_market_event(const domain::MarketEvent& event) override {
-        {
-            const std::lock_guard lock{mutex_};
-            queue_.push_back(event);
-        }
-        ready_.notify_one();
-    }
+// The Alpaca settings for a live feed of `symbols` on `feed` (iex, sip or test).
+config::AlpacaConfig live_alpaca(config::AlpacaConfig alpaca, const std::vector<common::Symbol>& symbols,
+                                 const std::string& feed) {
+    alpaca.symbols    = symbols;
+    alpaca.data_feed  = feed == "sip" ? "sip" : "iex";
+    alpaca.stream_url = feed == "test" ? std::string(market_data::kAlpacaTestStreamUrl)
+                                       : "wss://stream.data.alpaca.markets/v2/" + feed;
+    return alpaca;
+}
 
-    std::optional<domain::MarketEvent> pop(std::chrono::milliseconds timeout) {
-        std::unique_lock lock{mutex_};
-        if (!ready_.wait_for(lock, timeout, [this] { return !queue_.empty(); })) {
-            return std::nullopt;
-        }
-        domain::MarketEvent event = std::move(queue_.front());
-        queue_.pop_front();
-        return event;
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable ready_;
-    std::deque<domain::MarketEvent> queue_;
-};
+app::LiveFeed open_alpaca_feed(const config::AlpacaConfig& alpaca, market_data::IMarketEventSink& sink,
+                               const common::IClock& clock, market_data::AlpacaLiveOptions options = {}) {
+    auto source  = std::make_unique<market_data::AlpacaLiveSource>(alpaca, sink, clock, std::move(options));
+    auto* handle = source.get();
+    return {std::move(source), [handle] { return handle->failure(); }};
+}
 
 // "iex", "sip" or "test": --feed, else what the config's stream URL is.
 std::string live_feed_name(const Options& o) {
@@ -421,17 +422,17 @@ std::string live_feed_name(const Options& o) {
 // failure the source cannot recover from, which it returns.
 std::optional<std::string> run_live(const Options& o, const std::vector<common::Symbol>& symbols,
                                     common::ManualClock& clock, app::ConfiguredRun& configured,
-                                    std::mutex& out_mutex) {
+                                    std::mutex& out_mutex, const std::function<void()>& after_feed) {
     config::AlpacaConfig alpaca = o.engine.alpaca;
     alpaca.symbols              = symbols;
     if (o.live_feed) {
-        alpaca.data_feed  = *o.live_feed == "sip" ? "sip" : "iex";
-        alpaca.stream_url = *o.live_feed == "test" ? std::string(market_data::kAlpacaTestStreamUrl)
-                                                   : "wss://stream.data.alpaca.markets/v2/" + *o.live_feed;
+        alpaca = live_alpaca(alpaca, symbols, *o.live_feed);
     }
 
     std::ofstream record;
     if (!o.record.empty()) {
+        std::error_code mkdir_error;  // creates a missing folder such as data/; a real failure shows at open
+        std::filesystem::create_directories(std::filesystem::path{o.record}.parent_path(), mkdir_error);
         record.open(o.record);
         if (!record) {
             throw std::runtime_error("cannot write " + o.record);
@@ -440,21 +441,23 @@ std::optional<std::string> run_live(const Options& o, const std::vector<common::
         record.flush();
     }
 
-    EventQueue queue;
+    app::LiveEventQueue queue;
     market_data::AlpacaLiveOptions options;
     options.on_status = [&](market_data::LiveStatus status, const std::string& detail) {
         const std::lock_guard lock{out_mutex};
         std::cout << "[live] " << market_data::to_string(status) << (detail.empty() ? "" : ": " + detail) << '\n'
                   << std::flush;
     };
-    market_data::AlpacaLiveSource source{alpaca, queue, clock, options};
+    app::LiveFeed feed = open_alpaca_feed(alpaca, queue, clock, std::move(options));
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
-    source.start();
-    configured.begin(common::SystemClock{}.now());
-
-    const auto feed = [&](const domain::MarketEvent& event) {
+    using Steady = std::chrono::steady_clock;
+    const auto stop_at = o.live_minutes == 0 ? Steady::time_point::max()
+                                             : Steady::now() + std::chrono::minutes{o.live_minutes};
+    app::LiveHooks hooks;
+    hooks.keep_going  = [&] { return !g_interrupted && Steady::now() < stop_at; };
+    hooks.before_feed = [&](const domain::MarketEvent& event) {
         {
             const std::lock_guard lock{out_mutex};
             std::cout << "bar " << event.symbol << "  " << common::format_timestamp(event.exchange_time)
@@ -466,25 +469,46 @@ std::optional<std::string> run_live(const Options& o, const std::vector<common::
             cli::write_bar_csv_row(record, event);
             record.flush();
         }
-        configured.feed(event);
     };
+    hooks.after_feed = [&](const domain::MarketEvent&) { after_feed(); };
+    return app::feed_live(configured, feed, queue, common::SystemClock{}.now(), hooks);
+}
 
-    using Steady = std::chrono::steady_clock;
-    const auto stop_at = o.live_minutes == 0 ? Steady::time_point::max()
-                                             : Steady::now() + std::chrono::minutes{o.live_minutes};
-    while (!g_interrupted && Steady::now() < stop_at) {
-        if (const auto event = queue.pop(std::chrono::milliseconds{250})) {
-            feed(*event);
-        } else if (!source.is_running()) {
-            break;
+// Return periods per year for the curve's sampling: 252 for daily bars or
+// slower, scaled by the median spacing within a 390-minute session otherwise.
+unsigned periods_per_year(std::span<const domain::PortfolioSnapshot> curve) {
+    std::vector<common::Duration> gaps;
+    for (std::size_t i = 1; i < curve.size(); ++i) {
+        if (curve[i].as_of > curve[i - 1].as_of) {
+            gaps.push_back(curve[i].as_of - curve[i - 1].as_of);
         }
     }
-    source.stop();
-    while (const auto event = queue.pop(std::chrono::milliseconds{0})) {
-        feed(*event);
+    if (gaps.empty()) {
+        return 252;
     }
-    configured.end();
-    return source.failure();
+    std::nth_element(gaps.begin(), gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2), gaps.end());
+    const auto median = gaps[gaps.size() / 2];
+    if (median >= std::chrono::hours{20}) {
+        return 252;
+    }
+    const auto per_session = std::max<std::int64_t>(1, std::chrono::minutes{390} / median);
+    return static_cast<unsigned>(252 * per_session);
+}
+
+void print_stages(const analytics::SystemMetrics::Snapshot& m) {
+    const auto us = [](common::Duration d) {
+        return common::format_decimal(common::Decimal::from_double(static_cast<double>(d.count()) / 1000.0));
+    };
+    for (const auto& s : m.stages) {
+        if (s.events == 0 && s.errors == 0) {
+            continue;
+        }
+        std::string name{analytics::to_string(s.stage)};
+        name.resize(std::max<std::size_t>(name.size(), 10), ' ');
+        std::cout << "  " << name << "events " << s.events << ", errors " << s.errors << ", latency p50 "
+                  << us(s.latency.p50) << " us, p99 " << us(s.latency.p99) << " us, max " << us(s.latency.max)
+                  << " us\n";
+    }
 }
 
 int run(const Options& o) {
@@ -536,6 +560,7 @@ int run(const Options& o) {
         std::cout << '\n';
     });
 
+    std::vector<domain::Fill> fills;
     std::uint64_t orders_seen = 0, fills_seen = 0, rejected_orders = 0;
     std::uint64_t approved = 0, resized = 0, rejected = 0;
     stack.bus->subscribe(events::EventType::RiskDecision, [&](const events::Event& e) {
@@ -567,6 +592,7 @@ int run(const Options& o) {
         const auto& f = std::get<domain::Fill>(e.payload);
         const std::lock_guard lock{out_mutex};
         ++fills_seen;
+        fills.push_back(f);
         std::cout << "  fill #" << f.id.value << "  order #" << f.order_id.value << "  "
                   << (f.filled_quantity < 0 ? "sold " : "bought ")
                   << (f.filled_quantity < 0 ? -f.filled_quantity : f.filled_quantity) << ' '
@@ -575,9 +601,11 @@ int run(const Options& o) {
                   << '\n';
     });
 
-    app::ConfiguredRun configured{*stack.bus, clock, settings};
+    analytics::SystemMetrics metrics;
+    app::ConfiguredRun configured{*stack.bus, clock, settings, common::RunId{1}, &metrics};
     auto& pipeline = configured.pipeline();
     auto& flow     = configured.flow();
+    std::vector<domain::PortfolioSnapshot> curve{pipeline.portfolio().snapshot()};   // the starting point
 
     const std::string config_note = o.config_file.empty() ? std::string{} : ", config: " + o.config_file;
     if (live) {
@@ -593,9 +621,13 @@ int run(const Options& o) {
     publish_status(o, stack, settings, control::RunState::Running, std::nullopt, 1);
     std::optional<std::string> live_failure;
     if (live) {
-        live_failure = run_live(o, symbols, clock, configured, out_mutex);
+        live_failure = run_live(o, symbols, clock, configured, out_mutex,
+                                [&] { curve.push_back(pipeline.portfolio().snapshot()); });
     } else {
-        (void)configured.replay(bars);
+        (void)configured.replay(bars, [&](const app::ReplayProgress&) {
+            curve.push_back(pipeline.portfolio().snapshot());
+            return true;
+        });
     }
     publish_status(o, stack, settings, control::RunState::Completed,
                    live ? clock.now() : bars.back().exchange_time, 2);
@@ -639,6 +671,32 @@ int run(const Options& o) {
         std::cout << "in-process    published " << s.published << ", delivered " << s.delivered
                   << ", high water " << s.high_water_mark << '\n';
     }
+    const auto stage_metrics = metrics.snapshot();
+    std::cout << "stages\n";
+    print_stages(stage_metrics);
+
+    if (!o.report.empty()) {
+        analytics::RunResults results;
+        results.name    = o.topic_prefix;
+        results.mode    = live ? "live" : "backtest";
+        results.source  = live ? "alpaca " + live_feed_name(o) : o.bars;
+        results.symbols = symbols;
+        analytics::AnalysisOptions analysis;
+        analysis.periods_per_year = periods_per_year(curve);
+        results.report       = analytics::PerformanceAnalyzer{analysis}.analyze(curve, fills);
+        results.equity_curve = std::move(curve);
+        results.fills        = std::move(fills);
+        results.metrics      = stage_metrics;
+        std::error_code mkdir_error;  // creates a missing folder such as data/; a real failure shows at open
+        std::filesystem::create_directories(std::filesystem::path{o.report}.parent_path(), mkdir_error);
+        std::ofstream out{o.report};
+        analytics::write_results_json(out, results);
+        if (!out.flush()) {
+            std::cerr << "trading_engine: cannot write " << o.report << '\n';
+            return 1;
+        }
+        std::cout << "report        " << o.report << '\n';
+    }
     if (live) {
         if (live_failure) {
             std::cerr << "trading_engine: live feed stopped: " << *live_failure << '\n';
@@ -659,6 +717,25 @@ int serve(const Options& o) {
     config.version        = kVersion;
     config.instant_delay  = std::chrono::milliseconds{o.pace_ms};
     config.heartbeat      = std::chrono::milliseconds{o.heartbeat_ms};
+    const auto has_env = [](const std::string& name) {
+        const char* value = std::getenv(name.c_str());
+        return value != nullptr && *value != '\0';
+    };
+    // Without keys every live run would fail at connect; refusing up front says why.
+    if (market_data::websocket_available() && has_env(o.engine.alpaca.api_key_env) &&
+        has_env(o.engine.alpaca.api_secret_env)) {
+        config.live_feed = [&o](const std::vector<common::Symbol>& symbols, const std::string& feed,
+                                market_data::IMarketEventSink& sink, const common::IClock& clock) {
+            return open_alpaca_feed(live_alpaca(o.engine.alpaca, symbols, feed), sink, clock);
+        };
+    }
+    std::mutex out_mutex;
+    config.on_run_finished = [&out_mutex](const std::string& run_id, const analytics::SystemMetrics::Snapshot& m) {
+        const std::lock_guard lock{out_mutex};
+        std::cout << "run " << run_id << " stages\n";
+        print_stages(m);
+        std::cout << std::flush;
+    };
     for (const auto& file : o.bar_files) {
         auto bars = cli::read_bar_csv(file);
         config.bars.insert(config.bars.end(), bars.begin(), bars.end());
@@ -687,6 +764,7 @@ int serve(const Options& o) {
         const auto now = service.stats();
         if (now.completed + now.stopped + now.failed != last.completed + last.stopped + last.failed ||
             now.commands != last.commands) {
+            const std::lock_guard lock{out_mutex};
             std::cout << "commands " << now.commands << ", runs completed " << now.completed << ", stopped "
                       << now.stopped << ", failed " << now.failed << ", refused " << now.refused << '\n'
                       << std::flush;

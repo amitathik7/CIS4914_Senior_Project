@@ -39,12 +39,5 @@
     "fees": { "per_share": 0.0, "per_trade": 0.0, "bps": 0.0 },
     "slippage_bps": 1.0,
     "latency_ms": { "signal_to_order": 1, "order_to_fill": 5 }
-  },
-
-  "logging": {
-    "level": "info",
-    "format": "json",
-    "sink": "stderr",
-    "file_path": "logs/trading_engine.log"
   }
 }

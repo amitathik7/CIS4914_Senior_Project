@@ -61,10 +61,17 @@ export interface CandlePoint {
   close: number;
 }
 
+/** A price axis that always shows `base` and at least `minSpan` around the data, and only ever widens, so small moves
+ * look small and the axis does not jump as each new point arrives. */
+export interface SteadyAxis {
+  base: number;
+  minSpan: number;
+}
+
 export type SeriesSpec =
-  | { id: string; kind: "line"; data: LinePoint[]; tone?: Tone; dashed?: boolean; width?: 1 | 2; integer?: boolean }
-  | { id: string; kind: "area"; data: LinePoint[]; tone?: Tone }
-  | { id: string; kind: "baseline"; data: LinePoint[]; base: number }
+  | { id: string; kind: "line"; data: LinePoint[]; tone?: Tone; dashed?: boolean; width?: 1 | 2; integer?: boolean; steady?: SteadyAxis }
+  | { id: string; kind: "area"; data: LinePoint[]; tone?: Tone; steady?: SteadyAxis }
+  | { id: string; kind: "baseline"; data: LinePoint[]; base: number; steady?: SteadyAxis }
   | { id: string; kind: "histogram"; data: LinePoint[]; tone?: Tone }
   | { id: string; kind: "candles"; data: CandlePoint[] };
 
@@ -83,14 +90,17 @@ interface Props {
   label: string;
   initialBars?: number; // show the last N points rather than everything
   seconds?: boolean;
+  follow?: boolean; // keep every point in view as the series grows, until the user zooms or scrolls
 }
 
-export function TimeChart({ series, markers, height, format, onHover, label, initialBars, seconds }: Props) {
+export function TimeChart({ series, markers, height, format, onHover, label, initialBars, seconds, follow }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const apis = useRef(new Map<string, ISeriesApi<SeriesType>>());
   const markerApi = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const fitted = useRef(false);
+  const userMoved = useRef(false);
+  const steady = useRef(new Map<string, { spec?: SteadyAxis; low?: number; high?: number; first?: number }>());
   const hover = useRef(onHover);
   hover.current = onHover;
   const theme = useTheme();
@@ -109,8 +119,26 @@ export function TimeChart({ series, markers, height, format, onHover, label, ini
       handleScale: { axisPressedMouseMove: { time: true, price: false } },
     });
     chart.current = c;
+    steady.current.clear();
     for (const s of series) {
-      const common = { priceLineVisible: false, lastValueVisible: s.kind !== "histogram" };
+      const state: { spec?: SteadyAxis; low?: number; high?: number; first?: number } = {};
+      steady.current.set(s.id, state);
+      const autoscaleInfoProvider = (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
+        const r = original();
+        const spec = state.spec;
+        if (!r || !spec) return r;
+        let low = Math.min(r.priceRange.minValue, spec.base, state.low ?? Infinity);
+        let high = Math.max(r.priceRange.maxValue, spec.base, state.high ?? -Infinity);
+        if (high - low < spec.minSpan) {
+          const mid = (high + low) / 2;
+          low = Math.min(low, mid - spec.minSpan / 2);
+          high = Math.max(high, mid + spec.minSpan / 2);
+        }
+        state.low = low;
+        state.high = high;
+        return { ...r, priceRange: { minValue: low, maxValue: high } };
+      };
+      const common = { priceLineVisible: false, lastValueVisible: s.kind !== "histogram", ...("steady" in s && s.steady ? { autoscaleInfoProvider } : {}) };
       const api =
         s.kind === "candles" ? c.addSeries(CandlestickSeries, common)
         : s.kind === "area" ? c.addSeries(AreaSeries, { ...common, lineWidth: 2 })
@@ -127,7 +155,15 @@ export function TimeChart({ series, markers, height, format, onHover, label, ini
     }
     c.subscribeCrosshairMove((p) => hover.current?.(p.time ?? null));
     fitted.current = false;
+    userMoved.current = false;
+    // A wheel or drag on the chart is the user taking over the view: stop following new points.
+    const el = host.current;
+    const takeOver = () => { userMoved.current = true; };
+    el.addEventListener("wheel", takeOver, { passive: true });
+    el.addEventListener("pointerdown", takeOver);
     return () => {
+      el.removeEventListener("wheel", takeOver);
+      el.removeEventListener("pointerdown", takeOver);
       markerApi.current = null;
       apis.current.clear();
       c.remove();
@@ -179,7 +215,19 @@ export function TimeChart({ series, markers, height, format, onHover, label, ini
   useEffect(() => {
     const c = chart.current;
     if (!c) return;
-    for (const s of series) apis.current.get(s.id)?.setData(s.data as never);
+    for (const s of series) {
+      const state = steady.current.get(s.id);
+      if (state) {
+        const first = s.data[0]?.time as number | undefined;
+        if (first !== state.first) {                      // a different stretch (a new session): start the axis afresh
+          state.low = undefined;
+          state.high = undefined;
+          state.first = first;
+        }
+        state.spec = "steady" in s ? s.steady : undefined;
+      }
+      apis.current.get(s.id)?.setData(s.data as never);
+    }
     if (markers) {
       const target = apis.current.get(markers.seriesId);
       if (target) {
@@ -196,6 +244,11 @@ export function TimeChart({ series, markers, height, format, onHover, label, ini
       }
     }
     const points = series[0]?.data.length ?? 0;
+    if (follow && fitted.current && !userMoved.current && points > 0) {
+      const width = host.current?.clientWidth || 600;
+      const pad = Math.max(1, Math.ceil((points * 25) / width));
+      c.timeScale().setVisibleLogicalRange({ from: -pad, to: points - 1 + 2 });
+    }
     if (!fitted.current && points > 0) {
       fitted.current = true;
       if (initialBars && points > initialBars) c.timeScale().setVisibleLogicalRange({ from: points - initialBars, to: points + 2 });

@@ -46,8 +46,8 @@ void positive_money(const common::Money& value, const char* field, const char* w
 }  // namespace
 
 void validate(const RunSettings& s) {
-    if (s.mode != config::RunMode::Backtest) {
-        throw SettingsError("mode", "Only backtests can be started; live runs need the Alpaca feed.");
+    if (s.mode == config::RunMode::Live && s.live_feed != "iex" && s.live_feed != "sip" && s.live_feed != "test") {
+        throw SettingsError("feed", "The live feed must be iex, sip or test.");
     }
     if (s.period_start && s.period_end && *s.period_end < *s.period_start) {
         throw SettingsError("period", "The last session is before the first one.");

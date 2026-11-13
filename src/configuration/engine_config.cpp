@@ -208,13 +208,6 @@ void read_simulation(Section& s, SimulationConfig& sim) {
     }
 }
 
-void read_logging(Section& s, LoggingConfig& l) {
-    s.text("level", l.level);
-    s.text("format", l.format);
-    s.text("sink", l.sink);
-    s.text("file_path", l.file_path);
-}
-
 template <class Read, class Target>
 void section(Section& top, std::string_view key, Read read, Target& target) {
     if (const Value* v = top.get(key)) {
@@ -283,7 +276,6 @@ EngineConfig parse_config(std::string_view json_text) {
         section(top, "database", read_postgres, c.postgres);
         section(top, "risk", read_risk, c.risk);
         section(top, "simulation", read_simulation, c.simulation);
-        section(top, "logging", read_logging, c.logging);
         top.finish();
     }
     validate(c);
@@ -369,20 +361,6 @@ void validate(const EngineConfig& c) {
     }
     if (s.latency.signal_to_order < common::Duration::zero() || s.latency.order_to_fill < common::Duration::zero()) {
         fail("simulation.latency_ms", "must not be negative");
-    }
-
-    const auto& l = c.logging;
-    if (!one_of(l.level, {"trace", "debug", "info", "warn", "error"})) {
-        fail("logging.level", "must be trace, debug, info, warn or error");
-    }
-    if (!one_of(l.format, {"json", "text"})) {
-        fail("logging.format", "must be json or text");
-    }
-    if (!one_of(l.sink, {"stderr", "stdout", "file"})) {
-        fail("logging.sink", "must be stderr, stdout or file");
-    }
-    if (l.sink == "file" && l.file_path.empty()) {
-        fail("logging.file_path", "must be set when logging.sink is file");
     }
 }
 

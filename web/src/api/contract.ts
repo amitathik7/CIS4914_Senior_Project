@@ -297,6 +297,14 @@ export interface BacktestRequest {
   simulation: SimulationConfig;
 }
 
+export type LiveFeed = "iex" | "sip" | "test"; // test: Alpaca's always-on test stream, symbol FAKEPACA only
+
+// A run on the engine's live Alpaca feed: no period, it trades until stopped. Fills are simulated.
+export interface LiveRunRequest extends Omit<BacktestRequest, "period_start" | "period_end"> {
+  mode: "live";
+  feed: LiveFeed;
+}
+
 export interface ApiError {
   error: { code: string; message: string; field?: string };
 }

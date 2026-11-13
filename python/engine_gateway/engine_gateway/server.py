@@ -4,7 +4,7 @@ Paths are accepted with or without the `/api` prefix, so the console reaches it 
 (`VITE_ENGINE_API=/api`, which forwards /api/... unchanged) and directly.
 
 The gateway never sits on the trading path (ADR 0006 section 1): it reads the topics and, for the three write
-endpoints (start a backtest, stop a run, the kill switch), writes a command to `<control>.command` and waits for the
+endpoints (start a backtest or live run, stop a run, the kill switch), writes a command to `<control>.command` and waits for the
 engine's answer on the run's `<prefix>.run` topic (docs/adr/0007-engine-command-channel.md). With no command sender
 (--replay) or no engine announcing itself, those endpoints answer with an error the console shows.
 
@@ -35,6 +35,7 @@ HEARTBEAT_S = 3.0
 STREAM_QUEUE = 1000                      # events buffered per browser; beyond that the stream only says "changed"
 ANSWER_TIMEOUT_S = 10.0                  # how long a write endpoint waits for the engine's answer
 MAX_BODY = 1 << 20
+LIVE_FEEDS = ("iex", "sip", "test")
 FIELD_ERROR = re.compile(r"([a-z_]+(?:\.[a-z0-9_]+)*): (.+)", re.S)
 
 RUN_PATH = re.compile(r"/v1/runs/([^/]+)(/[a-z-]+)?")
@@ -120,17 +121,22 @@ class Api:
         run = self._run(run_id)
         if resource == "":
             return run.detail()
+        # ?points=N thins a chart series (the last session stays whole); ?limit=N keeps a list's newest N.
+        points, limit = _count(query, "points"), _count(query, "limit")
         if resource == "/bars":
-            return run.bars_for((query.get("symbol") or [""])[0])
+            return run.bars_for((query.get("symbol") or [""])[0], points)
+        if resource == "/equity":
+            return run.equity(points)
         readers: dict[str, Callable[[], Any]] = {
-            "/portfolio": run.portfolio, "/equity": run.equity, "/signals": lambda: list(run.signals),
+            "/portfolio": run.portfolio, "/signals": lambda: list(run.signals),
             "/risk-decisions": lambda: list(run.risk_decisions), "/orders": run.order_list, "/fills": run.fill_list,
             "/trades": run.trades, "/metrics": lambda: run.metrics(self.store.queue_capacity),
         }
         reader = readers.get(resource)
         if reader is None:
             raise ApiError(404, "not_found", f"/runs/{{id}}{resource} is not served.")
-        return reader()
+        result = reader()
+        return result[-limit:] if limit and isinstance(result, list) else result
 
     # ---- commands (ADR 0007) -----------------------------------------------------------------------------------------
 
@@ -156,16 +162,27 @@ class Api:
                                or not run.status_report.get("engine_id") else NO_ENGINE)
 
     def create_backtest(self, body: Any) -> dict[str, Any]:
+        """Starts a backtest, or with "mode": "live" a live run on the engine's Alpaca feed ("feed": iex|sip|test)."""
         self._need_commands()
         if not isinstance(body, dict):
             raise ApiError(400, "invalid_request", "The request must be a JSON object (a BacktestRequest).")
+        mode = body.get("mode", "backtest")
+        if mode not in ("backtest", "live"):
+            raise ApiError(400, "invalid_backtest", "mode must be backtest or live.", "mode")
+        feed = body.get("feed", "iex")
+        if mode == "live" and feed not in LIVE_FEEDS:
+            raise ApiError(400, "invalid_backtest", "The live feed must be iex, sip or test.", "feed")
         with self.store.lock:
             if not self.store.live_engines():
                 raise ApiError(503, "engine_offline", NO_ENGINE)
-        run_id = new_run_id()
-        settings = {k: v for k, v in body.items() if k in ("name", "period_start", "period_end", "strategies", "risk",
-                                                            "simulation")}
-        answer = self._send("start_backtest", run_id, settings={**settings, "mode": "backtest"})
+        live = mode == "live"
+        run_id = new_run_id("live" if live else "bt")
+        keys = ("name", "strategies", "risk", "simulation") + (() if live else ("period_start", "period_end"))
+        settings = {k: v for k, v in body.items() if k in keys}
+        settings["mode"] = mode
+        if live:
+            settings["feed"] = feed
+        answer = self._send("start_live" if live else "start_backtest", run_id, settings=settings)
         if answer is None:
             raise ApiError(504, "engine_timeout", "The engine did not answer within "
                            f"{self.answer_timeout:g} seconds. Is `trading_engine serve` still running?")
@@ -199,6 +216,15 @@ class Api:
             raise ApiError(409, "not_running", answer["error"])
         with self.store.lock:
             return self._run(run_id).detail()
+
+
+def _count(query: dict[str, list[str]], name: str) -> int | None:
+    text = (query.get(name) or [""])[0]
+    if not text:
+        return None
+    if not text.isdigit() or int(text) == 0:
+        raise ApiError(400, "invalid_query", f"{name} must be a positive whole number.", field=name)
+    return int(text)
 
 
 def _refusal(error: str) -> ApiError:

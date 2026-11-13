@@ -47,8 +47,9 @@ public:
     using InstantCallback = std::function<bool(const ReplayProgress&)>;
 
     // Throws control::SettingsError if a strategy refuses its settings.
+    // `metrics`, if given, counts and times every stage and must outlive the run.
     ConfiguredRun(events::IEventBus& bus, common::ManualClock& clock, const control::RunSettings& settings,
-                  common::RunId run_id = common::RunId{1});
+                  common::RunId run_id = common::RunId{1}, analytics::SystemMetrics* metrics = nullptr);
 
     ConfiguredRun(const ConfiguredRun&)            = delete;
     ConfiguredRun& operator=(const ConfiguredRun&) = delete;

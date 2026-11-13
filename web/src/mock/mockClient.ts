@@ -1,6 +1,6 @@
 import type { EngineClient } from "../api/client";
 import { EngineApiError } from "../api/client";
-import type { BacktestRequest, RunConfig, RunDetail, RunEvent, RunStatus, RunSummary } from "../api/contract";
+import type { BacktestRequest, LiveRunRequest, RunConfig, RunDetail, RunEvent, RunStatus, RunSummary } from "../api/contract";
 import { toMicros } from "../lib/decimal";
 import { LAST_BACKTEST_SESSION, LIVE_SESSION, SYMBOLS, barAt, minutesBetween, nextMinute, sessionDates, sessionOpen } from "./market";
 import { LIVE_CONFIG, PRESET_BACKTESTS, sma, DEFAULT_RISK, DEFAULT_SIMULATION } from "./presets";
@@ -21,6 +21,9 @@ interface RunEntry {
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
+
+export const LIVE_NEEDS_ENGINE =
+  "Live runs need the real engine: the demo simulator has no live feed. Start the console with python3 start.py.";
 
 function storedRequests(): BacktestRequest[] {
   try {
@@ -344,6 +347,11 @@ export class MockEngineClient implements EngineClient {
       return this.summary(this.startBacktest(request, iso(Date.now()), false));
     });
 
+  createLiveRun = (_request: LiveRunRequest) =>
+    this.respond<RunSummary>(() => {
+      throw new EngineApiError(501, "not_supported", LIVE_NEEDS_ENGINE);
+    });
+
   stopRun = (runId: string) =>
     this.respond(() => {
       const entry = this.get(runId);
@@ -365,9 +373,9 @@ export class MockEngineClient implements EngineClient {
   equity = (id: string) => this.respond(() => this.get(id).sim.equity);
   bars = (id: string, symbol: string) => this.respond(() => this.get(id).sim.bars.get(symbol) ?? []);
   signals = (id: string) => this.respond(() => this.get(id).sim.signals);
-  riskDecisions = (id: string) => this.respond(() => this.get(id).sim.decisions);
+  riskDecisions = (id: string, limit?: number) => this.respond(() => newest(this.get(id).sim.decisions, limit));
   orders = (id: string) => this.respond(() => this.get(id).sim.orderList());
-  fills = (id: string) => this.respond(() => this.get(id).sim.fills);
+  fills = (id: string, limit?: number) => this.respond(() => newest(this.get(id).sim.fills, limit));
   trades = (id: string) => this.respond(() => this.get(id).sim.trades);
   metrics = (id: string) => this.respond(() => this.get(id).sim.metrics(iso(Date.now())));
 
@@ -383,4 +391,8 @@ export class MockEngineClient implements EngineClient {
   get liveRunId() {
     return this.liveId;
   }
+}
+
+function newest<T>(items: T[], limit?: number): T[] {
+  return limit ? items.slice(-limit) : items;
 }

@@ -37,7 +37,6 @@ TEST(Config, TheCheckedInExampleLoadsAndMatchesItsText) {
     EXPECT_EQ(c.risk.max_order_quantity, 1000);
     EXPECT_EQ(c.simulation.starting_cash, tec::Money::from_units(100'000));
     EXPECT_EQ(c.simulation.latency.order_to_fill, std::chrono::milliseconds{5});
-    EXPECT_EQ(c.logging.sink, "stderr");
 }
 
 TEST(Config, AnEmptyObjectIsTheDefaults) {
@@ -97,7 +96,6 @@ TEST(Config, ValidationRejectsValuesNoRunCanUse) {
     EXPECT_TRUE(mentions(error_of(R"({"alpaca": {"stream_url": "https://x"}})"), "must start with wss://"));
     EXPECT_TRUE(mentions(error_of(R"({"mode": "paper"})"), "mode: must be backtest or live"));
     EXPECT_TRUE(mentions(error_of(R"({"mode": "live", "alpaca": {"symbols": []}})"), "live mode"));
-    EXPECT_TRUE(mentions(error_of(R"({"logging": {"level": "loud"}})"), "logging.level"));
     EXPECT_TRUE(mentions(error_of(R"({"database": {"pool_size": 0}})"), "database.pool_size"));
 }
 

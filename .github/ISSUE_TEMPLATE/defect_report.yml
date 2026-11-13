@@ -21,7 +21,7 @@ body:
     attributes:
       label: Summary
       description: One sentence.
-      placeholder: "HistoricalReplay emits events out of order when two symbols share a timestamp."
+      placeholder: "Replay emits events out of order when two symbols share a timestamp."
     validations:
       required: true
 
@@ -128,7 +128,7 @@ body:
       description: >
         A GoogleTest case (or a description of one) that fails today and should
         pass once fixed. A defect is not closed without a regression test.
-      placeholder: "TEST(HistoricalReplay, TieBreaksOnSequenceWhenTimestampsEqual) { ... }"
+      placeholder: "TEST(ConfiguredRun, TieBreaksOnSequenceWhenTimestampsEqual) { ... }"
     validations:
       required: false
 

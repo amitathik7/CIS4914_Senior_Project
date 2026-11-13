@@ -18,7 +18,7 @@ those areas contain.
 | Member | Area | Covers |
 |--------|------|--------|
 | **A** | Core framework, event bus, build & observability | `common/` (types, clock, errors, logging facade), `events/`, `configuration/`, `app/`, `analytics/system_metrics.*`, `cmake/` + root `CMakeLists.txt`, `.github/` (CI, issue templates), `benchmarks/`, `tests/support/`. Backup: B. |
-| **B** | Market data, ingestion & backtesting | `market_data/` (sources, `MarketDataService`, `AlpacaHistoricalSource`, `AlpacaLiveSource`), `backtesting/` (`HistoricalReplay`), `trading_engine_alpaca_adapter` + its private deps, `tests/fixtures/`, the determinism harness. Backup: A. |
+| **B** | Market data, ingestion & backtesting | `market_data/` (sources, `MarketDataService`, `AlpacaHistoricalSource`, `AlpacaLiveSource`), `trading_engine_alpaca_adapter` + its private deps, `tests/fixtures/`, the determinism harness. Backup: A. |
 | **C** | Strategy, risk & analytics | `strategy/` (`StrategyEngine`, reference strategies), `risk/` (`RiskManager`, policies), `analytics/performance_analyzer.*`, `python/visualization/`, `docs/EXPORT_SCHEMA.md`. Backup: D. |
 | **D** | Execution, portfolio & persistence | `execution/` (`NaiveFillModel`, `ExecutionSimulator`), `portfolio/` (`PortfolioManager`), `persistence/` (repository interfaces, `PostgresRepository`), `trading_engine_postgres_adapter` + its private deps, `database/` (schema + migrations). Backup: C. |
 

@@ -27,14 +27,20 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     client.listRuns().then(setRuns, () => setRuns([]));
   }, [client]);
 
+  // Engine info too: an engine started after the page loaded (another start.py) can have different recorded bars.
   useEffect(() => {
-    client.info().then(setInfo, () => undefined);
-    refreshRuns();
-    const timer = window.setInterval(refreshRuns, 3000);
+    const refresh = () => {
+      client.info().then(setInfo, () => undefined);
+      refreshRuns();
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
     return () => window.clearInterval(timer);
   }, [client, refreshRuns]);
 
-  const defaultRunId = runs?.find((r) => r.mode === "live" && r.status === "running")?.run_id ?? runs?.[0]?.run_id;
+  // The console opens on a live run in progress, else the newest run that did not fail, else the newest.
+  const defaultRunId = runs?.find((r) => r.mode === "live" && r.status === "running")?.run_id
+    ?? runs?.find((r) => r.status !== "failed")?.run_id ?? runs?.[0]?.run_id;
 
   return (
     <EngineContext.Provider value={{ client, info, runs, refreshRuns, defaultRunId }}>{children}</EngineContext.Provider>

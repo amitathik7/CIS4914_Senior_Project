@@ -35,6 +35,7 @@
 //  borrows the pipeline, the bus and the clock, which must outlive it.
 // -----------------------------------------------------------------------------
 
+#include "trading_engine/app/metered_bus.hpp"
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/identifiers.hpp"
 #include "trading_engine/configuration/engine_config.hpp"
@@ -53,6 +54,7 @@ struct OrderFlowConfig {
     config::RiskLimits       risk{};
     config::SimulationConfig simulation{};       // slippage_bps and fees are used
     bool                     risk_policies{true};   // false: buying power / no-short only
+    analytics::SystemMetrics* metrics{nullptr};     // optional; must outlive the flow
 };
 
 class OrderFlow {
@@ -73,6 +75,8 @@ public:
     [[nodiscard]] const execution::ExecutionSimulator& execution() const noexcept { return execution_; }
 
 private:
+    MeteredBus                    execution_bus_;
+    MeteredBus                    risk_bus_;
     execution::NaiveFillModel     fill_model_{};
     execution::ExecutionSimulator execution_;
     risk::RiskManager             risk_;

@@ -29,7 +29,7 @@ export function ServiceNotice({ state }: { state: LabState }) {
       <Notice tone="warn">
         <div className="stack" style={{ gap: 8 }}>
           <div><b>The service is running, but the replay engine is not available.</b> {r.message}</div>
-          {r.setup && <><span className="faint">Build it once from the repository root, then retry:</span><pre className="lab-code">{r.setup}</pre></>}
+          {r.setup && <><span className="faint">Restart with python3 start.py, which builds it, or build it once from the repository root and retry:</span><pre className="lab-code">{r.setup}</pre></>}
           <div>{retry}</div>
         </div>
       </Notice>
@@ -44,8 +44,8 @@ export function ServiceNotice({ state }: { state: LabState }) {
         <div>
           <b>The Strategy Lab service is not running.</b> Strategies runs the real C++ strategy code through a small local service, because a browser cannot start a native program. Until it is running nothing can be replayed or checked; the rest of the console is unaffected.
         </div>
-        <span className="faint">Start it in a terminal (it needs only Python and the built engine), then retry:</span>
-        <pre className="lab-code">python python/strategy_lab/lab_gateway.py</pre>
+        <span className="faint">python3 start.py starts it with everything else. To start only this service, run this in a terminal, then retry:</span>
+        <pre className="lab-code">python3 python/strategy_lab/lab_gateway.py</pre>
         <div>{retry}</div>
       </div>
     </Notice>

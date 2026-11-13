@@ -16,6 +16,7 @@ std::string_view to_string(CommandAction action) noexcept {
         case CommandAction::StartBacktest: return "start_backtest";
         case CommandAction::StopRun:       return "stop";
         case CommandAction::SetKillSwitch: return "set_kill_switch";
+        case CommandAction::StartLive:     return "start_live";
     }
     return "invalid";
 }
@@ -320,6 +321,7 @@ RunSettings settings_from(const Reader& r) {
             bad(r.where("mode"), "must be backtest or live.", r.setting);
         }
     }
+    if (r.find("feed")) s.live_feed = r.str("feed");
     s.period_start = r.opt_time("period_start");
     s.period_end   = r.opt_time("period_end");
 
@@ -378,8 +380,8 @@ Command command_from(const Reader& r) {
     c.run_id     = r.str("run_id");
     c.issued_at  = r.time("issued_at");
     const std::string action = r.str("action");
-    if (action == "start_backtest") {
-        c.action = CommandAction::StartBacktest;
+    if (action == "start_backtest" || action == "start_live") {
+        c.action = action == "start_live" ? CommandAction::StartLive : CommandAction::StartBacktest;
         try {
             c.settings = settings_from(Reader{r.child("settings").object, "", true});
         } catch (const SettingsError& e) {
@@ -454,6 +456,7 @@ std::string settings_json(const RunSettings& s) {
     ObjectWriter w{out};
     w.string("name", s.name);
     w.string("mode", s.mode == config::RunMode::Live ? "live" : "backtest");
+    if (s.mode == config::RunMode::Live || s.live_feed != "iex") w.string("feed", s.live_feed);
     if (s.period_start) w.string("period_start", time_text(*s.period_start));
     if (s.period_end)   w.string("period_end", time_text(*s.period_end));
 

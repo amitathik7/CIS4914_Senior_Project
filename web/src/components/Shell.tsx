@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { EngineApiError } from "../api/client";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router";
 import type { ReactNode } from "react";
 import type { RunSummary } from "../api/contract";
@@ -143,6 +144,33 @@ function RunSwitcher() {
   );
 }
 
+// Ends a queued or running run, live or backtest, from any of its pages; a stopped run keeps the report so far.
+function StopRun({ run }: { run: RunSummary }) {
+  const { client, refreshRuns } = useEngine();
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState<string>();
+  const stop = async () => {
+    setStopping(true);
+    setError(undefined);
+    try {
+      await client.stopRun(run.run_id);
+      refreshRuns();
+    } catch (err) {
+      setError(err instanceof EngineApiError ? err.message : "The engine did not stop the run. Try again.");
+    } finally {
+      setStopping(false);
+    }
+  };
+  return (
+    <>
+      {error && <span className="down" role="alert">{error}</span>}
+      <button type="button" className="btn btn-sm" onClick={stop} disabled={stopping}>
+        {stopping ? "Stopping…" : run.status === "queued" ? "Cancel run" : "Stop run"}
+      </button>
+    </>
+  );
+}
+
 function TopBar() {
   const { info } = useEngine();
   const listed = useCurrentRun();
@@ -164,6 +192,7 @@ function TopBar() {
           <span>{run.mode === "live" ? day(run.clock) : `Replay ended ${day(run.clock)}`}</span>
         </div>
       )}
+      {run && (run.status === "running" || run.status === "queued") && <StopRun run={run} />}
     </header>
   );
 }

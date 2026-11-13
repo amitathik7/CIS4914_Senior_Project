@@ -12,6 +12,10 @@ import { useRunResource } from "../state/engine";
 import { candles, equityLine, fillMarkers, lastSession } from "./chartData";
 import { OrderDrawer } from "./OrderDrawer";
 
+const CHART_POINTS = 1500;      // older sessions thinned to about this many points; the last session stays whole
+const RECENT_FILLS = 500;       // enough for the last session's markers and the activity list
+const RECENT_DECISIONS = 60;
+
 const moneyAxis = (v: number) => `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const priceAxis = (v: number) => v.toFixed(2);
 
@@ -45,17 +49,18 @@ export function Overview() {
   const { runId } = useParams();
   const run = useCurrentRun();
   const live = run?.mode === "live" && run.status === "running";
+  const failedEarly = run?.mode === "live" ? "This run failed before the first bar arrived." : "This run failed before any bar was replayed.";
   const portfolio = useRunResource(runId, (c, id) => c.portfolio(id));
   const detail = useRunResource(runId, (c, id) => c.getRun(id));
-  const equity = useRunResource(runId, (c, id) => c.equity(id));
+  const equity = useRunResource(runId, (c, id) => c.equity(id, CHART_POINTS));
   const metrics = useRunResource(runId, (c, id) => c.metrics(id));
-  const fills = useRunResource(runId, (c, id) => c.fills(id));
-  const decisions = useRunResource(runId, (c, id) => c.riskDecisions(id));
+  const fills = useRunResource(runId, (c, id) => c.fills(id, RECENT_FILLS));
+  const decisions = useRunResource(runId, (c, id) => c.riskDecisions(id, RECENT_DECISIONS));
   const [range, setRange] = useState<"session" | "all">("session");
   const symbols = run?.symbols ?? [];
   const [chosen, setSymbol] = useState<string>();
   const symbol = chosen && symbols.includes(chosen) ? chosen : symbols[0];
-  const bars = useRunResource(runId, (c, id) => (symbol ? c.bars(id, symbol) : Promise.resolve([])), [symbol]);
+  const bars = useRunResource(runId, (c, id) => (symbol ? c.bars(id, symbol, CHART_POINTS) : Promise.resolve([])), [symbol]);
   const [openOrder, setOpenOrder] = useState<number>();
 
   const equitySeries = useMemo(() => {
@@ -63,8 +68,16 @@ export function Overview() {
     return equityLine(range === "session" ? lastSession(points) : points);
   }, [equity.data, range]);
 
+  // Green above, red below: the session's opening equity, or the starting cash for the whole run.
+  const startingCash = toNumber(detail.data?.config.simulation.starting_cash ?? "0");
+  const equityBase = range === "session" ? (equitySeries[0]?.value ?? startingCash) : startingCash || (equitySeries[0]?.value ?? 0);
+
   const priceSeries = useMemo(() => candles(bars.data ?? []), [bars.data]);
-  const markers = useMemo(() => (symbol ? fillMarkers(fills.data ?? [], symbol) : []), [fills.data, symbol]);
+  // Only fills on a candle the chart has: older candles are merged, so a fill's minute may not be one of them.
+  const markers = useMemo(() => {
+    const times = new Set(priceSeries.map((c) => c.time));
+    return symbol ? fillMarkers(fills.data ?? [], symbol).filter((m) => times.has(m.time)) : [];
+  }, [fills.data, symbol, priceSeries]);
 
   const activity = useMemo(() => {
     const items: { at: string; key: string; orderId?: number; node: React.ReactNode }[] = [];
@@ -132,9 +145,9 @@ export function Overview() {
           >
             {equity.data ? (
               equitySeries.length > 1
-                ? <div style={{ padding: "8px 4px 4px 0" }}><TimeChart key={range} label="Equity over time" height={280} format={moneyAxis} series={[{ id: "equity", kind: "area", tone: "accent", data: equitySeries }]} /></div>
+                ? <div style={{ padding: "8px 4px 4px 0" }}><TimeChart key={range} follow label="Equity over time" height={280} format={moneyAxis} series={[{ id: "equity", kind: "baseline", base: equityBase, steady: { base: equityBase, minSpan: Math.max(1, equityBase * 0.01) }, data: equitySeries }]} /></div>
                 : run?.status === "failed"
-                  ? <Empty title="No equity history">This run failed before any bar was replayed.</Empty>
+                  ? <Empty title="No equity history">{failedEarly}</Empty>
                   : <Empty title="No equity history yet">The first bar has not arrived.</Empty>
             ) : <Loading height={280} />}
           </Panel>
@@ -145,7 +158,7 @@ export function Overview() {
             flush
           >
             {bars.data && priceSeries.length === 0 ? (
-              <Empty title="No bars">{run?.status === "failed" ? "This run failed before any bar was replayed." : "Prices appear when the first bar arrives."}</Empty>
+              <Empty title="No bars">{run?.status === "failed" ? failedEarly : "Prices appear when the first bar arrives."}</Empty>
             ) : bars.data ? (
               <div style={{ padding: "8px 4px 4px 0" }}>
                 <TimeChart

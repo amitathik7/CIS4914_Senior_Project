@@ -9,13 +9,16 @@ cash moves by price x signed quantity plus fees, fees are charged to realised P&
 on reductions, and a flip opens the remainder at the fill price. Money is integer millionths throughout.
 
 A Store is shared by the consumer thread (which applies events) and the HTTP threads (which read): every access holds
-the store's lock, and derived figures are recomputed only when the run has changed since they were last asked for.
+the store's lock. The derived figures are brought up to date when asked for, from where they were last left: a long run
+(a year of minute bars) costs only its new events per refresh, not a walk of everything it has seen.
 """
 
 from __future__ import annotations
 
+import bisect
 import math
 import threading
+from array import array
 import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
@@ -32,6 +35,7 @@ HISTOGRAM_BOUNDS_US = (100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_00
 STAGE_FOR_TYPE = {"market_data": "ingest", "signal": "strategy", "risk_decision": "risk", "order": "execution",
                   "fill": "portfolio"}
 ENGINE_GRACE_S = 6.0                       # an engine is gone after max(this, 3 heartbeats) without one
+CHECKPOINT_EVERY = 2_000                   # timeline items between saved ledger states (how far a late event rewinds)
 
 
 def utc_now() -> str:
@@ -72,7 +76,7 @@ class _Position:
 
 @dataclass
 class _OpenTrade:
-    strategy_id: str
+    order_id: int                          # the opening order; its strategy is looked up when the trade is read
     entry_time: str
     realized_at_open: int
     entry_qty: int = 0
@@ -83,6 +87,168 @@ class _OpenTrade:
     peak_qty: int = 0
 
 
+class _SeenSequences:
+    """Which envelope sequences one (origin, type) has delivered: one bit each, from the lowest seen."""
+
+    def __init__(self) -> None:
+        self.base = 0
+        self.bits = bytearray()
+
+    def has(self, sequence: int) -> bool:
+        byte, bit = divmod(sequence - self.base, 8)
+        return 0 <= byte < len(self.bits) and sequence >= self.base and bool(self.bits[byte] >> bit & 1)
+
+    def add(self, sequence: int) -> bool:
+        """Marks `sequence` seen; False if it already was (a redelivery)."""
+        if not self.bits:
+            self.base = sequence - sequence % 8
+        elif sequence < self.base:
+            grow = (self.base - sequence + 7) // 8
+            self.bits[:0] = bytes(grow)
+            self.base -= grow * 8
+        offset = sequence - self.base
+        byte, bit = divmod(offset, 8)
+        if byte >= len(self.bits):
+            self.bits.extend(bytes(byte - len(self.bits) + 1))
+        if self.bits[byte] >> bit & 1:
+            return False
+        self.bits[byte] |= 1 << bit
+        return True
+
+
+@dataclass
+class _Snapshot:
+    """The ledger's state before the timeline item at `index` (always the first item of an instant)."""
+    index: int
+    cash: int
+    positions: dict[str, _Position]
+    marks: dict[str, int]
+    open_trades: dict[str, _OpenTrade]
+    peak: int
+    fees_paid: int
+    trades: int
+    equity: int
+    periodic: bool = False                 # kept for good; the other one is only the newest instant's start
+
+
+class _Ledger:
+    """The portfolio derived from marks and fills in time order, kept up to date instead of rebuilt.
+
+    Items usually arrive in time order and are simply applied. One that sorts before what was already applied (another
+    topic's backlog, or a fill at an instant already shown) rewinds to the last saved state before it and replays from
+    there, so the result is always what a walk of the whole timeline from the start would give."""
+
+    def __init__(self, starting_cash: int) -> None:
+        self.starting_cash = starting_cash
+        self.applied = 0                                      # timeline items applied
+        self.equity_time: list[str] = []
+        self.equity_value = array("q")
+        self.equity_cash = array("q")
+        self.equity_drawdown = array("d")
+        self.trades: list[dict[str, Any]] = []
+        self.checkpoints: list[_Snapshot] = []
+        self._restore(_Snapshot(0, starting_cash, {}, {}, {}, 0, 0, 0, 0))
+
+    def _save(self, index: int, periodic: bool) -> _Snapshot:
+        return _Snapshot(index, self.cash, {k: _Position(**vars(v)) for k, v in self.positions.items()}, dict(self.marks),
+                         {k: _OpenTrade(**vars(v)) for k, v in self.open_trades.items()}, self.peak, self.fees_paid,
+                         len(self.trades), len(self.equity_time), periodic)
+
+    def _restore(self, snap: _Snapshot) -> None:
+        self.cash, self.peak, self.fees_paid = snap.cash, snap.peak, snap.fees_paid
+        self.positions = {k: _Position(**vars(v)) for k, v in snap.positions.items()}
+        self.marks = dict(snap.marks)
+        self.open_trades = {k: _OpenTrade(**vars(v)) for k, v in snap.open_trades.items()}
+        del self.trades[snap.trades:]
+        del self.equity_time[snap.equity:]
+        del self.equity_value[snap.equity:]
+        del self.equity_cash[snap.equity:]
+        del self.equity_drawdown[snap.equity:]
+        self.applied = snap.index
+
+    def update(self, timeline: list[tuple[str, int, int, Any]], changed_from: int) -> None:
+        """Replays from the last saved state before timeline[changed_from]. A state saved at `changed_from` itself
+        is not used: the item now there may belong to the instant before it."""
+        while self.checkpoints and self.checkpoints[-1].index >= changed_from:
+            self.checkpoints.pop()
+        if self.checkpoints:
+            self._restore(self.checkpoints[-1])
+        else:
+            self._restore(_Snapshot(0, self.starting_cash, {}, {}, {}, 0, 0, 0, 0))
+        self._apply(timeline)
+
+    def _apply(self, timeline: list[tuple[str, int, int, Any]]) -> None:
+        index, end = self.applied, len(timeline)
+        periodic = [c.index for c in self.checkpoints if c.periodic]
+        last_periodic = periodic[-1] if periodic else 0
+        while index < end:
+            at = timeline[index][0]
+            exists = bool(self.checkpoints) and self.checkpoints[-1].index == index
+            if index - last_periodic >= CHECKPOINT_EVERY:
+                if not exists:
+                    self.checkpoints.append(self._save(index, True))
+                last_periodic = index
+            elif timeline[end - 1][0] == at and not exists:   # the newest instant: the one most likely to grow
+                self.checkpoints.append(self._save(index, False))
+            has_mark = False
+            while index < end and timeline[index][0] == at:
+                _, kind, _, item = timeline[index]
+                if kind == 0:
+                    self.marks[item[0]] = item[1]
+                    has_mark = True
+                else:
+                    self._fill(at, item)
+                index += 1
+            if has_mark:                                     # one equity point per market-data instant
+                value = self.cash + sum(self.marks.get(s, p.average_cost) * p.quantity for s, p in self.positions.items())
+                self.peak = max(self.peak, value)
+                self.equity_time.append(at)
+                self.equity_value.append(value)
+                self.equity_cash.append(self.cash)
+                self.equity_drawdown.append(value / self.peak - 1 if self.peak > 0 else 0.0)
+        self.checkpoints = [c for i, c in enumerate(self.checkpoints) if c.periodic or i == len(self.checkpoints) - 1]
+        self.applied = index
+
+    def _fill(self, at: str, fill: dict[str, Any]) -> None:
+        qty, price, fees = fill["_signed"], wire.micros(fill["fill_price"]), wire.micros(fill["fees"])
+        self.fees_paid += fees
+        self.cash -= price * qty + fees
+        pos = self.positions.setdefault(fill["symbol"], _Position())
+        pos.realized -= fees
+        old, new = pos.quantity, pos.quantity + qty
+        trade = self.open_trades.get(fill["symbol"])
+        if old == 0 or (old > 0) == (qty > 0):
+            pos.average_cost = wire.divide(pos.average_cost * abs(old) + price * abs(qty), abs(new))
+            if trade is None:
+                trade = self.open_trades[fill["symbol"]] = _OpenTrade(fill["order_id"], at, pos.realized + fees)
+            trade.entry_qty += abs(qty)
+            trade.entry_notional += abs(qty) * price
+            trade.fees += fees
+        else:
+            closed = min(abs(qty), abs(old))
+            pos.realized += (price - pos.average_cost) * (closed if old > 0 else -closed)
+            if trade is not None:
+                trade.exit_qty += closed
+                trade.exit_notional += closed * price
+                trade.fees += fees
+            if new == 0 or (new > 0) != (old > 0):
+                if trade is not None:
+                    self.trades.append(_closed_trade(fill["symbol"], trade, at, pos.realized))
+                    del self.open_trades[fill["symbol"]]
+                pos.average_cost = 0 if new == 0 else price
+                if new != 0:
+                    trade = self.open_trades[fill["symbol"]] = _OpenTrade(fill["order_id"], at, pos.realized)
+                    trade.entry_qty, trade.entry_notional = abs(new), abs(new) * price
+        pos.quantity = new
+        if fill["symbol"] in self.open_trades:
+            self.open_trades[fill["symbol"]].peak_qty = max(self.open_trades[fill["symbol"]].peak_qty, abs(new))
+        self.marks[fill["symbol"]] = price
+
+    def equity_point(self, i: int) -> dict[str, Any]:
+        return {"time": self.equity_time[i], "equity": wire.text(self.equity_value[i]),
+                "cash": wire.text(self.equity_cash[i]), "drawdown": self.equity_drawdown[i]}
+
+
 class Run:
     """One topic prefix."""
 
@@ -91,15 +257,26 @@ class Run:
         self.defaults = defaults
         self.engine_alive = engine_alive
         self.status_report: dict[str, Any] | None = None    # the latest <prefix>.run payload
+        # When the run's first message was sent, so the run list keeps its order across gateway restarts (which
+        # read every run's backlog at once); the gateway's own clock until a message says otherwise.
         self.created_at = utc_now()
+        self._sent_first: str | None = None
         self.last_message = time.monotonic()
         self.version = 0
         self.counts: Counter[str] = Counter()
         self.decode_errors = 0
         self.duplicates = 0
-        self._seen: set[tuple[str, int, str]] = set()
-        self.bars: dict[str, list[dict[str, Any]]] = {}
-        self.marks: list[tuple[str, str, int]] = []          # (exchange_time, symbol, price) in arrival order
+        self._seen: dict[tuple[str, str], _SeenSequences] = {}
+        # Per symbol: (exchange_time, open, high, low, price, volume, sequence), the wire's decimal text kept as sent.
+        self.bars: dict[str, list[tuple[str, str, str, str, str, int, int]]] = {}
+        self.mark_symbols: set[str] = set()
+        # Marks (kind 0: (symbol, price)) and fills (kind 1) by (time, kind, arrival): marks before fills at an instant.
+        self.timeline: list[tuple[str, int, int, Any]] = []
+        self._arrivals = 0
+        self._changed_from: int | None = None                # lowest timeline index added since the ledger's update
+        self._ledger: _Ledger | None = None
+        self._report: tuple[int, dict[str, Any]] | None = None
+        self._merged: dict[str, tuple[tuple[int, int], list[tuple[str, str, str, str, str, int, int]]]] = {}
         self.first_time: str | None = None
         self.last_time: str | None = None
         self.signals: list[dict[str, Any]] = []
@@ -109,19 +286,21 @@ class Run:
         self.fills: dict[int, dict[str, Any]] = {}
         self.latency_us: dict[str, deque[int]] = {t: deque(maxlen=LATENCY_SAMPLES) for t in wire.EVENT_TYPES}
         self.throughput: deque[tuple[int, int]] = deque(maxlen=120)   # (wall second, messages) for the System page
-        self._derived: tuple[int, dict[str, Any]] | None = None
 
     # ---- applying events ---------------------------------------------------------------------------------------------
 
     def apply(self, envelope: Envelope, received_at: float, live_since: float = 0.0) -> bool:
-        key = (envelope.origin, envelope.sequence, envelope.type)
-        if key in self._seen:
-            self.duplicates += 1                              # at-least-once delivery: a redelivered message
-            return False
+        seen = self._seen.setdefault((envelope.origin, envelope.type), _SeenSequences())
         handler = {"market_data": self._market_data, "signal": self._signal, "order": self._order,
                    "fill": self._fill, "risk_decision": self._risk, "run": self._run_status}[envelope.type]
+        if seen.has(envelope.sequence):
+            self.duplicates += 1                              # at-least-once delivery: a redelivered message
+            return False
         handler(envelope.payload)                             # raises WireError before anything is recorded
-        self._seen.add(key)
+        seen.add(envelope.sequence)
+        if envelope.enqueued_at and (self._sent_first is None or _instant(envelope.enqueued_at) < _instant(self._sent_first)):
+            self._sent_first = envelope.enqueued_at
+            self.created_at = envelope.enqueued_at
         self.counts[envelope.type] += 1
         self.last_message = time.monotonic()
         self.version += 1
@@ -144,13 +323,12 @@ class Run:
             return                                            # a status event: nothing to chart or mark
         price_micros = wire.micros(price)
         if p.get("type") in ("bar", "trade"):
-            self.bars.setdefault(symbol, []).append({
-                "symbol": symbol, "exchange_time": at,
-                "open": p.get("open", price), "high": p.get("high", price), "low": p.get("low", price),
-                "price": price, "volume": int(p.get("volume", p.get("size", 0))), "sequence": int(p.get("sequence", 0)),
-            })
+            self.bars.setdefault(symbol, []).append((at, p.get("open", price), p.get("high", price), p.get("low", price),
+                                                     price, int(p.get("volume", p.get("size", 0))),
+                                                     int(p.get("sequence", 0))))
         if price_micros > 0:
-            self.marks.append((at, symbol, price_micros))
+            self.mark_symbols.add(symbol)
+            self._add_to_timeline(at, 0, (symbol, price_micros))
         self.first_time = at if self.first_time is None or at < self.first_time else self.first_time
         self.last_time = at if self.last_time is None or at > self.last_time else self.last_time
 
@@ -211,6 +389,18 @@ class Run:
         fill["filled_quantity"] = abs(quantity)
         fill["_signed"] = quantity
         self.fills[fill_id] = fill
+        self._add_to_timeline(fill["filled_at"], 1, fill)
+
+    def _add_to_timeline(self, at: str, kind: int, item: Any) -> None:
+        self._arrivals += 1
+        entry = (at, kind, self._arrivals, item)
+        if not self.timeline or self.timeline[-1][:3] <= entry[:3]:
+            index = len(self.timeline)
+            self.timeline.append(entry)
+        else:
+            index = bisect.bisect_right(self.timeline, entry[:3], key=lambda e: e[:3])
+            self.timeline.insert(index, entry)
+        self._changed_from = index if self._changed_from is None else min(self._changed_from, index)
 
     # ---- reading -----------------------------------------------------------------------------------------------------
 
@@ -249,7 +439,7 @@ class Run:
             return self.defaults.starting_cash
 
     def symbols(self) -> list[str]:
-        seen = set(self.bars) | {s for _, s, _ in self.marks}
+        seen = set(self.bars) | self.mark_symbols
         if not seen and self.config():
             for strategy in self.config().get("strategies", []):                 # type: ignore[union-attr]
                 seen.update(strategy.get("symbols", []))
@@ -278,39 +468,44 @@ class Run:
             out["progress"] = report["progress"]
         if out["status"] == "failed":
             out["error"] = report.get("error") or "The engine running this run stopped answering."
-        if out["status"] in ("completed", "stopped") and self.marks:
+        if out["status"] in ("completed", "stopped") and self.mark_symbols:
             out["report"] = self.report()
         return out
 
     def report(self) -> dict[str, Any]:
         """PerformanceReport with ADR 0006 section 5's definitions (as the demo engine computes it), from the derived
         equity curve and trades. It stands in for PerformanceAnalyzer, which is still a stub."""
-        d = self.derived()
+        if self._report is None or self._report[0] != self.version:
+            self._report = (self.version, self._compute_report())
+        return self._report[1]
+
+    def _compute_report(self) -> dict[str, Any]:
+        ledger = self.ledger()
         start = self.starting_cash()
-        points = [wire.micros(p["equity"]) for p in d["equity"]]
+        points = ledger.equity_value
         returns, previous = [], start
         for value in points:
             returns.append(value / previous - 1 if previous > 0 else 0.0)
             previous = value
         closes: dict[str, int] = {}
-        for p in d["equity"]:
-            closes[p["time"][:10]] = wire.micros(p["equity"])
+        for at, value in zip(ledger.equity_time, points):
+            closes[at[:10]] = value
         daily, previous = [], start
         for value in closes.values():
             daily.append(value / previous - 1 if previous > 0 else 0.0)
             previous = value
-        pnls = [wire.micros(t["pnl"]) for t in d["trades"]]
+        pnls = [wire.micros(t["pnl"]) for t in ledger.trades]
         gross_profit = sum(v for v in pnls if v > 0)
         gross_loss = -sum(v for v in pnls if v < 0)
         ending = points[-1] if points else start
         out: dict[str, Any] = {
             "run_id": self.run_id, "generated_at": utc_now(),
-            "period_start": d["equity"][0]["time"] if points else self.created_at,
-            "period_end": d["equity"][-1]["time"] if points else self.created_at,
+            "period_start": ledger.equity_time[0] if points else self.created_at,
+            "period_end": ledger.equity_time[-1] if points else self.created_at,
             "total_return": ending / start - 1 if start > 0 else 0.0,
             "volatility": _sample_sd(returns) * math.sqrt(252 * BARS_PER_SESSION),
-            "max_drawdown": min([p["drawdown"] for p in d["equity"]] + [0.0]),
-            "trade_count": len(pnls), "ending_equity": wire.text(ending), "fees_paid": wire.text(d["fees_paid"]),
+            "max_drawdown": min(min(ledger.equity_drawdown, default=0.0), 0.0),
+            "trade_count": len(pnls), "ending_equity": wire.text(ending), "fees_paid": wire.text(ledger.fees_paid),
         }
         if not pnls:
             out["profit_factor_status"] = "no_trades"
@@ -348,8 +543,27 @@ class Run:
             config["period_end"] = summary["period_end"]
         return {**summary, "config": config, "kill_switch": {"engaged": False}}
 
-    def bars_for(self, symbol: str) -> list[dict[str, Any]]:
-        return list(self.bars.get(symbol, ()))
+    def bars_for(self, symbol: str, points: int | None = None) -> list[dict[str, Any]]:
+        """The symbol's bars; with `points`, the last session as recorded and everything before it merged into at most
+        that many candles (open of the first, high and low of all, close of the last, volume summed)."""
+        bars = self.bars.get(symbol, [])
+        keep = _last_session_start([b[0] for b in bars])
+        older = bars[:keep]
+        if points and len(older) > points:
+            cached = self._merged.get(symbol)
+            if cached is None or cached[0] != (keep, points):       # the older sessions change once a day
+                size = math.ceil(len(older) / points)
+                merged = []
+                for k in range(0, len(older), size):
+                    group = older[k:k + size]
+                    high = max(group, key=lambda b: wire.micros(b[2]))[2]
+                    low = min(group, key=lambda b: wire.micros(b[3]))[3]
+                    merged.append((group[0][0], group[0][1], high, low, group[-1][4], sum(b[5] for b in group),
+                                   group[-1][6]))
+                cached = self._merged[symbol] = ((keep, points), merged)
+            bars = cached[1] + bars[keep:]
+        return [{"symbol": symbol, "exchange_time": b[0], "open": b[1], "high": b[2], "low": b[3], "price": b[4],
+                 "volume": b[5], "sequence": b[6]} for b in bars]
 
     def order_list(self) -> list[dict[str, Any]]:
         return sorted(self.orders.values(), key=lambda o: o["id"])
@@ -358,91 +572,21 @@ class Run:
         return [{k: v for k, v in f.items() if not k.startswith("_")}
                 for f in sorted(self.fills.values(), key=lambda f: (f["filled_at"], f["id"]))]
 
-    def derived(self) -> dict[str, Any]:
-        if self._derived is None or self._derived[0] != self.version:
-            self._derived = (self.version, self._derive())
-        return self._derived[1]
-
-    def _derive(self) -> dict[str, Any]:
-        """Walk marks and fills in time order with the Portfolio Manager's accounting."""
-        timeline: list[tuple[str, int, Any]] = [(at, 0, (symbol, price)) for at, symbol, price in self.marks]
-        timeline += [(f["filled_at"], 1, f) for f in self.fills.values()]
-        timeline.sort(key=lambda item: (item[0], item[1]))   # marks before fills at the same instant
-
+    def ledger(self) -> _Ledger:
+        """The derived portfolio, brought up to date with what arrived since it was last asked for."""
         cash = self.starting_cash()
-        positions: dict[str, _Position] = {}
-        marks: dict[str, int] = {}
-        open_trades: dict[str, _OpenTrade] = {}
-        trades: list[dict[str, Any]] = []
-        equity: list[dict[str, Any]] = []
-        peak = 0
-        fees_paid = 0
-        group_has_mark = False
-
-        def total_equity() -> int:
-            return cash + sum(marks.get(s, p.average_cost) * p.quantity for s, p in positions.items())
-
-        for index, (at, kind, item) in enumerate(timeline):
-            if kind == 0:
-                marks[item[0]] = item[1]
-            else:
-                fill = item
-                qty, price, fees = fill["_signed"], wire.micros(fill["fill_price"]), wire.micros(fill["fees"])
-                fees_paid += fees
-                cash -= price * qty + fees
-                pos = positions.setdefault(fill["symbol"], _Position())
-                pos.realized -= fees
-                old, new = pos.quantity, pos.quantity + qty
-                trade = open_trades.get(fill["symbol"])
-                if old == 0 or (old > 0) == (qty > 0):
-                    pos.average_cost = wire.divide(pos.average_cost * abs(old) + price * abs(qty), abs(new))
-                    if trade is None:
-                        order = self.orders.get(fill["order_id"], {})
-                        trade = open_trades[fill["symbol"]] = _OpenTrade(order.get("strategy_id", ""), at,
-                                                                         pos.realized + fees)
-                    trade.entry_qty += abs(qty)
-                    trade.entry_notional += abs(qty) * price
-                    trade.fees += fees
-                else:
-                    closed = min(abs(qty), abs(old))
-                    pos.realized += (price - pos.average_cost) * (closed if old > 0 else -closed)
-                    if trade is not None:
-                        trade.exit_qty += closed
-                        trade.exit_notional += closed * price
-                        trade.fees += fees
-                    if new == 0 or (new > 0) != (old > 0):
-                        if trade is not None:
-                            trades.append(_closed_trade(fill["symbol"], trade, at, pos.realized))
-                            del open_trades[fill["symbol"]]
-                        pos.average_cost = 0 if new == 0 else price
-                        if new != 0:
-                            order = self.orders.get(fill["order_id"], {})
-                            trade = open_trades[fill["symbol"]] = _OpenTrade(order.get("strategy_id", ""), at,
-                                                                             pos.realized)
-                            trade.entry_qty, trade.entry_notional = abs(new), abs(new) * price
-                pos.quantity = new
-                if fill["symbol"] in open_trades:
-                    open_trades[fill["symbol"]].peak_qty = max(open_trades[fill["symbol"]].peak_qty, abs(new))
-                marks[fill["symbol"]] = price
-            # One equity point per market-data instant, after everything at that instant.
-            group_has_mark = group_has_mark or kind == 0
-            following = timeline[index + 1][0] if index + 1 < len(timeline) else None
-            if following != at:
-                if group_has_mark:
-                    value = total_equity()
-                    peak = max(peak, value)
-                    equity.append({"time": at, "equity": wire.text(value), "cash": wire.text(cash),
-                                   "drawdown": value / peak - 1 if peak > 0 else 0.0})
-                group_has_mark = False
-
-        return {"cash": cash, "positions": positions, "marks": marks, "equity": equity, "trades": trades,
-                "fees_paid": fees_paid}
+        if self._ledger is None or self._ledger.starting_cash != cash:   # settings arrived after the first events
+            self._ledger, self._changed_from = _Ledger(cash), 0
+        if self._changed_from is not None:
+            self._ledger.update(self.timeline, self._changed_from)
+            self._changed_from = None
+        return self._ledger
 
     def portfolio(self) -> dict[str, Any]:
-        d = self.derived()
-        cash, marks = d["cash"], d["marks"]
+        ledger = self.ledger()
+        cash, marks = ledger.cash, ledger.marks
         positions, gross, net, realized, unrealized = [], 0, 0, 0, 0
-        for symbol, pos in sorted(d["positions"].items()):
+        for symbol, pos in sorted(ledger.positions.items()):
             mark = marks.get(symbol, pos.average_cost)
             value = mark * pos.quantity
             upnl = (mark - pos.average_cost) * pos.quantity
@@ -468,7 +612,7 @@ class Run:
             pending.append({"order_id": order["id"], "symbol": order["symbol"], "side": order["side"],
                             "remaining_quantity": remaining, "reserved_cash": wire.text(hold)})
         equity = cash + net
-        session_start = self._session_start_equity(d["equity"])
+        session_start = self._session_start_equity(ledger)
         return {
             "run_id": self.run_id, "as_of": self.last_time or utc_now(), "cash": wire.text(cash),
             "total_equity": wire.text(equity), "positions": positions, "gross_exposure": wire.text(gross),
@@ -478,18 +622,33 @@ class Run:
             "realized_pnl": wire.text(realized), "unrealized_pnl": wire.text(unrealized),
         }
 
-    def _session_start_equity(self, points: list[dict[str, Any]]) -> int | None:
-        if not points:
+    def _session_start_equity(self, ledger: _Ledger) -> int | None:
+        if not ledger.equity_time:
             return None
-        session = points[-1]["time"][:10]                     # UTC date; US sessions do not cross midnight UTC
-        first = next(p for p in points if p["time"][:10] == session)
-        return wire.micros(first["equity"])
+        return ledger.equity_value[_last_session_start(ledger.equity_time)]
 
-    def equity(self) -> list[dict[str, Any]]:
-        return list(self.derived()["equity"])
+    def equity(self, points: int | None = None) -> list[dict[str, Any]]:
+        """The equity curve; with `points`, the last session in full and the rest thinned to at most that many points,
+        keeping each stretch's lowest point (so no drawdown is hidden) and its last."""
+        ledger = self.ledger()
+        keep = _last_session_start(ledger.equity_time)
+        indices: Any = range(len(ledger.equity_time))
+        if points and keep > points:
+            size = math.ceil(keep / max(1, points // 2))
+            chosen: list[int] = []
+            for k in range(0, keep, size):
+                stop = min(k + size, keep)
+                low = min(range(k, stop), key=lambda i: ledger.equity_value[i])
+                chosen += [low, stop - 1] if low != stop - 1 else [low]
+            indices = chosen + list(range(keep, len(ledger.equity_time)))
+        return [ledger.equity_point(i) for i in indices]
 
     def trades(self) -> list[dict[str, Any]]:
-        return list(self.derived()["trades"])
+        out = []
+        for trade in self.ledger().trades:
+            order = self.orders.get(trade["_order_id"], {})
+            out.append({k: v for k, v in trade.items() if k != "_order_id"} | {"strategy_id": order.get("strategy_id", "")})
+        return out
 
     def metrics(self, queue_capacity: int) -> dict[str, Any]:
         stages, histogram, all_samples = [], Counter(), []
@@ -511,9 +670,23 @@ class Run:
         }
 
 
+def _instant(text: str) -> str:
+    """RFC 3339 UTC text in a form that sorts by time whatever its fraction digits (the engine writes nine)."""
+    head, _, rest = text.rstrip("Z").partition(".")
+    return f"{head}.{rest.ljust(9, '0')}"
+
+
+def _last_session_start(times: list[str]) -> int:
+    """Index of the first time on the last one's UTC date (US sessions do not cross midnight UTC); 0 when empty."""
+    if not times:
+        return 0
+    session = times[-1][:10]
+    return bisect.bisect_left(times, session)
+
+
 def _closed_trade(symbol: str, t: _OpenTrade, at: str, realized: int) -> dict[str, Any]:
     return {
-        "symbol": symbol, "strategy_id": t.strategy_id, "quantity": max(t.peak_qty, t.entry_qty),
+        "symbol": symbol, "_order_id": t.order_id, "strategy_id": "", "quantity": max(t.peak_qty, t.entry_qty),
         "entry_time": t.entry_time, "exit_time": at,
         "entry_price": wire.text(wire.divide(t.entry_notional, max(1, t.entry_qty))),
         "exit_price": wire.text(wire.divide(t.exit_notional, max(1, t.exit_qty))),
