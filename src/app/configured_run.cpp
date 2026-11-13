@@ -59,12 +59,27 @@ std::vector<domain::MarketEvent> ConfiguredRun::select_bars(const std::vector<do
     return out;
 }
 
-bool ConfiguredRun::replay(const std::vector<domain::MarketEvent>& bars, const InstantCallback& on_instant) {
-    if (!bars.empty()) {
-        clock_.set(bars.front().exchange_time);
-    }
+void ConfiguredRun::begin(common::Timestamp first_event_time) {
+    clock_.set(first_event_time);
     flow_.start();   // before the pipeline: execution fills before the portfolio marks
     pipeline_.start();
+}
+
+void ConfiguredRun::feed(const domain::MarketEvent& event) {
+    if (event.exchange_time > clock_.now()) {
+        clock_.set(event.exchange_time);
+    }
+    pipeline_.input().on_market_event(event);
+    bus_.wait_until_drained();
+}
+
+void ConfiguredRun::end() {
+    pipeline_.finish();
+    flow_.stop();
+}
+
+bool ConfiguredRun::replay(const std::vector<domain::MarketEvent>& bars, const InstantCallback& on_instant) {
+    begin(bars.empty() ? clock_.now() : bars.front().exchange_time);
     bool complete = true;
     for (std::size_t i = 0; i < bars.size(); ++i) {
         clock_.set(bars[i].exchange_time);
@@ -78,8 +93,7 @@ bool ConfiguredRun::replay(const std::vector<domain::MarketEvent>& bars, const I
             }
         }
     }
-    pipeline_.finish();
-    flow_.stop();
+    end();
     return complete;
 }
 

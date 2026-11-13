@@ -29,7 +29,10 @@ Set them in your shell or a `.env` file (also gitignored); do not commit them.
 ```
 
 `run --config FILE` takes the risk limits and the simulation settings
-(starting cash, fees, slippage, latency) from the file. Command-line flags win
+(starting cash, fees, slippage, latency) from the file. With `"mode": "live"`
+and no `--bars`, it trades Alpaca's live bars for `alpaca.symbols` on
+`alpaca.stream_url`, logging in with the variables `alpaca.api_key_env` and
+`alpaca.api_secret_env` name ([`docs/ALPACA.md`](../docs/ALPACA.md)). Command-line flags win
 over the file (`--cash 5000` replaces `simulation.starting_cash`), and the file
 wins over the built-in defaults. There is no automatic discovery: without
 `--config`, no file is read.

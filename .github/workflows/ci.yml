@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build librdkafka-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build librdkafka-dev libcurl4-openssl-dev
 
       - uses: actions/setup-python@v5
         with:

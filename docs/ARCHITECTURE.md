@@ -5,8 +5,8 @@
 > event bus (in-process and Kafka), market data from CSV bars, the strategy engine
 > and three strategies, risk, simulated execution, portfolio and performance
 > analytics run end to end ([`EVENT_BUS.md`](EVENT_BUS.md),
-> [`BACKTESTING.md`](BACKTESTING.md)). Alpaca sources, persistence, config loading
-> and the source-driven `HistoricalReplay` are still stubs. The
+> [`BACKTESTING.md`](BACKTESTING.md)). Persistence and the source-driven
+> `HistoricalReplay` are still stubs. The
 > console reaches the engine through the engine gateway and command channel
 > ([ADR 0006](adr/0006-web-frontend-api-contract.md), [ADR 0007](adr/0007-engine-command-channel.md)).
 

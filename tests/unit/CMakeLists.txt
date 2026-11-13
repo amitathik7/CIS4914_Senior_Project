@@ -146,6 +146,18 @@ target_compile_definitions(te_test_config PRIVATE
 trading_engine_add_component_test(market_data
     market_data_service_test.cpp)
 
+# Alpaca historical REST source on recorded responses: no network, no credentials.
+trading_engine_add_component_test(alpaca
+    alpaca_historical_test.cpp)
+target_compile_definitions(te_test_alpaca PRIVATE
+    ALPACA_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/alpaca")
+
+# The WebSocket client's protocol pieces, and the Alpaca live source on a
+# scripted fake WebSocket: no network, no credentials.
+trading_engine_add_component_test(alpaca_live
+    websocket_protocol_test.cpp
+    alpaca_live_test.cpp)
+
 # TODO(team): add one call per component as behaviour lands, e.g.
 #   trading_engine_add_component_test(risk        risk_manager_test.cpp)
 #   trading_engine_add_component_test(execution   execution_simulator_test.cpp)
