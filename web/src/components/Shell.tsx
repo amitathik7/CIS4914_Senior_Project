@@ -189,7 +189,7 @@ function TopBar() {
       {run?.clock && (
         <div className="clock" aria-label="Run clock">
           <strong>{time(run.clock)} ET</strong>
-          <span>{run.mode === "live" ? day(run.clock) : `Replay ended ${day(run.clock)}`}</span>
+          <span>{day(run.clock)}</span>
         </div>
       )}
       {run && (run.status === "running" || run.status === "queued") && <StopRun run={run} />}

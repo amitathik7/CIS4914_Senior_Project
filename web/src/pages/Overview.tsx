@@ -56,7 +56,9 @@ export function Overview() {
   const metrics = useRunResource(runId, (c, id) => c.metrics(id));
   const fills = useRunResource(runId, (c, id) => c.fills(id, RECENT_FILLS));
   const decisions = useRunResource(runId, (c, id) => c.riskDecisions(id, RECENT_DECISIONS));
-  const [range, setRange] = useState<"session" | "all">("session");
+  // A replay moves through a day in seconds, so backtests show the whole run; a live session is the day itself.
+  const [chosenRange, setRange] = useState<"session" | "all">();
+  const range = chosenRange ?? (run?.mode === "live" ? "session" : "all");
   const symbols = run?.symbols ?? [];
   const [chosen, setSymbol] = useState<string>();
   const symbol = chosen && symbols.includes(chosen) ? chosen : symbols[0];
@@ -144,7 +146,8 @@ export function Overview() {
             flush
           >
             {equity.data ? (
-              equitySeries.length > 1
+              // A new session's first point is drawn too, rather than flashing "no history" until its second.
+              (equity.data.length > 1 && equitySeries.length > 0)
                 ? <div style={{ padding: "8px 4px 4px 0" }}><TimeChart key={range} follow label="Equity over time" height={280} format={moneyAxis} series={[{ id: "equity", kind: "baseline", base: equityBase, steady: { base: equityBase, minSpan: Math.max(1, equityBase * 0.01) }, data: equitySeries }]} /></div>
                 : run?.status === "failed"
                   ? <Empty title="No equity history">{failedEarly}</Empty>
