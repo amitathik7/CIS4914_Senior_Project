@@ -16,14 +16,14 @@ sources are still open.
 | Milestone | State | Built | Missing |
 |---|---|---|---|
 | M1 Architecture | Partial | ADRs 0001 and 0003 Accepted, 0002 and 0004-0007 written (Proposed); fixed-point money (`common::Decimal`); CI on Linux and Windows; `tests/support/` doubles | Sign-off on 0002 and 0004-0007; `docs/TECH_REQUIREMENTS.md`; config, logging, Alpaca and PostgreSQL library ADRs; `.clang-format`; licence decision (`OQ#14`); real names in `COMPONENT_OWNERSHIP.md` |
-| M2 Events & ingestion | Mostly | `InProcessEventBus` (bounded, shutdown, drain), Kafka `TopicEventBus`, `MarketDataService`, CSV bar source in the CLI, `AlpacaHistoricalSource` + `fetch-alpaca`, `AlpacaLiveSource` + `run --alpaca-live`, `config::load_config` + `run --config` | `SystemMetrics` (stub), `FixtureMarketDataSource` as a class, persistence P1-P2 |
+| M2 Events & ingestion | Mostly | `InProcessEventBus` (bounded, shutdown, drain), Kafka `TopicEventBus`, `MarketDataService`, CSV bar source in the CLI, `AlpacaHistoricalSource` + `fetch-alpaca`, `AlpacaLiveSource` + `run --alpaca-live`, `config::load_config` + `run --config`, `SystemMetrics` (not yet created by `run`/`serve`) | `FixtureMarketDataSource` as a class, persistence P1-P2 |
 | M3 Historical replay | Partial | Market-time replay of CSV bars inside `trading_engine run` / `serve` and `app::Backtest`; deterministic tests | `HistoricalReplay` class (stub), paced `--speed`, `RepositoryMarketDataSource`, run-twice determinism harness |
 | M4 Strategy framework | Done | `StrategyEngine`, crossover, mean reversion, ML logistic regression, Strategy Lab | Symbol-interest routing index; counters into `SystemMetrics` |
 | M5 Execution & portfolio | Mostly | `NaiveFillModel`, `ExecutionSimulator`, `PortfolioManager`, reservation ledger, end-to-end backtests | Order latency, participation cap and partial fills; persistence P3 |
 | M6 Risk | Done | `RiskManager`, 5 starter policies, buying power, no shorting, kill switch from the console | Kill switch does not cancel working orders |
 | M7 Analytics | Partial | `PerformanceAnalyzer`, JSON report from `strategy_lab_backtest`, web Report page | `docs/EXPORT_SCHEMA.md`, `python/visualization/plot_performance.py` (stub), persistence P4 |
 | M8 Performance | Partial | `trading_engine_bench` (replay, bus latency, codec, peak memory) and the baseline in `docs/PERFORMANCE.md` | Targets, optimisations, Google Benchmark micro-benches, sanitizer CI |
-| M9 Testing | Partial | 556 C++ tests, web and Python suites, all in CI | Coverage gate, integration suite (Alpaca, PostgreSQL), `docs/TESTING.md`, `scaffold_contract_test.cpp` cleanup |
+| M9 Testing | Partial | 609 C++ tests, web and Python suites, all in CI | Coverage gate, integration suite (Alpaca, PostgreSQL), `docs/TESTING.md`, `scaffold_contract_test.cpp` cleanup |
 | M10 Docs & demo | Not started | README status (this update) | `docs/RESULTS.md`, user and developer guides, `scripts/demo`, de-scaffold, licence |
 
 ## How to use this document
