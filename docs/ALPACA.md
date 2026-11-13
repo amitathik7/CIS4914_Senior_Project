@@ -11,14 +11,18 @@ sent to Alpaca's trading API.
    (not the Broker API, which is for companies building brokerages).
 2. Switch to the **Paper** account and generate a key on the home page's
    API Keys panel. The secret is shown once.
-3. Put the pair in your shell, never in a file in this repo:
+3. Run `python start.py`. The first time, it asks for the key ID and secret
+   and saves them outside the project: the macOS Keychain, or a file only you
+   can read in your user folder (`~/.config/trading_engine/alpaca.json`,
+   `%APPDATA%\trading_engine\alpaca.json` on Windows). It loads them on every
+   start after that; `python start.py --set-keys` replaces them. Never put
+   them in a file in this repo: it is public.
 
-   ```bash
-   export ALPACA_API_KEY=your-key-id
-   export ALPACA_API_SECRET=your-secret
-   ```
+   For `trading_engine run --alpaca-live` or `fetch-alpaca` outside
+   `start.py`, set `ALPACA_API_KEY` and `ALPACA_API_SECRET` in the shell.
 
-   (PowerShell: `$env:ALPACA_API_KEY = "..."`.)
+   Each person needs their own account: Alpaca allows one live stream per
+   account, so two people on one key pair disconnect each other.
 
 The build needs libcurl. macOS has it; on Linux install `libcurl4-openssl-dev`;
 on Windows `vcpkg install curl`. CMake prints `libcurl: ... (Alpaca REST
