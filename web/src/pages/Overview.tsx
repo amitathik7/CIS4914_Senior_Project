@@ -7,7 +7,7 @@ import { TimeChart } from "../components/charts/TimeChart";
 import { useCurrentRun } from "../components/Shell";
 import { Empty, Figure, Loading, Panel, Segmented, Side, toneOf } from "../components/ui";
 import { add, formatDecimal, money, price, ratio, sub, toNumber } from "../lib/decimal";
-import { int, label, minute, percent, signedInt } from "../lib/format";
+import { day, int, label, minute, percent, signedInt } from "../lib/format";
 import { useRunResource } from "../state/engine";
 import { candles, equityLine, fillMarkers, lastSession } from "./chartData";
 import { OrderDrawer } from "./OrderDrawer";
@@ -56,7 +56,9 @@ export function Overview() {
   const metrics = useRunResource(runId, (c, id) => c.metrics(id));
   const fills = useRunResource(runId, (c, id) => c.fills(id, RECENT_FILLS));
   const decisions = useRunResource(runId, (c, id) => c.riskDecisions(id, RECENT_DECISIONS));
-  const [range, setRange] = useState<"session" | "all">("session");
+  // A replay moves through a day in seconds, so backtests show the whole run; a live session is the day itself.
+  const [chosenRange, setRange] = useState<"session" | "all">();
+  const range = chosenRange ?? (run?.mode === "live" ? "session" : "all");
   const symbols = run?.symbols ?? [];
   const [chosen, setSymbol] = useState<string>();
   const symbol = chosen && symbols.includes(chosen) ? chosen : symbols[0];
@@ -119,7 +121,11 @@ export function Overview() {
       {p && start ? (
         <div className="figures">
           <Figure lead label="Equity" value={money(p.total_equity)} sub={<span className={toneOf(sub(p.total_equity, start))}>{money(sub(p.total_equity, start), true)} since start</span>} />
-          <Figure label={live ? "Today" : "Last session"} value={<span className={toneOf(p.session_pnl)}>{money(p.session_pnl, true)}</span>} sub={percent(toNumber(p.session_pnl) / Math.max(1, toNumber(p.total_equity) - toNumber(p.session_pnl)))} />
+          <Figure
+            label="Day P&L"
+            value={<span className={toneOf(p.session_pnl)}>{money(p.session_pnl, true)}</span>}
+            sub={`${percent(toNumber(p.session_pnl) / Math.max(1, toNumber(p.total_equity) - toNumber(p.session_pnl)))}${live ? " today" : run?.clock ? ` on ${day(run.clock)}` : ""}`}
+          />
           <Figure label="Cash" value={money(p.cash)} sub={`${money(p.reserved_cash)} reserved`} />
           <Figure label="Buying power" value={money(p.buying_power)} />
           <Figure
@@ -127,7 +133,7 @@ export function Overview() {
             value={money(p.gross_exposure)}
             sub={limits ? `${percent(ratio(p.gross_exposure, limits.max_gross_exposure) ?? 0, 0, false)} of ${formatDecimal(limits.max_gross_exposure, { dp: 0, currency: true })} limit` : undefined}
           />
-          <Figure label="Open orders" value={int(p.pending_orders.length)} sub={`${p.positions.filter((x) => x.quantity !== 0).length} open positions`} />
+          <Figure label="Open orders" value={int(p.pending_orders.length)} sub={(() => { const n = p.positions.filter((x) => x.quantity !== 0).length; return `${n} open position${n === 1 ? "" : "s"}`; })()} />
         </div>
       ) : (
         <div className="figures"><Loading height={58} /></div>
@@ -139,12 +145,13 @@ export function Overview() {
         <div className="stack">
           <Panel
             title="Equity"
-            hint={range === "session" ? "Current session, one point per bar" : "Whole run"}
-            tools={<Segmented label="Equity range" value={range} onChange={setRange} options={[{ value: "session", label: "Session" }, { value: "all", label: "All" }]} />}
+            hint={range === "session" ? "Current trading day, one point per bar" : "Whole run"}
+            tools={<Segmented label="Equity range" value={range} onChange={setRange} options={[{ value: "session", label: "Day" }, { value: "all", label: "All" }]} />}
             flush
           >
             {equity.data ? (
-              equitySeries.length > 1
+              // A new session's first point is drawn too, rather than flashing "no history" until its second.
+              (equity.data.length > 1 && equitySeries.length > 0)
                 ? <div style={{ padding: "8px 4px 4px 0" }}><TimeChart key={range} follow label="Equity over time" height={280} format={moneyAxis} series={[{ id: "equity", kind: "baseline", base: equityBase, steady: { base: equityBase, minSpan: Math.max(1, equityBase * 0.01) }, data: equitySeries }]} /></div>
                 : run?.status === "failed"
                   ? <Empty title="No equity history">{failedEarly}</Empty>
