@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Start the whole simulated trading system with one command.
 
-    python start.py                 # Kafka, engine, engine gateway, Strategy Lab gateway, web console
-    python start.py --pace-ms 200   # slower replay, more time to press Stop or the kill switch
-    python start.py --set-keys      # enter (or replace) your Alpaca keys for live runs
-    python start.py --check         # only check prerequisites, start nothing
-    python start.py --help          # every option
+    python3 start.py                 # Kafka, engine, engine gateway, Strategy Lab gateway, web console
+    python3 start.py --pace-ms 200   # slower replay, more time to press Stop or the kill switch
+    python3 start.py --set-keys      # enter (or replace) your Alpaca keys for live runs
+    python3 start.py --check         # only check prerequisites, start nothing
+    python3 start.py --help          # every option
 
 First it sets itself up, so a fresh clone needs nothing else run by hand:
 
@@ -60,6 +60,9 @@ REQUIREMENTS = ROOT / "python" / "engine_gateway" / "requirements.txt"
 KAFKA_BUILD = ROOT / "build-kafka"
 KEY_VARS = ("ALPACA_API_KEY", "ALPACA_API_SECRET")
 KEY_SERVICES = ("alpaca-api-key", "alpaca-api-secret")   # macOS Keychain item names
+LAUNCH = "py start.py" if WINDOWS else "python3 start.py"
+LAB_OPTION = "-DTRADING_ENGINE_BUILD_STRATEGY_LAB=ON"
+LAB_TARGETS = ("strategy_lab_replay", "strategy_lab_backtest")
 COMPOSE_FILE = ROOT / "docker-compose.kafka.yml"
 KAFKA_CONTAINER = "te-kafka"
 KAFKA_PORT = 9092
@@ -231,16 +234,20 @@ class Processes:
 # -- prerequisites ------------------------------------------------------------------------------------------------
 
 
-def kafka_setting(build_dir: Path) -> bool | None:
-    """TRADING_ENGINE_WITH_KAFKA as the build directory was configured, or None if it can't be told."""
+def cache_flag(build_dir: Path, option: str) -> bool | None:
+    """A CMake option as the build directory was configured (False if unset), or None if there is no build."""
     try:
         text = (build_dir / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     for line in text.splitlines():
-        if line.startswith("TRADING_ENGINE_WITH_KAFKA:"):
+        if line.startswith(option + ":"):
             return line.split("=", 1)[1].strip().upper() in ("ON", "TRUE", "1", "YES", "Y")
-    return False  # configured before the option existed, or without it: no Kafka
+    return False
+
+
+def kafka_setting(build_dir: Path) -> bool | None:
+    return cache_flag(build_dir, "TRADING_ENGINE_WITH_KAFKA")
 
 
 def build_dir_of(exe: Path) -> Path:
@@ -255,9 +262,9 @@ def configure_hint() -> str:
     if WINDOWS:
         return ("  cmake -S . -B build-kafka -G \"Visual Studio 17 2022\" -A x64 `\n"
                 "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DTRADING_ENGINE_WITH_KAFKA=ON\n"
-                "  python start.py")
+                "  py start.py")
     return ("  cmake -S . -B build-kafka -DCMAKE_BUILD_TYPE=Release -DTRADING_ENGINE_WITH_KAFKA=ON   # needs librdkafka\n"
-            "  python start.py")
+            "  python3 start.py")
 
 
 def ask_yes(question: str) -> bool:
@@ -319,11 +326,11 @@ def configure_kafka_build() -> None:
     if WINDOWS:
         toolchain = vcpkg() / "scripts" / "buildsystems" / "vcpkg.cmake"   # ensure_librdkafka() found vcpkg
         cmd = ["cmake", "-S", str(ROOT), "-B", str(KAFKA_BUILD), "-G", "Visual Studio 17 2022", "-A", "x64",
-               f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}", "-DTRADING_ENGINE_WITH_KAFKA=ON"]
+               f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}", "-DTRADING_ENGINE_WITH_KAFKA=ON", LAB_OPTION]
     else:
         generator = ["-G", "Ninja"] if shutil.which("ninja") else []
         cmd = ["cmake", "-S", str(ROOT), "-B", str(KAFKA_BUILD), *generator, "-DCMAKE_BUILD_TYPE=Release",
-               "-DTRADING_ENGINE_WITH_KAFKA=ON"]
+               "-DTRADING_ENGINE_WITH_KAFKA=ON", LAB_OPTION]
     say("build", "no Kafka build of trading_engine yet; configuring build-kafka (once)")
     run_step("build", cmd, env=brew_env() or None)
 
@@ -338,9 +345,21 @@ def prepare_engine(explicit: str | None, config: str | None, build: bool) -> Pat
         except LaunchError:
             configure_kafka_build()
     if build and kafka_setting(KAFKA_BUILD) is True:
+        if not cache_flag(KAFKA_BUILD, "TRADING_ENGINE_BUILD_STRATEGY_LAB"):
+            run_step("build", ["cmake", "-S", str(ROOT), "-B", str(KAFKA_BUILD), LAB_OPTION], env=brew_env() or None)
         run_step("build", ["cmake", "--build", str(KAFKA_BUILD), "--config", config or "Release",
-                           "--target", "trading_engine"])
+                           "--target", "trading_engine", *LAB_TARGETS])
     return find_engine(None, config)
+
+
+def lab_exe(config: str | None) -> Path | None:
+    """strategy_lab_replay from build-kafka, for the Strategy Lab gateway (Strategies page)."""
+    name = "strategy_lab_replay.exe" if WINDOWS else "strategy_lab_replay"
+    for path in [KAFKA_BUILD / "bin" / c / name for c in ([config] if config else ["Release", "Debug"])] + \
+                [KAFKA_BUILD / "bin" / name]:
+        if path.is_file():
+            return path
+    return None
 
 
 def find_engine(explicit: str | None, config: str | None) -> Path:
@@ -502,13 +521,13 @@ def ensure_alpaca_keys(set_keys: bool) -> None:
         say("start", f"Alpaca keys: from {key_store()}")
     else:
         if not set_keys and (skip.exists() or not sys.stdin.isatty()):
-            say("start", "Alpaca keys: none saved, so live runs are off (python start.py --set-keys adds them)")
+            say("start", f"Alpaca keys: none saved, so live runs are off ({LAUNCH} --set-keys adds them)")
             return
         keys = ask_keys()
         if keys is None:
             key_dir().mkdir(parents=True, exist_ok=True)
             skip.touch()
-            say("start", "skipped: backtests work, live runs are off. python start.py --set-keys adds the keys later")
+            say("start", f"skipped: backtests work, live runs are off. {LAUNCH} --set-keys adds the keys later")
             return
         save_keys(*keys)
         skip.unlink(missing_ok=True)
@@ -653,7 +672,9 @@ def main(argv: list[str] | None = None) -> int:
             engine_cmd += ["--bars", b]
         procs.start("engine", engine_cmd)
         if run_lab:
-            procs.start("lab", [sys.executable, "python/strategy_lab/lab_gateway.py"])
+            lab = lab_exe(args.config) if not os.environ.get("STRATEGY_LAB_EXE") else None
+            procs.start("lab", [sys.executable, "python/strategy_lab/lab_gateway.py"],
+                        env={"STRATEGY_LAB_EXE": str(lab)} if lab else None)
         procs.start("console", [pnpm, "dev"], cwd=ROOT / "web",
                     env={"VITE_ENGINE_API": "/api", "ENGINE_GATEWAY": f"http://127.0.0.1:{gateway_port}"})
 

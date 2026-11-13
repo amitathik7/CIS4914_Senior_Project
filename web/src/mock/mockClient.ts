@@ -23,7 +23,7 @@ interface RunEntry {
 const iso = (ms: number) => new Date(ms).toISOString();
 
 export const LIVE_NEEDS_ENGINE =
-  "Live runs need the engine: the demo simulator has no live feed. Connect the console to trading_engine serve with Alpaca credentials set.";
+  "Live runs need the real engine: the demo simulator has no live feed. Start the console with python3 start.py.";
 
 function storedRequests(): BacktestRequest[] {
   try {

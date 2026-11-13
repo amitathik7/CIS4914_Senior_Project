@@ -11,11 +11,11 @@ sent to Alpaca's trading API.
    (not the Broker API, which is for companies building brokerages).
 2. Switch to the **Paper** account and generate a key on the home page's
    API Keys panel. The secret is shown once.
-3. Run `python start.py`. The first time, it asks for the key ID and secret
+3. Run `python3 start.py`. The first time, it asks for the key ID and secret
    and saves them outside the project: the macOS Keychain, or a file only you
    can read in your user folder (`~/.config/trading_engine/alpaca.json`,
    `%APPDATA%\trading_engine\alpaca.json` on Windows). It loads them on every
-   start after that; `python start.py --set-keys` replaces them. Never put
+   start after that; `python3 start.py --set-keys` replaces them. Never put
    them in a file in this repo: it is public.
 
    For `trading_engine run --alpaca-live` or `fetch-alpaca` outside
@@ -53,7 +53,7 @@ Then use the file anywhere a CSV of bars is accepted:
 
 ```bash
 ./build/bin/trading_engine run --bars data/alpaca_2024.csv
-python start.py --bars data/alpaca_2024.csv
+python3 start.py --bars data/alpaca_2024.csv
 ```
 
 ## Trade the live feed

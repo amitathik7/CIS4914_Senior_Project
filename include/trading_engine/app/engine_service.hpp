@@ -20,7 +20,7 @@
 //
 //  Live runs (start_live) trade the feed EngineServiceConfig::live_feed opens
 //  on their own thread, beside the backtest queue, until stopped. One at a
-//  time; refused when the engine has no live feed.
+//  time; refused when the engine has no live feed (no Alpaca keys).
 //
 //  Commands:
 //   * start_backtest -- validates the settings; refused (a "failed" report)

@@ -159,7 +159,7 @@ export function Report() {
         </div>
         {stopError && <div style={{ marginBottom: 14 }}><Notice tone="down">{stopError}</Notice></div>}
         {d.status === "failed" ? (
-          <Notice tone="down"><b>This run failed.</b> {d.error} <Link to="/backtests/new">Start a new backtest</Link></Notice>
+          <Notice tone="down"><b>This run failed.</b> {d.error} {d.mode === "live" ? <Link to="/backtests/new?mode=live">Start a new live run</Link> : <Link to="/backtests/new">Start a new backtest</Link>}</Notice>
         ) : (
           <Panel title="Replaying">
             <div className="stack" style={{ gap: 10 }}>

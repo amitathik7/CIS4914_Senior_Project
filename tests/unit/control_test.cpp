@@ -670,7 +670,7 @@ TEST_F(EngineServiceTest, RefusesALiveRunWithoutALiveFeed) {
     const auto r = answer("te.live-none", "c1");
     ASSERT_TRUE(r.has_value());
     EXPECT_EQ(r->status, ctl::RunState::Failed);
-    EXPECT_EQ(r->error, "This engine has no live feed; start it with Alpaca credentials set.");
+    EXPECT_EQ(r->error, "This engine has no Alpaca keys, so it cannot start live runs. Run python3 start.py --set-keys, then restart start.py.");
 }
 
 TEST_F(EngineServiceTest, RunsALiveRunBesideTheQueueUntilStopped) {

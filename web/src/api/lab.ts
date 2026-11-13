@@ -167,7 +167,7 @@ export interface LabClient {
 }
 
 const OFFLINE =
-  "The Strategy Lab service is not reachable. Start it with: python python/strategy_lab/lab_gateway.py (see docs/STRATEGIES_CONSOLE.md).";
+  "The Strategy Lab service is not reachable. Restart with python3 start.py, or start only it with: python3 python/strategy_lab/lab_gateway.py.";
 
 export function splitReplayBody(text: string): ReplayResponse {
   const newline = text.indexOf("\n");

@@ -45,6 +45,7 @@ export function Overview() {
   const { runId } = useParams();
   const run = useCurrentRun();
   const live = run?.mode === "live" && run.status === "running";
+  const failedEarly = run?.mode === "live" ? "This run failed before the first bar arrived." : "This run failed before any bar was replayed.";
   const portfolio = useRunResource(runId, (c, id) => c.portfolio(id));
   const detail = useRunResource(runId, (c, id) => c.getRun(id));
   const equity = useRunResource(runId, (c, id) => c.equity(id));
@@ -134,7 +135,7 @@ export function Overview() {
               equitySeries.length > 1
                 ? <div style={{ padding: "8px 4px 4px 0" }}><TimeChart key={range} label="Equity over time" height={280} format={moneyAxis} series={[{ id: "equity", kind: "area", tone: "accent", data: equitySeries }]} /></div>
                 : run?.status === "failed"
-                  ? <Empty title="No equity history">This run failed before any bar was replayed.</Empty>
+                  ? <Empty title="No equity history">{failedEarly}</Empty>
                   : <Empty title="No equity history yet">The first bar has not arrived.</Empty>
             ) : <Loading height={280} />}
           </Panel>
@@ -145,7 +146,7 @@ export function Overview() {
             flush
           >
             {bars.data && priceSeries.length === 0 ? (
-              <Empty title="No bars">{run?.status === "failed" ? "This run failed before any bar was replayed." : "Prices appear when the first bar arrives."}</Empty>
+              <Empty title="No bars">{run?.status === "failed" ? failedEarly : "Prices appear when the first bar arrives."}</Empty>
             ) : bars.data ? (
               <div style={{ padding: "8px 4px 4px 0" }}>
                 <TimeChart

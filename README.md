@@ -9,13 +9,15 @@ concurrency, modularity, testing, latency, and throughput.
 
 ---
 
-## Quick start: `python start.py`
+## Quick start: `python3 start.py`
 
 One command starts the whole system and opens the web console in your browser:
 
 ```bash
-python start.py
+python3 start.py
 ```
+
+On Windows the command is `py start.py`.
 
 On a fresh clone it first sets itself up, so there is nothing else to run by hand:
 
@@ -25,7 +27,7 @@ On a fresh clone it first sets itself up, so there is nothing else to run by han
   missing it offers to install it (Homebrew on macOS, vcpkg on Windows; on Linux it prints the apt command).
 - **Alpaca keys** (only live runs need them): the first time, it asks for your key ID and secret and saves
   them outside the project (the macOS Keychain, or a file only you can read in your user folder elsewhere).
-  After that it loads them silently. Press Enter to skip; `python start.py --set-keys` adds or replaces them
+  After that it loads them silently. Press Enter to skip; `python3 start.py --set-keys` adds or replaces them
   later. Use your own free paper account: Alpaca allows one live stream per account, so shared keys
   disconnect each other.
 - **Web**: `pnpm install` in `web/` when needed.
@@ -53,7 +55,7 @@ You need Python 3.10+, Node.js 22 with pnpm 10 or newer, Docker, CMake and a C++
 sets up the rest itself (see above). Check everything without starting anything:
 
 ```bash
-python start.py --check
+python3 start.py --check
 ```
 
 `start.py` uses the most recently built `trading_engine` in any `build*/` folder **that was configured with
@@ -98,7 +100,7 @@ cmake --build out/strategy_lab --config Release --target strategy_lab_replay str
 | `--no-lab` | don't start the Strategy Lab gateway |
 | `--no-browser` | don't open the console in a browser |
 
-`python start.py --help` lists the same options. To run the pieces by hand instead, see
+`python3 start.py --help` lists the same options. To run the pieces by hand instead, see
 [Web console](#web-console) below.
 
 **New to the console?** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) is a walkthrough for first-time users and
@@ -276,7 +278,7 @@ real-engine tests against the Linux job's `strategy_lab_replay`.
 
 ## Web console
 
-The usual way to run the console on the real engine is [`python start.py`](#quick-start-python-startpy).
+The usual way to run the console on the real engine is [`python3 start.py`](#quick-start-python3-startpy).
 Without Kafka or an engine build, the console runs on an in-browser demo engine:
 
 ```bash

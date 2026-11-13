@@ -12,11 +12,11 @@ report what you find.
 From the repository root:
 
 ```bash
-python start.py --pace-ms 200
+python3 start.py --pace-ms 200
 ```
 
 If this is the first run on the machine, follow [README: Before the first run](../README.md#before-the-first-run)
-first (`python start.py --check` tells you what is missing). `--pace-ms 200` replays bars slowly enough that you
+first (`python3 start.py --check` tells you what is missing). `--pace-ms 200` replays bars slowly enough that you
 have time to watch a run and press Stop or the kill switch; the default (50) finishes a demo run in a few
 seconds.
 
@@ -25,7 +25,7 @@ the first second or two with "No engine is listening for commands", the engine h
 **Run backtest** again.
 
 When you are done, press **Ctrl+C** in the terminal. Your runs are kept for next time; start with
-`python start.py --reset-kafka` to begin with an empty list.
+`python3 start.py --reset-kafka` to begin with an empty list.
 
 **Check you are on the real engine:** if the top bar shows a yellow **Demo data** badge, the console is
 running its in-browser simulator instead of the engine (it was started without `start.py`). Everything still
@@ -164,7 +164,7 @@ longer than you expected.
 | "Docker is not running" | Start Docker Desktop and run `start.py` again (on Windows it tries to start it for you) |
 | "port 5173 is in use" | A console (or an earlier `start.py`) is still running. Close it, or press Ctrl+C in that terminal |
 | "No engine is listening for commands" | Wait two seconds and press Run backtest again. If it keeps happening, look at `out/logs/engine.log` |
-| The **Demo data** badge is showing | The console was started without the engine. Close it and use `python start.py` |
+| The **Demo data** badge is showing | The console was started without the engine. Close it and use `python3 start.py` |
 | Strategies pages say the service is unavailable | Build the Strategy Lab tools (README), and make sure `start.py` was not run with `--no-lab` |
-| A run finishes too fast to stop | Restart with `python start.py --pace-ms 500` |
-| Old runs clutter the list | Restart with `python start.py --reset-kafka` |
+| A run finishes too fast to stop | Restart with `python3 start.py --pace-ms 500` |
+| Old runs clutter the list | Restart with `python3 start.py --reset-kafka` |

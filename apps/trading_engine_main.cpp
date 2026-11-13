@@ -712,7 +712,13 @@ int serve(const Options& o) {
     config.version        = kVersion;
     config.instant_delay  = std::chrono::milliseconds{o.pace_ms};
     config.heartbeat      = std::chrono::milliseconds{o.heartbeat_ms};
-    if (market_data::websocket_available()) {
+    const auto has_env = [](const std::string& name) {
+        const char* value = std::getenv(name.c_str());
+        return value != nullptr && *value != '\0';
+    };
+    // Without keys every live run would fail at connect; refusing up front says why.
+    if (market_data::websocket_available() && has_env(o.engine.alpaca.api_key_env) &&
+        has_env(o.engine.alpaca.api_secret_env)) {
         config.live_feed = [&o](const std::vector<common::Symbol>& symbols, const std::string& feed,
                                 market_data::IMarketEventSink& sink, const common::IClock& clock) {
             return open_alpaca_feed(live_alpaca(o.engine.alpaca, symbols, feed), sink, clock);

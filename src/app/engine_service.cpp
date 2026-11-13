@@ -253,7 +253,7 @@ void EngineService::handle(const control::Command& command) {
             }
             if (!problem && live) {
                 if (!config_.live_feed) {
-                    problem = "This engine has no live feed; start it with Alpaca credentials set.";
+                    problem = "This engine has no Alpaca keys, so it cannot start live runs. Run python3 start.py --set-keys, then restart start.py.";
                 } else if (!live_queue_.empty() || live_current_) {
                     problem = "A live run is already running on this engine; stop it first.";
                 } else {
