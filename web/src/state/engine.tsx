@@ -34,7 +34,9 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(timer);
   }, [client, refreshRuns]);
 
-  const defaultRunId = runs?.find((r) => r.mode === "live" && r.status === "running")?.run_id ?? runs?.[0]?.run_id;
+  // The console opens on a live run in progress, else the newest run that did not fail, else the newest.
+  const defaultRunId = runs?.find((r) => r.mode === "live" && r.status === "running")?.run_id
+    ?? runs?.find((r) => r.status !== "failed")?.run_id ?? runs?.[0]?.run_id;
 
   return (
     <EngineContext.Provider value={{ client, info, runs, refreshRuns, defaultRunId }}>{children}</EngineContext.Provider>

@@ -257,7 +257,10 @@ class Run:
         self.defaults = defaults
         self.engine_alive = engine_alive
         self.status_report: dict[str, Any] | None = None    # the latest <prefix>.run payload
+        # When the run's first message was sent, so the run list keeps its order across gateway restarts (which
+        # read every run's backlog at once); the gateway's own clock until a message says otherwise.
         self.created_at = utc_now()
+        self._sent_first: str | None = None
         self.last_message = time.monotonic()
         self.version = 0
         self.counts: Counter[str] = Counter()
@@ -295,6 +298,9 @@ class Run:
             return False
         handler(envelope.payload)                             # raises WireError before anything is recorded
         seen.add(envelope.sequence)
+        if envelope.enqueued_at and (self._sent_first is None or _instant(envelope.enqueued_at) < _instant(self._sent_first)):
+            self._sent_first = envelope.enqueued_at
+            self.created_at = envelope.enqueued_at
         self.counts[envelope.type] += 1
         self.last_message = time.monotonic()
         self.version += 1
@@ -662,6 +668,12 @@ class Run:
             "stages": stages, "history": history,
             "latency_histogram": [{"upper_us": b, "count": histogram[b]} for b in HISTOGRAM_BOUNDS_US],
         }
+
+
+def _instant(text: str) -> str:
+    """RFC 3339 UTC text in a form that sorts by time whatever its fraction digits (the engine writes nine)."""
+    head, _, rest = text.rstrip("Z").partition(".")
+    return f"{head}.{rest.ljust(9, '0')}"
 
 
 def _last_session_start(times: list[str]) -> int:
