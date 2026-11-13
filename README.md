@@ -108,9 +108,10 @@ the web console starts, stops and kill-switches over Kafka
 Linux and Windows on every push and pull request.
 
 Market data comes only from recorded CSV files. Alpaca (historical and live),
-PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
-`HistoricalReplay` and the Python charts are still stubs that throw
-`NotImplemented`. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+PostgreSQL persistence, config-file loading, the source-driven `HistoricalReplay`
+and the Python charts are still stubs that throw `NotImplemented`.
+`SystemMetrics` is real and wired into `MarketDataService` and both buses, but
+no executable creates one yet. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 for the milestone-by-milestone status.
 
 | Area | State |
@@ -129,7 +130,8 @@ for the milestone-by-milestone status.
 | Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest; 17 built-in datasets incl. five large synthetic ones) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
 | `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
-| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
+| `SystemMetrics` (per-stage counts, fixed-size latency histogram with p50/p99, queue depth) | ✅ real + tested; wired into `MarketDataService` and both buses, not yet created by `run` / `serve` |
+| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live` | ⛔ stubs (`NotImplemented`) |
 | `config::load_config` + `trading_engine run --config FILE` | ✅ real + tested ([docs](config/README.md)) |
 | Alpaca historical + live sources, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
 | `trading_engine_bench` + baseline | ✅ measured ([docs](docs/PERFORMANCE.md)) |

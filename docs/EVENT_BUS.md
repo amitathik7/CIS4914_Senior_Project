@@ -197,5 +197,5 @@ creates get 3 partitions and replication factor 1 (`KafkaTransportConfig`).
   pipeline itself (`app::ConfiguredRun`). `HistoricalReplay` is a stub.
 - Execution has no `order_to_fill` latency, partial fills or cancels yet;
   `NaiveFillModel` fills the whole order at the next bar's open.
-- No metrics wiring (`SystemMetrics`) on the buses yet; each bus exposes
-  `stats()`.
+- Both buses report queue depth to an optional `SystemMetrics` (`event_bus` and
+  `kafka`); each bus also exposes `stats()`.
