@@ -6,7 +6,8 @@
 //  Responsibility: a single, plain-struct description of how to run the engine.
 //  Parsed once at startup and then treated as immutable. The core must not
 //  depend on a particular file format or JSON library -- parsing lives behind
-//  load_config() and its future implementation, not in these headers.
+//  load_config(), not in these headers. The file is JSON
+//  (config/config.example.json); config/README.md describes it.
 //
 //  Secrets: this struct holds the NAMES of environment variables that carry
 //  credentials (e.g. "ALPACA_API_KEY"), never the credential values. Resolving
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "trading_engine/common/types.hpp"
@@ -118,11 +120,19 @@ struct EngineConfig {
 // or performance data, so returning concrete values here is intentional.
 [[nodiscard]] EngineConfig default_config();
 
-// Parse a config file. NOT IMPLEMENTED: throws common::NotImplemented until a
-// file format and parser are chosen (see docs/OPEN_QUESTIONS.md).
+// Reads a JSON config file, then validate()s it. Every key is optional (a
+// missing one keeps its default above); an unknown key is an error, so a typo
+// is not silently ignored; keys starting with '$' are comments. Money is read
+// exactly from the number's text. Throws common::ConfigError naming the file
+// and the field ("config.json: risk.max_daily_loss: must not be negative").
 [[nodiscard]] EngineConfig load_config(const std::filesystem::path& file);
 
-// Basic sanity checks (positive cash, non-empty urls, ...). NOT IMPLEMENTED.
+// load_config() on text already in memory.
+[[nodiscard]] EngineConfig parse_config(std::string_view json_text);
+
+// Throws common::ConfigError for values no run can use: non-positive cash or
+// limits, a position limit above the gross limit, an unknown feed, mode or log
+// level, a URL with the wrong scheme, live mode without symbols.
 void validate(const EngineConfig& config);
 
 }  // namespace trading_engine::config

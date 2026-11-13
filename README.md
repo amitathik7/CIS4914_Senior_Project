@@ -110,11 +110,12 @@ Linux and Windows on every push and pull request.
 Market data comes from CSV files, which can be recorded fixtures or real Alpaca bars
 downloaded with `trading_engine fetch-alpaca` ([`docs/ALPACA.md`](docs/ALPACA.md)).
 `trading_engine run --alpaca-live SYMBOLS` trades Alpaca's live minute bars
-through the same pipeline (simulated fills only). PostgreSQL persistence,
-config-file loading, the source-driven
-`HistoricalReplay` and the Python charts are still stubs that throw
-`NotImplemented`. `SystemMetrics` is real and wired into `MarketDataService` and
-both buses, but no executable creates one yet. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+through the same pipeline (simulated fills only), and `run --config FILE` reads
+risk and simulation settings from a JSON file ([`config/README.md`](config/README.md)).
+PostgreSQL persistence, the source-driven `HistoricalReplay` and the Python
+charts are still stubs that throw `NotImplemented`. `SystemMetrics` is real and
+wired into `MarketDataService` and both buses, but no executable creates one
+yet. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 for the milestone-by-milestone status.
 
 | Area | State |
@@ -134,11 +135,13 @@ for the milestone-by-milestone status.
 | `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
 | `SystemMetrics` (per-stage counts, fixed-size latency histogram with p50/p99, queue depth) | ✅ real + tested; wired into `MarketDataService` and both buses, not yet created by `run` / `serve` |
-| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config` | ⛔ stubs (`NotImplemented`) |
+| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live` | ⛔ stubs (`NotImplemented`) |
+| `config::load_config` + `trading_engine run --config FILE` | ✅ real + tested ([docs](config/README.md)) |
 | `AlpacaHistoricalSource` (REST bars, paging, retries) + `trading_engine fetch-alpaca` | ✅ real + tested on recorded responses ([docs](docs/ALPACA.md)); needs libcurl |
 | `AlpacaLiveSource` (WebSocket stream, reconnect) + `trading_engine run --alpaca-live` | ✅ real + tested on a scripted socket; checked against Alpaca's test stream ([docs](docs/ALPACA.md)) |
 | `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
-| Benchmarks, `docs/PERFORMANCE.md`, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
+| `trading_engine_bench` + baseline | ✅ measured ([docs](docs/PERFORMANCE.md)) |
+| Performance targets and optimisations, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
 Network code lives in two optional adapters: Kafka (librdkafka) and Alpaca
 (libcurl). There is no PostgreSQL connectivity yet.

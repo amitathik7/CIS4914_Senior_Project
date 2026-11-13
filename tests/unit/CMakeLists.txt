@@ -136,6 +136,12 @@ if(TARGET trading_engine_strategy_lab)
     endif()
 endif()
 
+# config::load_config / parse_config / validate, including the checked-in example.
+trading_engine_add_component_test(config
+    config_test.cpp)
+target_compile_definitions(te_test_config PRIVATE
+    CONFIG_EXAMPLE_FILE="${PROJECT_SOURCE_DIR}/config/config.example.json")
+
 # MarketDataService validation and publishing.
 trading_engine_add_component_test(market_data
     market_data_service_test.cpp)

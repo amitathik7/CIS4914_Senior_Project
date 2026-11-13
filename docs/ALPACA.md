@@ -71,7 +71,10 @@ signals and fills as they happen and the usual summary at the end.
 | `--record FILE` | Also write every live bar to FILE, which `--bars` can replay later |
 
 The strategy, risk and cash options of `run` (`--sma`, `--lookback`,
-`--quantity`, `--cash`, `--risk`, `--bus`) apply as for a file.
+`--quantity`, `--cash`, `--risk`, `--bus`) apply as for a file. A config file
+with `"mode": "live"` does the same without `--alpaca-live`: `run --config
+config/config.json` trades its `alpaca.symbols` on its `alpaca.stream_url`
+(`--feed` and `--alpaca-live` still override it).
 
 Bars come once a minute per symbol, and only while the market is open (9:30 to
 16:00 New York time, weekdays). Outside those hours use `--feed test`:

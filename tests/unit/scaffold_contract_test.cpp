@@ -21,9 +21,8 @@ TEST(ScaffoldContract, DefaultConfigIsRealAndSane) {
     EXPECT_EQ(c.postgres.password_env, "PGPASSWORD");
 }
 
-TEST(ScaffoldContract, ConfigFileLoadingIsNotFakedButThrows) {
-    EXPECT_THROW((void)tcfg::load_config("does-not-exist.json"), tec::NotImplemented);
-    EXPECT_THROW(tcfg::validate(tcfg::default_config()), tec::NotImplemented);
+TEST(ScaffoldContract, TheDefaultConfigPassesValidation) {
+    EXPECT_NO_THROW(tcfg::validate(tcfg::default_config()));
 }
 
 TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {
@@ -34,12 +33,8 @@ TEST(ScaffoldContract, PerformanceAnalyzerNeverFabricatesAReport) {
 }
 
 TEST(ScaffoldContract, NotImplementedCarriesTheCallSiteInItsMessage) {
-    try {
-        (void)tcfg::load_config("does-not-exist.json");
-        FAIL() << "expected common::NotImplemented";
-    } catch (const tec::NotImplemented& e) {
-        const std::string_view what{e.what()};
-        EXPECT_NE(what.find("load_config"), std::string_view::npos);
-        EXPECT_NE(what.find("not implemented"), std::string_view::npos);
-    }
+    const tec::NotImplemented e{"HistoricalReplay::run"};
+    const std::string_view what{e.what()};
+    EXPECT_NE(what.find("HistoricalReplay::run"), std::string_view::npos);
+    EXPECT_NE(what.find("not implemented"), std::string_view::npos);
 }

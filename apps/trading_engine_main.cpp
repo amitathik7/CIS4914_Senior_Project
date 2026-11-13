@@ -21,7 +21,7 @@
 //                      [--minutes N] [--record FILE] [--bus inprocess|topics|kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
-//                      [--cash N] [--risk on|off]
+//                      [--cash N] [--risk on|off] [--config FILE]
 //   trading_engine serve --bars FILE [--bars FILE...] [--bus kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--control-prefix NAME]
 //                      [--engine-id NAME] [--pace-ms N] [--heartbeat-ms N]
@@ -38,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -50,6 +51,7 @@
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/decimal_text.hpp"
 #include "trading_engine/common/timestamp_text.hpp"
+#include "trading_engine/configuration/engine_config.hpp"
 #include "trading_engine/control/control_codec.hpp"
 #include "trading_engine/events/event_bus.hpp"
 #include "trading_engine/events/event_codec.hpp"
@@ -97,6 +99,10 @@ constexpr const char* kUsage =
     "  --cash N                starting cash in dollars (default 100000)\n"
     "  --risk on|off           run the starter risk policies (default on); buying\n"
     "                          power and no-short-selling are always checked\n"
+    "  --config FILE           risk limits, starting cash, fees, slippage and latency\n"
+    "                          from a JSON file (config/config.example.json); with\n"
+    "                          \"mode\": \"live\" it trades the file's alpaca symbols and\n"
+    "                          feed. Flags override the file\n"
     "  With a topic bus, the run's settings are published on <prefix>.run.\n"
     "\n"
     "  trading_engine serve --bars FILE [options]\n"
@@ -116,7 +122,7 @@ struct Options {
     std::vector<std::string> bar_files;
     std::string bars;
     std::vector<common::Symbol> live_symbols;
-    std::string live_feed{"iex"};
+    std::optional<std::string> live_feed;   // --feed; unset: the config's feed
     std::size_t live_minutes{0};
     std::string record;
     std::string bus{"inprocess"};
@@ -126,8 +132,10 @@ struct Options {
     std::size_t long_window{20};
     std::size_t lookback{20};
     common::Quantity quantity{1};
-    std::int64_t cash{100'000};
+    std::optional<std::int64_t> cash;   // unset: the config's starting cash
     bool risk_policies{true};
+    std::string config_file;
+    config::EngineConfig engine{config::default_config()};
     // serve
     std::string control_prefix{control::kDefaultControlPrefix};
     std::string engine_id;
@@ -194,6 +202,9 @@ Options parse(int argc, char** argv) {
             o.quantity = static_cast<common::Quantity>(to_size(value, "--quantity"));
         } else if (flag == "--cash") {
             o.cash = static_cast<std::int64_t>(to_size(value, "--cash"));
+        } else if (o.command == "run" && flag == "--config") {
+            o.config_file = value;
+            o.engine      = config::load_config(value);
         } else if (o.command == "run" && flag == "--alpaca-live") {
             std::string symbol;
             for (const char c : value + ",") {
@@ -227,8 +238,12 @@ Options parse(int argc, char** argv) {
     if (!o.bars.empty() && !o.live_symbols.empty()) {
         usage_error("run takes --bars FILE or --alpaca-live SYMBOLS, not both");
     }
+    if (o.command == "run" && o.bars.empty() && o.live_symbols.empty() &&
+        o.engine.mode == config::RunMode::Live) {
+        o.live_symbols = o.engine.alpaca.symbols;   // validate() made sure there is one
+    }
     if (o.bars.empty() && o.live_symbols.empty()) {
-        usage_error(o.command == "run" ? "run needs --bars FILE or --alpaca-live SYMBOLS"
+        usage_error(o.command == "run" ? "run needs --bars FILE, --alpaca-live SYMBOLS, or a --config in live mode"
                                        : o.command + " needs --bars FILE");
     }
     if (o.command == "serve" && o.bus != "kafka" && o.bus != "kafka-mock") {
@@ -316,7 +331,8 @@ void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
 }
 
 // The settings the command-line flags describe: both reference strategies on
-// every symbol in the file, the default risk limits and simulation.
+// every symbol in the file, with the risk limits and simulation from --config
+// (or the defaults); --cash overrides the config's starting cash.
 control::RunSettings settings_from(const Options& o, const std::vector<common::Symbol>& symbols,
                                    const std::vector<domain::MarketEvent>& bars) {
     control::RunSettings s;
@@ -326,7 +342,11 @@ control::RunSettings settings_from(const Options& o, const std::vector<common::S
         s.period_end   = bars.back().exchange_time;
     }
     s.risk_policies = o.risk_policies;
-    s.simulation.starting_cash = common::Money::from_units(o.cash);
+    s.risk          = o.engine.risk;
+    s.simulation    = o.engine.simulation;
+    if (o.cash) {
+        s.simulation.starting_cash = common::Money::from_units(*o.cash);
+    }
     control::StrategySettings sma;
     sma.kind               = control::StrategyKind::SmaCrossover;
     sma.strategy_id        = "sma_crossover";
@@ -389,16 +409,26 @@ private:
     std::deque<domain::MarketEvent> queue_;
 };
 
+// "iex", "sip" or "test": --feed, else what the config's stream URL is.
+std::string live_feed_name(const Options& o) {
+    if (o.live_feed) {
+        return *o.live_feed;
+    }
+    return o.engine.alpaca.stream_url == market_data::kAlpacaTestStreamUrl ? "test" : o.engine.alpaca.data_feed;
+}
+
 // Feeds Alpaca's live bars into `configured` until Ctrl+C, --minutes or a
 // failure the source cannot recover from, which it returns.
 std::optional<std::string> run_live(const Options& o, const std::vector<common::Symbol>& symbols,
                                     common::ManualClock& clock, app::ConfiguredRun& configured,
                                     std::mutex& out_mutex) {
-    config::AlpacaConfig alpaca;
-    alpaca.symbols    = symbols;
-    alpaca.data_feed  = o.live_feed == "sip" ? "sip" : "iex";
-    alpaca.stream_url = o.live_feed == "test" ? std::string(market_data::kAlpacaTestStreamUrl)
-                                              : "wss://stream.data.alpaca.markets/v2/" + o.live_feed;
+    config::AlpacaConfig alpaca = o.engine.alpaca;
+    alpaca.symbols              = symbols;
+    if (o.live_feed) {
+        alpaca.data_feed  = *o.live_feed == "sip" ? "sip" : "iex";
+        alpaca.stream_url = *o.live_feed == "test" ? std::string(market_data::kAlpacaTestStreamUrl)
+                                                   : "wss://stream.data.alpaca.markets/v2/" + *o.live_feed;
+    }
 
     std::ofstream record;
     if (!o.record.empty()) {
@@ -549,15 +579,16 @@ int run(const Options& o) {
     auto& pipeline = configured.pipeline();
     auto& flow     = configured.flow();
 
+    const std::string config_note = o.config_file.empty() ? std::string{} : ", config: " + o.config_file;
     if (live) {
-        std::cout << "bus: " << o.bus << ", live Alpaca bars (" << o.live_feed << " feed), symbols:";
+        std::cout << "bus: " << o.bus << ", live Alpaca bars (" << live_feed_name(o) << " feed), symbols:";
         for (const auto& symbol : symbols) {
             std::cout << ' ' << symbol;
         }
-        std::cout << (o.live_minutes == 0 ? ". Ctrl+C stops it." : "") << "\n\n";
+        std::cout << config_note << (o.live_minutes == 0 ? ". Ctrl+C stops it." : "") << "\n\n";
     } else {
         std::cout << "bus: " << o.bus << ", bars: " << bars.size() << " from " << o.bars
-                  << ", symbols: " << symbols.size() << "\n\n";
+                  << ", symbols: " << symbols.size() << config_note << "\n\n";
     }
     publish_status(o, stack, settings, control::RunState::Running, std::nullopt, 1);
     std::optional<std::string> live_failure;

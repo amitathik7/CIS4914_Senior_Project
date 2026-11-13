@@ -93,6 +93,13 @@ Legend: **Owner** = who drives the decision · **By** = milestone it blocks.
   the retention policy can be recorded later, by persistence stage P4.
 
 ## 7. Configuration format
+
+> **Answered (2026-11-13):** JSON, read by the core's own JSON reader (no new
+> dependency). Precedence: built-in defaults, then the `--config` file, then
+> command-line flags. Environment variables carry only secrets, named by the
+> file. Hand-rolled validation with field-named errors; unknown keys are
+> errors. No discovery: the file is passed explicitly. See `config/README.md`.
+
 - JSON (example provided), TOML, YAML, or an env-var-only scheme?
 - Layering: file → environment overrides → CLI flags; precedence order?
 - Schema validation approach (hand-rolled vs JSON Schema vs a library).
