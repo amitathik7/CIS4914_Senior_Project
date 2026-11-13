@@ -71,6 +71,11 @@
 #include "trading_engine/domain/risk_decision_report.hpp"
 #include "trading_engine/domain/trade_signal.hpp"
 
+namespace trading_engine::analytics
+{
+    class SystemMetrics;
+}
+
 namespace trading_engine::events
 {
 
@@ -189,7 +194,8 @@ namespace trading_engine::events
 
         // Throws std::invalid_argument for capacity == 0.
         explicit InProcessEventBus(const common::IClock &clock,
-                                   InProcessEventBusOptions options = {});
+                                   InProcessEventBusOptions options = {},
+                                   analytics::SystemMetrics *metrics = nullptr);
         ~InProcessEventBus() override;   // request_shutdown() + drain + join
 
         InProcessEventBus(const InProcessEventBus &) = delete;
@@ -216,6 +222,7 @@ namespace trading_engine::events
 
         const common::IClock &clock_;
         const InProcessEventBusOptions options_;
+        analytics::SystemMetrics *metrics_{nullptr};
         SubscriptionRegistry registry_;
 
         mutable std::mutex mutex_;   // guards everything below except worker_

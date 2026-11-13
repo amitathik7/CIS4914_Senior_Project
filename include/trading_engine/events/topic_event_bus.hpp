@@ -78,7 +78,7 @@ public:
 
     // The transport is borrowed and must outlive the bus.
     TopicEventBus(IMessageTransport& transport, const common::IClock& clock,
-                  TopicEventBusOptions options = {});
+                  TopicEventBusOptions options = {}, analytics::SystemMetrics* metrics = nullptr);
     ~TopicEventBus() override;
 
     TopicEventBus(const TopicEventBus&)            = delete;
@@ -107,6 +107,7 @@ private:
     IMessageTransport&    transport_;
     const common::IClock& clock_;
     TopicEventBusOptions  options_;
+    analytics::SystemMetrics* metrics_{nullptr};
     SubscriptionRegistry  registry_;
 
     mutable std::mutex      mutex_;   // guards everything below except worker_

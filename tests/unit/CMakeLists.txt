@@ -1,4 +1,4 @@
-# Fast unit tests -- no network, no database, no threads.
+## Fast unit tests -- no network, no database, no threads.
 
 # Proves the GoogleTest target builds, links against the core library, and runs.
 trading_engine_add_component_test(smoke
@@ -32,7 +32,8 @@ target_link_libraries(te_test_backtest PRIVATE trading_engine::test_support)
 # Engineering telemetry for event counts, errors, queue depth,
 # latency statistics, snapshots, and concurrent recording.
 trading_engine_add_component_test(system_metrics
-    system_metrics_test.cpp)
+    system_metrics_test.cpp
+    system_metrics_wiring_test.cpp)
 
 # Pins the scaffold contract: unimplemented stubs throw NotImplemented, they do
 # not return fabricated data.

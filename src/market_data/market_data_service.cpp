@@ -3,6 +3,7 @@
 #include <utility>
 #include <optional>
 
+#include "trading_engine/analytics/system_metrics.hpp"
 #include "trading_engine/common/errors.hpp"
 
 #include "trading_engine/events/event_bus.hpp"
@@ -20,16 +21,42 @@ namespace trading_engine::market_data
     MarketDataService::MarketDataService(events::IEventBus &bus,
                                          const common::IClock &clock,
                                          MarketDataPolicy policy,
-                                         persistence::IMarketDataRepository *repository)
+                                         persistence::IMarketDataRepository *repository,
+                                         analytics::SystemMetrics *metrics)
         : bus_{bus},
           clock_{clock},
           policy_{std::move(policy)},
-          repository_{repository} {}
+          repository_{repository},
+          metrics_{metrics} {}
 
     MarketDataService::~MarketDataService() = default;
 
     void MarketDataService::on_market_event(const domain::MarketEvent &event)
     {
+        const auto started_at = this->clock_.now();
+
+        const auto record_metrics = [&](bool accepted, bool error)
+        {
+            if (this->metrics_ == nullptr)
+            {
+                return;
+            }
+
+            if (accepted)
+            {
+                this->metrics_->increment_events(analytics::Stage::Ingest);
+            }
+
+            if (error)
+            {
+                this->metrics_->increment_errors(analytics::Stage::Ingest);
+            }
+
+            this->metrics_->record_latency(
+                analytics::Stage::Ingest,
+                this->clock_.now() - started_at);
+        };
+
         // TODO: validate against policy_ (positive prices, ordering, spike filter),
         //       stamp ingest_time from clock_, assign per-symbol sequence, persist
         //       via repository_ when set, then publish an EventType::MarketData
@@ -49,6 +76,7 @@ namespace trading_engine::market_data
         if (this->policy_.reject_non_positive_prices && (invalid_value_check(event.price) || invalid_value_check(event.bid) || invalid_value_check(event.ask) || invalid_value_check(event.open) || invalid_value_check(event.high) || invalid_value_check(event.low)))
         {
             this->running_counts_.rejected += 1;
+            record_metrics(false, true);
             return;
         }
 
@@ -56,6 +84,7 @@ namespace trading_engine::market_data
         if (event.symbol.empty() || event.type == domain::MarketEventType::Unknown)
         {
             this->running_counts_.rejected += 1;
+            record_metrics(false, true);
             return;
         }
 
@@ -72,7 +101,9 @@ namespace trading_engine::market_data
         event_wrapper.type = events::EventType::MarketData;
         event_wrapper.payload = mutable_market_event;
 
-        this->bus_.publish(event_wrapper);
+        const bool published = this->bus_.publish(event_wrapper);
+
+        record_metrics(true, !published);
     }
 
     MarketDataService::Stats MarketDataService::stats() const

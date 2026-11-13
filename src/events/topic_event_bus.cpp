@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "trading_engine/analytics/system_metrics.hpp"
 #include "trading_engine/events/event_codec.hpp"
 
 namespace trading_engine::events {
@@ -41,14 +42,17 @@ bool valid_topic_prefix(const std::string& prefix) {
 }  // namespace
 
 TopicEventBus::TopicEventBus(IMessageTransport& transport, const common::IClock& clock,
-                             TopicEventBusOptions options)
-    : transport_{transport}, clock_{clock}, options_{std::move(options)} {
+                             TopicEventBusOptions options, analytics::SystemMetrics* metrics)
+    : transport_{transport}, clock_{clock}, options_{std::move(options)}, metrics_{metrics} {
     if (!valid_topic_prefix(options_.topic_prefix)) {
         throw std::invalid_argument("TopicEventBus: topic_prefix '" + options_.topic_prefix +
                                     "' must be 1-200 characters of [A-Za-z0-9._-]");
     }
     if (options_.origin.empty()) {
         options_.origin = random_origin();
+    }
+    if (metrics_ != nullptr) {
+        metrics_->set_queue_depth("kafka", 0);
     }
 }
 
@@ -91,6 +95,10 @@ bool TopicEventBus::publish(Event event) {
     sequence_ = event.sequence;
     ++sent_own_;
     ++stats_.published;
+    if (metrics_ != nullptr) {
+        metrics_->set_queue_depth(
+            "kafka", static_cast<std::size_t>(sent_own_ - stats_.received_own));
+    }
     return true;
 }
 
@@ -217,6 +225,10 @@ void TopicEventBus::run() {
             stats_.handler_errors += errors;
             if (own) {
                 ++stats_.received_own;
+                if (metrics_ != nullptr) {
+                    metrics_->set_queue_depth(
+                        "kafka", static_cast<std::size_t>(sent_own_ - stats_.received_own));
+                }
             }
         }
         idle_.notify_all();
