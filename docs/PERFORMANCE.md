@@ -37,37 +37,37 @@ without the network, with the 5 ms poll interval `trading_engine run` uses.
 
 ## Baseline (2026-11-13)
 
-Apple M5 (10 cores), macOS 27, Apple clang 21, Release (`-O3`), commit on
-`adam/config-bench`. Three runs of the default command; the range is shown
+Apple M5 (10 cores), macOS 27, Apple clang 21, Release (`-O3`), on `main`
+with PRs #24-#27 merged. Five runs of the default command; the range is shown
 where runs differed by more than a few percent.
 
 **Replay, 10,000 bars (5 symbols × 2,000 minutes), 1,018 signals, 977 fills**
 
 | Bus | Wall time | Bars/s | µs per bar |
 |---|---|---|---|
-| inprocess | 13 ms | 726,000-757,000 | 1.3 |
-| topics | 87 ms | 114,000-116,000 | 8.7 |
+| inprocess | 13-14 ms | 707,000-757,000 | 1.3-1.4 |
+| topics | 86-92 ms | 108,000-116,000 | 8.6-9.2 |
 
 **Replay, 200,000 bars (10 symbols × 20,000 minutes), 21,160 signals, 20,900 fills**
 
 | Bus | Wall time | Bars/s | µs per bar |
 |---|---|---|---|
 | inprocess | 171 ms | 1,170,000 | 0.85 |
-| topics | 1.75 s | 114,000 | 8.7 |
+| topics | 1.67-1.75 s | 114,000-120,000 | 8.3-8.7 |
 
 **Bus, publish→handler latency (20,000 samples) and burst (200,000 events)**
 
 | Bus | p50 | p90 | p99 | max | Burst |
 |---|---|---|---|---|---|
-| inprocess | 3.2-4.0 µs | 5.2-5.5 µs | 7.3-19.7 µs | 48-416 µs | 5.4-7.0 M events/s |
-| topics | 7.3-7.4 µs | 8.1-8.7 µs | 17.6-21.8 µs | 101-227 µs | 298,000-311,000 events/s |
+| inprocess | 3.2-4.0 µs | 5.2-5.7 µs | 7.3-19.7 µs | 48-416 µs | 5.4-7.0 M events/s |
+| topics | 7.3-7.4 µs | 8.1-8.9 µs | 17.6-21.8 µs | 101-227 µs | 287,000-311,000 events/s |
 
 **Codec, one 331-byte market-data envelope**
 
 | | Per call | Per second |
 |---|---|---|
-| encode | 1.23 µs | ~810,000 |
-| decode | 1.21 µs | ~820,000 |
+| encode | 1.23-1.27 µs | ~790,000-815,000 |
+| decode | 1.21-1.29 µs | ~780,000-825,000 |
 
 **Peak memory:** 15 MiB for the default run; 252 MiB for the 200,000-bar run.
 
