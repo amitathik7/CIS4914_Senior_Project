@@ -1,5 +1,5 @@
 {
-  "$comment": "Example configuration. Copy to config/config.json (gitignored) and edit. NO secrets live in this file: credential fields name the environment variable that carries the value. The parser is not implemented yet (see docs/OPEN_QUESTIONS.md).",
+  "$comment": "Example configuration. Copy to config/config.json (gitignored) and edit. NO secrets live in this file: credential fields name the environment variable that carries the value. Every key is optional; see config/README.md.",
 
   "mode": "backtest",
 

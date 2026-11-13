@@ -129,9 +129,11 @@ for the milestone-by-milestone status.
 | Web console on the real engine; Strategy Lab (replay, compare, train/sweep, backtest; 17 built-in datasets incl. five large synthetic ones) | ✅ real + tested ([web](web/README.md), [lab](docs/STRATEGY_LAB.md)) |
 | `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
-| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
+| `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
+| `config::load_config` + `trading_engine run --config FILE` | ✅ real + tested ([docs](config/README.md)) |
 | Alpaca historical + live sources, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
-| Benchmarks, `docs/PERFORMANCE.md`, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
+| `trading_engine_bench` + baseline | ✅ measured ([docs](docs/PERFORMANCE.md)) |
+| Performance targets and optimisations, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
 The only network code is the optional Kafka adapter (librdkafka). There is no
 Alpaca or PostgreSQL connectivity yet.

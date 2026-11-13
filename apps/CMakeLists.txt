@@ -19,6 +19,14 @@ target_compile_features(trading_engine PRIVATE cxx_std_20)
 trading_engine_set_warnings(trading_engine)
 set_target_properties(trading_engine PROPERTIES FOLDER "trading_engine")
 
+# Throughput and latency baselines (docs/PERFORMANCE.md). Core only; run it
+# from a Release build.
+add_executable(trading_engine_bench trading_engine_bench.cpp)
+target_link_libraries(trading_engine_bench PRIVATE trading_engine::core)
+target_compile_features(trading_engine_bench PRIVATE cxx_std_20)
+trading_engine_set_warnings(trading_engine_bench)
+set_target_properties(trading_engine_bench PROPERTIES FOLDER "trading_engine")
+
 # Optional developer/demo tool (docs/STRATEGY_LAB.md). Off by default, so the default build
 # gains no target and needs nothing new. Depends only on trading_engine::core: no Python, no
 # UI library, no GoogleTest, and it builds with BUILD_TESTING=OFF.

@@ -16,7 +16,7 @@
 //   trading_engine run --bars FILE [--bus inprocess|topics|kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
-//                      [--cash N] [--risk on|off]
+//                      [--cash N] [--risk on|off] [--config FILE]
 //   trading_engine serve --bars FILE [--bars FILE...] [--bus kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--control-prefix NAME]
 //                      [--engine-id NAME] [--pace-ms N] [--heartbeat-ms N]
@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -41,6 +42,7 @@
 #include "trading_engine/common/clock.hpp"
 #include "trading_engine/common/decimal_text.hpp"
 #include "trading_engine/common/timestamp_text.hpp"
+#include "trading_engine/configuration/engine_config.hpp"
 #include "trading_engine/control/control_codec.hpp"
 #include "trading_engine/events/event_bus.hpp"
 #include "trading_engine/events/event_codec.hpp"
@@ -74,6 +76,9 @@ constexpr const char* kUsage =
     "  --cash N                starting cash in dollars (default 100000)\n"
     "  --risk on|off           run the starter risk policies (default on); buying\n"
     "                          power and no-short-selling are always checked\n"
+    "  --config FILE           risk limits, starting cash, fees, slippage and latency\n"
+    "                          from a JSON file (config/config.example.json); the\n"
+    "                          flags above override it\n"
     "  With a topic bus, the run's settings are published on <prefix>.run.\n"
     "\n"
     "  trading_engine serve --bars FILE [options]\n"
@@ -99,8 +104,10 @@ struct Options {
     std::size_t long_window{20};
     std::size_t lookback{20};
     common::Quantity quantity{1};
-    std::int64_t cash{100'000};
+    std::optional<std::int64_t> cash;   // unset: the config's starting cash
     bool risk_policies{true};
+    std::string config_file;
+    config::EngineConfig engine{config::default_config()};
     // serve
     std::string control_prefix{control::kDefaultControlPrefix};
     std::string engine_id;
@@ -167,6 +174,9 @@ Options parse(int argc, char** argv) {
             o.quantity = static_cast<common::Quantity>(to_size(value, "--quantity"));
         } else if (flag == "--cash") {
             o.cash = static_cast<std::int64_t>(to_size(value, "--cash"));
+        } else if (o.command == "run" && flag == "--config") {
+            o.config_file = value;
+            o.engine      = config::load_config(value);
         } else if (flag == "--risk") {
             if (value != "on" && value != "off") {
                 usage_error("--risk needs on or off");
@@ -264,7 +274,8 @@ void make_bus(const Options& o, const common::IClock& clock, BusStack& stack) {
 }
 
 // The settings the command-line flags describe: both reference strategies on
-// every symbol in the file, the default risk limits and simulation.
+// every symbol in the file, with the risk limits and simulation from --config
+// (or the defaults); --cash overrides the config's starting cash.
 control::RunSettings settings_from(const Options& o, const std::vector<common::Symbol>& symbols,
                                    const std::vector<domain::MarketEvent>& bars) {
     control::RunSettings s;
@@ -272,7 +283,11 @@ control::RunSettings settings_from(const Options& o, const std::vector<common::S
     s.period_start  = bars.front().exchange_time;
     s.period_end    = bars.back().exchange_time;
     s.risk_policies = o.risk_policies;
-    s.simulation.starting_cash = common::Money::from_units(o.cash);
+    s.risk          = o.engine.risk;
+    s.simulation    = o.engine.simulation;
+    if (o.cash) {
+        s.simulation.starting_cash = common::Money::from_units(*o.cash);
+    }
     control::StrategySettings sma;
     sma.kind               = control::StrategyKind::SmaCrossover;
     sma.strategy_id        = "sma_crossover";
@@ -392,7 +407,8 @@ int run(const Options& o) {
     auto& flow     = configured.flow();
 
     std::cout << "bus: " << o.bus << ", bars: " << bars.size() << " from " << o.bars
-              << ", symbols: " << symbols.size() << "\n\n";
+              << ", symbols: " << symbols.size()
+              << (o.config_file.empty() ? std::string{} : ", config: " + o.config_file) << "\n\n";
     publish_status(o, stack, settings, control::RunState::Running, std::nullopt, 1);
     (void)configured.replay(bars);
     publish_status(o, stack, settings, control::RunState::Completed, bars.back().exchange_time, 2);
