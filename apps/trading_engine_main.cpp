@@ -31,6 +31,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -430,6 +431,8 @@ std::optional<std::string> run_live(const Options& o, const std::vector<common::
 
     std::ofstream record;
     if (!o.record.empty()) {
+        std::error_code mkdir_error;  // creates a missing folder such as data/; a real failure shows at open
+        std::filesystem::create_directories(std::filesystem::path{o.record}.parent_path(), mkdir_error);
         record.open(o.record);
         if (!record) {
             throw std::runtime_error("cannot write " + o.record);
@@ -684,6 +687,8 @@ int run(const Options& o) {
         results.equity_curve = std::move(curve);
         results.fills        = std::move(fills);
         results.metrics      = stage_metrics;
+        std::error_code mkdir_error;  // creates a missing folder such as data/; a real failure shows at open
+        std::filesystem::create_directories(std::filesystem::path{o.report}.parent_path(), mkdir_error);
         std::ofstream out{o.report};
         analytics::write_results_json(out, results);
         if (!out.flush()) {

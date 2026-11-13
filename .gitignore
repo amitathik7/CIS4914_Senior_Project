@@ -124,3 +124,6 @@ build-python/
 perf.data
 perf.data.old
 *.prof
+
+# Market data fetched with trading_engine fetch-alpaca: local only
+/data/

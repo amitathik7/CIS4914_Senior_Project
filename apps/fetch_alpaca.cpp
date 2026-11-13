@@ -3,6 +3,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -147,6 +148,8 @@ int fetch_alpaca(int argc, char** argv) {
     if (out_path.empty()) {
         write_bar_csv(std::cout, bars);
     } else {
+        std::error_code mkdir_error;  // creates a missing folder such as data/; a real failure shows at open
+        std::filesystem::create_directories(std::filesystem::path{out_path}.parent_path(), mkdir_error);
         std::ofstream out{out_path};
         if (!out) {
             std::cerr << "trading_engine fetch-alpaca: cannot write " << out_path << '\n';
