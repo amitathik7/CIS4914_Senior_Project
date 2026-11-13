@@ -3,7 +3,8 @@
 # core library plus every adapter so a build failure anywhere surfaces here.
 add_executable(trading_engine
     trading_engine_main.cpp
-    bar_csv.cpp)
+    bar_csv.cpp
+    fetch_alpaca.cpp)
 
 target_link_libraries(trading_engine PRIVATE
     trading_engine::core

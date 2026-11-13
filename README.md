@@ -107,8 +107,9 @@ the web console starts, stops and kill-switches over Kafka
 ([`docs/BACKTESTING.md`](docs/BACKTESTING.md)). CI builds and tests everything on
 Linux and Windows on every push and pull request.
 
-Market data comes only from recorded CSV files. Alpaca (historical and live),
-PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
+Market data comes from CSV files, which can be recorded fixtures or real Alpaca bars
+downloaded with `trading_engine fetch-alpaca` ([`docs/ALPACA.md`](docs/ALPACA.md)).
+The live Alpaca feed, PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
 `HistoricalReplay` and the Python charts are still stubs that throw
 `NotImplemented`. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 for the milestone-by-milestone status.
@@ -130,7 +131,8 @@ for the milestone-by-milestone status.
 | `start.py`: Kafka, engine, both gateways and the console in one command | ✅ works on Windows and Linux |
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
 | `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
-| Alpaca historical + live sources, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
+| `AlpacaHistoricalSource` (REST bars, paging, retries) + `trading_engine fetch-alpaca` | ✅ real + tested on recorded responses ([docs](docs/ALPACA.md)); needs libcurl |
+| Alpaca live source, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
 | Benchmarks, `docs/PERFORMANCE.md`, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
 The only network code is the optional Kafka adapter (librdkafka). There is no
