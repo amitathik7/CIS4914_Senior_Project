@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { EngineApiError } from "../api/client";
+import { useMemo } from "react";
 import { Link, useParams } from "react-router";
 import type { RunDetail, StrategyConfig, Trade } from "../api/contract";
 import { BarChart } from "../components/charts/BarChart";
@@ -105,10 +104,8 @@ function FragmentKV({ k, v }: { k: string; v: string }) {
 export function Report() {
   const { runId } = useParams();
   const run = useCurrentRun();
-  const { client, refreshRuns } = useEngine();
+  const { client } = useEngine();
   const detail = useRunResource(runId, (c, id) => c.getRun(id));
-  const [stopping, setStopping] = useState(false);
-  const [stopError, setStopError] = useState<string>();
   const equity = useRunResource(runId, (c, id) => c.equity(id));
   const trades = useRunResource(runId, (c, id) => c.trades(id));
   const r = detail.data?.report;
@@ -130,41 +127,20 @@ export function Report() {
     URL.revokeObjectURL(url);
   };
 
-  // Ends a queued or running backtest early; a stopped run keeps the report of the bars it replayed.
-  const stop = async () => {
-    if (!runId) return;
-    setStopping(true);
-    setStopError(undefined);
-    try {
-      await client.stopRun(runId);
-      refreshRuns();
-    } catch (err) {
-      setStopError(err instanceof EngineApiError ? err.message : "The engine did not stop the run. Try again.");
-    } finally {
-      setStopping(false);
-    }
-  };
-
   if (detail.data && (detail.data.status === "failed" || detail.data.status === "queued" || (detail.data.status === "running" && detail.data.mode === "backtest"))) {
     const d = detail.data;
     return (
       <>
         <div className="page-head">
           <div><h1>{d.name}</h1><p>{period(d.period_start, d.period_end)}</p></div>
-          {d.status !== "failed" && (
-            <div className="page-actions">
-              <button type="button" className="btn" onClick={stop} disabled={stopping}>{stopping ? "Stopping…" : d.status === "queued" ? "Cancel run" : "Stop run"}</button>
-            </div>
-          )}
         </div>
-        {stopError && <div style={{ marginBottom: 14 }}><Notice tone="down">{stopError}</Notice></div>}
         {d.status === "failed" ? (
           <Notice tone="down"><b>This run failed.</b> {d.error} {d.mode === "live" ? <Link to="/backtests/new?mode=live">Start a new live run</Link> : <Link to="/backtests/new">Start a new backtest</Link>}</Notice>
         ) : (
           <Panel title="Replaying">
             <div className="stack" style={{ gap: 10 }}>
               {d.progress !== undefined && <div className="progress-line" style={{ width: "100%", height: 6 }}><span style={{ width: `${Math.round(d.progress * 100)}%` }} /></div>}
-              <p className="muted num">{d.progress !== undefined ? `${Math.round(d.progress * 100)}% of bars replayed` : "Replaying"}{d.clock ? `, now at ${dateTime(d.clock)} ET` : ""}. The report appears when the replay completes; Stop run ends it here and reports the bars so far.</p>
+              <p className="muted num">{d.progress !== undefined ? `${Math.round(d.progress * 100)}% of bars replayed` : "Replaying"}{d.clock ? `, now at ${dateTime(d.clock)} ET` : ""}. The report appears when the replay completes; Stop run (top right) ends it here and reports the bars so far.</p>
             </div>
           </Panel>
         )}
@@ -200,7 +176,7 @@ export function Report() {
             <Figure key={f.key} lead={f.lead} label={f.label} value={f.tone ? <span className={f.tone}>{f.value}</span> : f.value} sub={f.sub} />
           ))}
         </div>
-      ) : (
+      ) : detail.data ? null : (
         <div className="figures"><Loading height={58} /></div>
       )}
 
