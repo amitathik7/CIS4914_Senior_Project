@@ -10,9 +10,13 @@
 // The bars are replayed in market time: the clock is set to each bar's time
 // and the bus is drained before the next timestamp, so a market order placed
 // on one bar fills at the next bar's open on every bus. Simulated only: no
-// network market data, no real orders.
+// real orders. `fetch-alpaca` (fetch_alpaca.cpp) downloads real historical
+// bars into the CSV layout `--bars` reads.
 //
 //   trading_engine                      build info and usage
+//   trading_engine fetch-alpaca --symbols SYM[,SYM...] --start T --end T
+//                      [--timeframe TF] [--adjustment KIND] [--feed iex|sip]
+//                      [--out FILE]
 //   trading_engine run --bars FILE [--bus inprocess|topics|kafka|kafka-mock]
 //                      [--brokers HOST:PORT] [--topic-prefix NAME]
 //                      [--sma SHORT,LONG] [--lookback N] [--quantity N]
@@ -36,6 +40,7 @@
 #include <vector>
 
 #include "bar_csv.hpp"
+#include "fetch_alpaca.hpp"
 #include "trading_engine/app/configured_run.hpp"
 #include "trading_engine/app/engine_service.hpp"
 #include "trading_engine/common/clock.hpp"
@@ -498,11 +503,15 @@ int serve(const Options& o) {
 
 int main(int argc, char** argv) {
     const std::string command = argc < 2 ? "" : argv[1];
-    if (command != "run" && command != "serve") {
-        std::cout << kProjectName << ' ' << kVersion << '\n' << kDescription << "\n\n" << kUsage;
+    if (command != "run" && command != "serve" && command != "fetch-alpaca") {
+        std::cout << kProjectName << ' ' << kVersion << '\n' << kDescription << "\n\n"
+                  << kUsage << '\n' << cli::kFetchAlpacaUsage;
         return argc < 2 ? 0 : 2;
     }
     try {
+        if (command == "fetch-alpaca") {
+            return cli::fetch_alpaca(argc, argv);
+        }
         const Options options = parse(argc, argv);
         return command == "serve" ? serve(options) : run(options);
     } catch (const control::SettingsError& e) {

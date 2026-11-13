@@ -72,10 +72,26 @@ set_target_properties(trading_engine_core PROPERTIES
 #  dependency never becomes transitive to the core or to strategies.
 # -----------------------------------------------------------------------------
 
-# Alpaca market-data adapter (future: WebSocket + HTTP + TLS + JSON).
+# Alpaca market-data adapter. The REST source uses libcurl when CMake finds it
+# (macOS SDK, apt libcurl4-openssl-dev, vcpkg curl); without it the adapter
+# still builds and its HTTP client throws a clear error at run time. JSON uses
+# the core's private reader in events/json.hpp.
+find_package(CURL QUIET)
+if(CURL_FOUND)
+    set(_te_http_client market_data/curl_http_client.cpp)
+    message(STATUS "libcurl: ${CURL_VERSION_STRING} (Alpaca REST enabled)")
+else()
+    set(_te_http_client market_data/no_http_client.cpp)
+    message(STATUS "libcurl: not found (Alpaca REST disabled)")
+endif()
+
 add_library(trading_engine_alpaca_adapter STATIC
     market_data/alpaca_live_source.cpp
-    market_data/alpaca_historical_source.cpp)
+    market_data/alpaca_historical_source.cpp
+    ${_te_http_client})
+if(CURL_FOUND)
+    target_link_libraries(trading_engine_alpaca_adapter PRIVATE CURL::libcurl)
+endif()
 add_library(trading_engine::alpaca_adapter ALIAS trading_engine_alpaca_adapter)
 target_link_libraries(trading_engine_alpaca_adapter PUBLIC trading_engine_core)
 target_compile_features(trading_engine_alpaca_adapter PUBLIC cxx_std_20)
@@ -83,8 +99,7 @@ trading_engine_set_warnings(trading_engine_alpaca_adapter)
 set_target_properties(trading_engine_alpaca_adapter PROPERTIES
     FOLDER "trading_engine/adapters"
     POSITION_INDEPENDENT_CODE ON)
-# TODO(alpaca): find_package(OpenSSL); FetchContent websocketpp / Boost.Beast;
-#               a JSON library -- all PRIVATE to this target.
+# TODO(alpaca): the live WebSocket client -- PRIVATE to this target.
 
 # PostgreSQL persistence adapter (future: libpq / libpqxx).
 add_library(trading_engine_postgres_adapter STATIC
