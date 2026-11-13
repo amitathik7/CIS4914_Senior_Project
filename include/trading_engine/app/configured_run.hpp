@@ -62,6 +62,14 @@ public:
     // true when every bar was fed, false when on_instant stopped it.
     bool replay(const std::vector<domain::MarketEvent>& bars, const InstantCallback& on_instant = {});
 
+    // The same run fed as events arrive (a live feed): begin(), feed() each
+    // event, end(). feed() sets the clock to the event's time, never moving it
+    // back, and drains the bus before returning. replay() is these three with
+    // draining once per timestamp.
+    void begin(common::Timestamp first_event_time);
+    void feed(const domain::MarketEvent& event);
+    void end();
+
     [[nodiscard]] Pipeline& pipeline() noexcept { return pipeline_; }
     [[nodiscard]] OrderFlow& flow() noexcept { return flow_; }
 

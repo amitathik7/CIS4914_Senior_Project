@@ -109,7 +109,8 @@ Linux and Windows on every push and pull request.
 
 Market data comes from CSV files, which can be recorded fixtures or real Alpaca bars
 downloaded with `trading_engine fetch-alpaca` ([`docs/ALPACA.md`](docs/ALPACA.md)).
-The live Alpaca feed, PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
+`trading_engine run --alpaca-live SYMBOLS` trades Alpaca's live minute bars
+through the same pipeline (simulated fills only). PostgreSQL persistence, config-file loading, `SystemMetrics`, the source-driven
 `HistoricalReplay` and the Python charts are still stubs that throw
 `NotImplemented`. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 for the milestone-by-milestone status.
@@ -132,7 +133,8 @@ for the milestone-by-milestone status.
 | CI (`.github/workflows/ci.yml`): C++ Linux + Windows, web, Python gateways | ✅ green on GitHub Actions |
 | `HistoricalReplay` (source-driven), `TradingEngine::run_backtest/run_live`, `config::load_config`, `SystemMetrics` | ⛔ stubs (`NotImplemented`) |
 | `AlpacaHistoricalSource` (REST bars, paging, retries) + `trading_engine fetch-alpaca` | ✅ real + tested on recorded responses ([docs](docs/ALPACA.md)); needs libcurl |
-| Alpaca live source, `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
+| `AlpacaLiveSource` (WebSocket stream, reconnect) + `trading_engine run --alpaca-live` | ✅ real + tested on a scripted socket; checked against Alpaca's test stream ([docs](docs/ALPACA.md)) |
+| `PostgresRepository` + migrations, `python/visualization/plot_performance.py` | ⛔ stubs, not started |
 | Benchmarks, `docs/PERFORMANCE.md`, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
 The only network code is the optional Kafka adapter (librdkafka). There is no

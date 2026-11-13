@@ -33,4 +33,8 @@ public:
 // given order; read_bar_csv() reads it back unchanged.
 void write_bar_csv(std::ostream& out, const std::vector<domain::MarketEvent>& events);
 
+// One row of that layout, for writing events as they arrive (after a
+// write_bar_csv(out, {}) for the header).
+void write_bar_csv_row(std::ostream& out, const domain::MarketEvent& event);
+
 }  // namespace trading_engine::cli

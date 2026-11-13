@@ -116,16 +116,19 @@ std::vector<domain::MarketEvent> read_bar_csv(const std::string& path) {
     return events;
 }
 
-void write_bar_csv(std::ostream& out, const std::vector<domain::MarketEvent>& events) {
+void write_bar_csv_row(std::ostream& out, const domain::MarketEvent& e) {
     const auto price = [](const std::optional<common::Price>& p) {
         return p ? common::format_decimal(*p) : std::string{};
     };
+    out << e.symbol << ',' << common::format_timestamp(e.exchange_time) << ',' << domain::to_string(e.type) << ','
+        << price(e.price) << ',' << price(e.open) << ',' << price(e.high) << ',' << price(e.low) << ','
+        << (e.volume ? common::format_quantity(*e.volume) : std::string{}) << '\n';
+}
+
+void write_bar_csv(std::ostream& out, const std::vector<domain::MarketEvent>& events) {
     out << "symbol,exchange_time,type,price,open,high,low,volume\n";
     for (const auto& e : events) {
-        out << e.symbol << ',' << common::format_timestamp(e.exchange_time) << ','
-            << domain::to_string(e.type) << ',' << price(e.price) << ',' << price(e.open) << ','
-            << price(e.high) << ',' << price(e.low) << ','
-            << (e.volume ? common::format_quantity(*e.volume) : std::string{}) << '\n';
+        write_bar_csv_row(out, e);
     }
 }
 

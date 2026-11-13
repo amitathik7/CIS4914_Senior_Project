@@ -1,14 +1,11 @@
 #include "trading_engine/market_data/alpaca_historical_source.hpp"
 
 #include <algorithm>
-#include <charconv>
-#include <cmath>
 #include <cstdlib>
 #include <thread>
 #include <utility>
 
-#include "../events/json.hpp"
-#include "trading_engine/common/decimal_text.hpp"
+#include "alpaca_json.hpp"
 #include "trading_engine/common/errors.hpp"
 #include "trading_engine/common/timestamp_text.hpp"
 
@@ -70,17 +67,6 @@ namespace trading_engine::market_data
                    unit == "D" || unit == "Week" || unit == "W" || unit == "Month" || unit == "M";
         }
 
-        std::optional<double> number_as_double(const std::string &text)
-        {
-            double value = 0.0;
-            const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
-            if (ec != std::errc{} || end != text.data() + text.size() || !std::isfinite(value))
-            {
-                return std::nullopt;
-            }
-            return value;
-        }
-
         [[noreturn]] void malformed(const std::string &what)
         {
             throw AlpacaError(200, "Alpaca bars response: " + what);
@@ -96,43 +82,24 @@ namespace trading_engine::market_data
             return *v;
         }
 
-        // exact for prices with up to six decimals, nearest micro otherwise
         common::Price price_field(const json::Value &bar, std::string_view key, const std::string &where)
         {
-            const json::Value &v = member(bar, key, where);
-            if (v.kind != json::Value::Kind::Number)
+            const auto price = alpaca_json::price(member(bar, key, where));
+            if (!price)
             {
-                malformed(where + " '" + std::string(key) + "' is not a number");
+                malformed(where + " '" + std::string(key) + "' is not a price");
             }
-            common::Price price{};
-            if (common::parse_decimal(v.text, price) == common::DecimalStatus::Ok)
-            {
-                return price;
-            }
-            if (const auto d = number_as_double(v.text))
-            {
-                return common::Price::from_double(*d);
-            }
-            malformed(where + " '" + std::string(key) + "' is out of range");
+            return *price;
         }
 
         common::Quantity volume_field(const json::Value &bar, const std::string &where)
         {
-            const json::Value &v = member(bar, "v", where);
-            if (v.kind != json::Value::Kind::Number)
+            const auto volume = alpaca_json::quantity(member(bar, "v", where));
+            if (!volume)
             {
-                malformed(where + " 'v' is not a number");
+                malformed(where + " 'v' is not a volume");
             }
-            common::Quantity q = 0;
-            if (common::parse_quantity(v.text, q) == common::DecimalStatus::Ok)
-            {
-                return q;
-            }
-            if (const auto d = number_as_double(v.text); d && *d >= 0 && *d < 9.0e18)
-            {
-                return static_cast<common::Quantity>(std::llround(*d));
-            }
-            malformed(where + " 'v' is not a volume");
+            return *volume;
         }
 
         std::string error_message(const HttpResponse &response)
