@@ -143,8 +143,8 @@ for the milestone-by-milestone status.
 | `trading_engine_bench` + baseline | ✅ measured ([docs](docs/PERFORMANCE.md)) |
 | Performance targets and optimisations, `docs/TECH_REQUIREMENTS.md`, coverage gate, sanitizer CI jobs | ⛔ not started |
 
-The only network code is the optional Kafka adapter (librdkafka). There is no
-Alpaca or PostgreSQL connectivity yet.
+Network code lives in two optional adapters: Kafka (librdkafka) and Alpaca
+(libcurl). There is no PostgreSQL connectivity yet.
 
 ## Architecture at a glance
 
