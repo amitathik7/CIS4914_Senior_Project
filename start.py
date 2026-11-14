@@ -357,6 +357,42 @@ def ensure_librdkafka() -> None:
     run_step("start", cmd)
 
 
+def libcurl_missing(build_dir: Path) -> bool:
+    """True if the build was configured without libcurl (no Alpaca downloads or live feed in that engine)."""
+    try:
+        text = (build_dir / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "CURL_INCLUDE_DIR:PATH=CURL_INCLUDE_DIR-NOTFOUND" in text
+
+
+def libcurl_installed() -> bool:
+    if WINDOWS:
+        v = vcpkg()
+        return v is not None and "curl:x64-windows" in run_quiet([str(v / "vcpkg.exe"), "list", "curl"]).stdout
+    if MAC:
+        return True     # part of the macOS SDK
+    return shutil.which("pkg-config") is not None and run_quiet(["pkg-config", "--exists", "libcurl"]).returncode == 0
+
+
+def ensure_libcurl() -> None:
+    """A build-kafka configured before libcurl was installed (e.g. librdkafka came first) keeps the miss cached, and
+    its engine can't download Alpaca bars. Installs libcurl if needed and configures the build again."""
+    if not libcurl_missing(KAFKA_BUILD):
+        return
+    hint = ("vcpkg install curl:x64-windows" if WINDOWS else "sudo apt install libcurl4-openssl-dev pkg-config")
+    if not libcurl_installed():
+        cmd = [str(vcpkg() / "vcpkg.exe"), "install", "curl:x64-windows"] if WINDOWS and vcpkg() else None
+        if cmd is None or not ask_yes("start   | libcurl (needed to download Alpaca bars) is missing. "
+                                      "Install it now with `vcpkg install curl:x64-windows`?"):
+            say("build", f"WARNING: this engine has no libcurl, so Alpaca downloads and live runs fail. "
+                         f"Install it ({hint}) and start again.")
+            return
+        run_step("start", cmd)
+    say("build", "build-kafka was configured without libcurl; configuring it again so Alpaca downloads work")
+    run_step("build", ["cmake", "-S", str(ROOT), "-B", str(KAFKA_BUILD), "-U", "CURL_*"], env=brew_env() or None)
+
+
 def configure_kafka_build() -> None:
     if shutil.which("cmake") is None:
         raise LaunchError("cmake is not installed" + (" (brew install cmake)" if MAC else "") + ".")
@@ -383,6 +419,7 @@ def prepare_engine(explicit: str | None, config: str | None, build: bool) -> Pat
         except LaunchError:
             configure_kafka_build()
     if build and kafka_setting(KAFKA_BUILD) is True:
+        ensure_libcurl()
         if not cache_flag(KAFKA_BUILD, "TRADING_ENGINE_BUILD_STRATEGY_LAB"):
             run_step("build", ["cmake", "-S", str(ROOT), "-B", str(KAFKA_BUILD), LAB_OPTION], env=brew_env() or None)
         run_step("build", ["cmake", "--build", str(KAFKA_BUILD), "--config", config or "Release",
