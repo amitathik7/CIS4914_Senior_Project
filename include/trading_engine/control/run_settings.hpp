@@ -34,7 +34,7 @@ namespace trading_engine::strategy { class IStrategy; }
 
 namespace trading_engine::control {
 
-enum class StrategyKind : std::uint8_t { SmaCrossover = 0, MeanReversion };
+enum class StrategyKind : std::uint8_t { SmaCrossover = 0, MeanReversion, MlLogistic };
 
 [[nodiscard]] std::string_view to_string(StrategyKind kind) noexcept;   // "sma_crossover", ...
 
@@ -50,6 +50,14 @@ struct StrategySettings {
     std::size_t lookback{20};
     double      entry_threshold{2.0};
     double      rearm_threshold{0.5};
+    // ml_logistic (defaults are the strategy's own)
+    std::size_t horizon{5};
+    double      label_dead_band{0.0};
+    double      learning_rate{0.05};
+    double      l2{0.001};
+    std::size_t min_training_samples{50};
+    double      entry_probability{0.60};
+    double      rearm_band{0.05};
 };
 
 struct RunSettings {

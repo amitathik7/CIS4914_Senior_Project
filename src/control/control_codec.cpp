@@ -124,6 +124,14 @@ std::string strategy_json(const StrategySettings& s) {
     if (s.kind == StrategyKind::SmaCrossover) {
         w.unsigned_integer("short_window", s.short_window);
         w.unsigned_integer("long_window", s.long_window);
+    } else if (s.kind == StrategyKind::MlLogistic) {
+        w.unsigned_integer("horizon", s.horizon);
+        w.number("label_dead_band", s.label_dead_band);
+        w.number("learning_rate", s.learning_rate);
+        w.number("l2", s.l2);
+        w.unsigned_integer("min_training_samples", s.min_training_samples);
+        w.number("entry_probability", s.entry_probability);
+        w.number("rearm_band", s.rearm_band);
     } else {
         w.unsigned_integer("lookback", s.lookback);
         w.number("entry_threshold", s.entry_threshold);
@@ -375,6 +383,8 @@ StrategySettings strategy_from(const Reader& r) {
         s.kind = StrategyKind::SmaCrossover;
     } else if (kind == "mean_reversion") {
         s.kind = StrategyKind::MeanReversion;
+    } else if (kind == "ml_logistic") {
+        s.kind = StrategyKind::MlLogistic;
     } else {
         bad(r.where("kind"), "'" + kind + "' is not a strategy this engine has.", r.setting);
     }
@@ -384,6 +394,14 @@ StrategySettings strategy_from(const Reader& r) {
     if (s.kind == StrategyKind::SmaCrossover) {
         if (r.find("short_window")) s.short_window = window(r, "short_window");
         if (r.find("long_window"))  s.long_window  = window(r, "long_window");
+    } else if (s.kind == StrategyKind::MlLogistic) {
+        if (r.find("horizon"))              s.horizon              = window(r, "horizon");
+        if (r.find("label_dead_band"))      s.label_dead_band      = r.number("label_dead_band");
+        if (r.find("learning_rate"))        s.learning_rate        = r.number("learning_rate");
+        if (r.find("l2"))                   s.l2                   = r.number("l2");
+        if (r.find("min_training_samples")) s.min_training_samples = window(r, "min_training_samples");
+        if (r.find("entry_probability"))    s.entry_probability    = r.number("entry_probability");
+        if (r.find("rearm_band"))           s.rearm_band           = r.number("rearm_band");
     } else {
         if (r.find("lookback"))        s.lookback        = window(r, "lookback");
         if (r.find("entry_threshold")) s.entry_threshold = r.number("entry_threshold");

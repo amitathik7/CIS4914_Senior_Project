@@ -9,7 +9,10 @@ import { labStore } from "../../strategies/useLab";
 import { useEngine, useRunResource } from "../../state/engine";
 import { Badge, Empty, Loading, Notice, Panel } from "../ui";
 
-const SHOWN = ["short_window", "long_window", "lookback", "entry_threshold", "rearm_threshold", "requested_quantity"] as const;
+const SHOWN = [
+  "short_window", "long_window", "lookback", "entry_threshold", "rearm_threshold",
+  "horizon", "min_training_samples", "entry_probability", "rearm_band", "learning_rate", "l2", "label_dead_band", "requested_quantity",
+] as const;
 
 /** The strategies the selected Console run actually used. A record, not a form: it can be copied into the draft, never edited. */
 export function RecordedSettings({ state }: { state: LabState }) {

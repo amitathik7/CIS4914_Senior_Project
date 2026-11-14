@@ -22,17 +22,27 @@ interface StrategyDraft {
   lookback: string;
   entry: string;
   rearm: string;
+  horizon: string;
+  min_samples: string;
+  probability: string;
+  rearm_band: string;
+  learning_rate: string;
+  l2: string;
+  dead_band: string;
 }
+
+// The ML strategy's own defaults (LogisticRegressionConfig).
+const ML_DEFAULTS = { horizon: "5", min_samples: "50", probability: "0.6", rearm_band: "0.05", learning_rate: "0.05", l2: "0.001", dead_band: "0" };
 
 let nextKey = 1;
 
 function draft(kind: Kind, taken: string[], symbol: string): StrategyDraft {
-  const base = kind === "sma_crossover" ? "sma_crossover" : "mean_reversion";
+  const base: string = kind;
   let id = base;
   for (let n = 2; taken.includes(id); n++) id = `${base}_${n}`;
   return {
     key: nextKey++, kind, strategy_id: id, symbols: symbol ? [symbol] : [], liveSymbols: symbol, quantity: kind === "sma_crossover" ? "100" : "50",
-    short_window: "5", long_window: "20", lookback: "20", entry: "2", rearm: "0.5",
+    short_window: "5", long_window: "20", lookback: "20", entry: "2", rearm: "0.5", ...ML_DEFAULTS,
   };
 }
 
@@ -51,6 +61,8 @@ function fromCarried(c: CarriedStrategy): StrategyDraft {
   return {
     key: nextKey++, kind: c.kind, strategy_id: c.strategy_id, symbols: c.symbols, liveSymbols: c.symbols.join(", "), quantity: c.quantity,
     short_window: c.short_window ?? "5", long_window: c.long_window ?? "20", lookback: c.lookback ?? "20", entry: c.entry ?? "2", rearm: c.rearm ?? "0.5",
+    horizon: c.horizon ?? ML_DEFAULTS.horizon, min_samples: c.min_samples ?? ML_DEFAULTS.min_samples, probability: c.probability ?? ML_DEFAULTS.probability,
+    rearm_band: c.rearm_band ?? ML_DEFAULTS.rearm_band, learning_rate: c.learning_rate ?? ML_DEFAULTS.learning_rate, l2: c.l2 ?? ML_DEFAULTS.l2, dead_band: c.dead_band ?? ML_DEFAULTS.dead_band,
   };
 }
 
@@ -132,7 +144,12 @@ export function NewBacktest() {
         requested_quantity: int(s.quantity),
         ...(s.kind === "sma_crossover"
           ? { short_window: int(s.short_window), long_window: int(s.long_window) }
-          : { lookback: int(s.lookback), entry_threshold: num(s.entry), rearm_threshold: num(s.rearm) }),
+          : s.kind === "ml_logistic"
+            ? {
+                horizon: int(s.horizon), min_training_samples: int(s.min_samples), entry_probability: num(s.probability), rearm_band: num(s.rearm_band),
+                learning_rate: num(s.learning_rate), l2: num(s.l2), label_dead_band: num(s.dead_band),
+              }
+            : { lookback: int(s.lookback), entry_threshold: num(s.entry), rearm_threshold: num(s.rearm) }),
       })),
       risk: {
         max_order_quantity: int(maxQty),
@@ -267,7 +284,7 @@ export function NewBacktest() {
                       label="Strategy kind"
                       value={s.kind}
                       onChange={(kind) => update(s.key, { ...draft(kind, strategies.filter((x) => x.key !== s.key).map((x) => x.strategy_id), ""), key: s.key, symbols: s.symbols, liveSymbols: s.liveSymbols })}
-                      options={[{ value: "sma_crossover", label: "Moving-average crossover" }, { value: "mean_reversion", label: "Mean reversion" }]}
+                      options={[{ value: "sma_crossover", label: "Moving-average crossover" }, { value: "mean_reversion", label: "Mean reversion" }, { value: "ml_logistic", label: "Machine learning" }]}
                     />
                     {strategies.length > 1 && (
                       <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => setStrategies((l) => l.filter((x) => x.key !== s.key))}>
@@ -289,6 +306,30 @@ export function NewBacktest() {
                         </Field>
                         <Field label="Long window" hint="Bars; first signal after this many" error={fieldError(`${at}.long_window`)}>
                           <input className="input" inputMode="numeric" value={s.long_window} onChange={(e) => update(s.key, { long_window: e.target.value })} />
+                        </Field>
+                      </>
+                    ) : s.kind === "ml_logistic" ? (
+                      <>
+                        <Field label="Horizon" hint="Bars ahead the label looks" error={fieldError(`${at}.horizon`)}>
+                          <input className="input" inputMode="numeric" value={s.horizon} onChange={(e) => update(s.key, { horizon: e.target.value })} />
+                        </Field>
+                        <Field label="Min training samples" hint="Trained samples before it may trade" error={fieldError(`${at}.min_training_samples`)}>
+                          <input className="input" inputMode="numeric" value={s.min_samples} onChange={(e) => update(s.key, { min_samples: e.target.value })} />
+                        </Field>
+                        <Field label="Entry probability" hint="Above 0.5; Buy at p ≥ it, Sell at p ≤ 1 − it" error={fieldError(`${at}.entry_probability`)}>
+                          <input className="input" inputMode="decimal" value={s.probability} onChange={(e) => update(s.key, { probability: e.target.value })} />
+                        </Field>
+                        <Field label="Re-arm band" hint="|p − 0.5| that resets the latch" error={fieldError(`${at}.rearm_band`)}>
+                          <input className="input" inputMode="decimal" value={s.rearm_band} onChange={(e) => update(s.key, { rearm_band: e.target.value })} />
+                        </Field>
+                        <Field label="Learning rate" hint="SGD step size" error={fieldError(`${at}.learning_rate`)}>
+                          <input className="input" inputMode="decimal" value={s.learning_rate} onChange={(e) => update(s.key, { learning_rate: e.target.value })} />
+                        </Field>
+                        <Field label="L2 penalty" hint="Weight decay" error={fieldError(`${at}.l2`)}>
+                          <input className="input" inputMode="decimal" value={s.l2} onChange={(e) => update(s.key, { l2: e.target.value })} />
+                        </Field>
+                        <Field label="Label dead band" hint="|log return| at or below it is not trained on" error={fieldError(`${at}.label_dead_band`)}>
+                          <input className="input" inputMode="decimal" value={s.dead_band} onChange={(e) => update(s.key, { dead_band: e.target.value })} />
                         </Field>
                       </>
                     ) : (

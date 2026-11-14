@@ -757,6 +757,8 @@ def _latency(samples: list[int]) -> dict[str, int]:
 
 
 def _kind(strategy_id: str) -> str:
+    if "ml" in strategy_id or "logistic" in strategy_id:
+        return "ml_logistic"
     return "mean_reversion" if "reversion" in strategy_id else "sma_crossover"
 
 

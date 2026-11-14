@@ -73,6 +73,8 @@ export function validateBacktest(request: BacktestRequest): void {
       const long = s.long_window ?? 0;
       if (!Number.isInteger(short) || short < 1) invalid(`${at}.short_window`, "Short window must be at least 1.");
       if (!Number.isInteger(long) || long <= short) invalid(`${at}.long_window`, "Long window must be greater than the short window.");
+    } else if (s.kind === "ml_logistic") {
+      invalid(`${at}.kind`, "The in-browser demo engine has no machine learning strategy. Connect the real engine to backtest it.");
     } else {
       const lookback = s.lookback ?? 0;
       const entry = s.entry_threshold ?? NaN;

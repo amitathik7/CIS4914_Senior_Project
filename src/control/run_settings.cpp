@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 
+#include "trading_engine/strategy/logistic_regression_strategy.hpp"
 #include "trading_engine/strategy/mean_reversion_strategy.hpp"
 #include "trading_engine/strategy/moving_average_crossover_strategy.hpp"
 
@@ -14,6 +15,7 @@ std::string_view to_string(StrategyKind kind) noexcept {
     switch (kind) {
         case StrategyKind::SmaCrossover:  return "sma_crossover";
         case StrategyKind::MeanReversion: return "mean_reversion";
+        case StrategyKind::MlLogistic:    return "ml_logistic";
     }
     return "invalid";
 }
@@ -114,6 +116,19 @@ std::vector<std::shared_ptr<strategy::IStrategy>> make_strategies(const RunSetti
                 c.requested_quantity = st.requested_quantity;
                 c.symbols            = st.symbols;
                 out.push_back(std::make_shared<strategy::MovingAverageCrossoverStrategy>(std::move(c)));
+            } else if (st.kind == StrategyKind::MlLogistic) {
+                strategy::LogisticRegressionConfig c;
+                c.strategy_id          = st.strategy_id;
+                c.horizon              = st.horizon;
+                c.label_dead_band      = st.label_dead_band;
+                c.learning_rate        = st.learning_rate;
+                c.l2                   = st.l2;
+                c.min_training_samples = st.min_training_samples;
+                c.entry_probability    = st.entry_probability;
+                c.rearm_band           = st.rearm_band;
+                c.requested_quantity   = st.requested_quantity;
+                c.symbols              = st.symbols;
+                out.push_back(std::make_shared<strategy::LogisticRegressionStrategy>(std::move(c)));
             } else {
                 strategy::MeanReversionConfig c;
                 c.strategy_id        = st.strategy_id;

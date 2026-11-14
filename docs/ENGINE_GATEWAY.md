@@ -34,6 +34,13 @@ pauses after each bar time so a run can be watched (and its kill switch
 used). Its other flags: `--bus kafka-mock`, `--brokers`, `--control-prefix`,
 `--engine-id`, `--heartbeat-ms`.
 
+The form offers all three strategies: `sma_crossover`, `mean_reversion` and
+`ml_logistic` (horizon, min training samples, entry probability, re-arm band,
+learning rate, L2 penalty, label dead band; the strategy's own defaults). The
+in-browser demo engine has no ML strategy and says so. To replay a Strategy Lab
+dataset instead of the demo bars, pass its CSV to `--bars`, for example
+`--bars tests/fixtures/strategy_lab/datasets/large_universe.csv`.
+
 A one-off run from the command line shows up too, read-only:
 
 ```sh
