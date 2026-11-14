@@ -25,15 +25,18 @@ First it sets itself up, so a fresh clone needs nothing else run by hand:
 
 Then it does, in order, what docs/ENGINE_GATEWAY.md and the README describe by hand:
 
-  1. Kafka      docker compose -f docker-compose.kafka.yml up -d (starts Docker Desktop if needed)
+  1. Kafka      docker compose -f docker-compose.kafka.yml up -d (starts Docker Desktop if needed; on 9092, or a
+                free port if something other than a broker holds 9092)
   2. gateway    python python/engine_gateway/serve.py --port <8080, or a free port if 8080 is taken>
   3. engine     trading_engine serve --bars data/alpaca_year.csv --pace-ms 50
   4. lab        python python/strategy_lab/lab_gateway.py (Strategies > Backtest)
   5. console    pnpm dev in web/, with VITE_ENGINE_API=/api and ENGINE_GATEWAY pointed at the gateway
 
-then opens http://127.0.0.1:5173. Every process's output is shown here with a name prefix and also written to
-out/logs/<name>.log. Ctrl+C stops all of them and stops (not deletes) the Kafka container, so earlier runs
-are still there next time; --reset-kafka starts from an empty broker.
+then opens http://127.0.0.1:5173. A default port (5173, 8080, 8765, 9092) that is already taken moves that
+service to a free port, every other piece is pointed at it, and the ports used are printed at the end. Every
+process's output is shown here with a name prefix and also written to out/logs/<name>.log. Ctrl+C stops all of
+them and stops (not deletes) the Kafka container, so earlier runs are still there next time; --reset-kafka starts
+from an empty broker.
 
 Standard library only; works on Windows, macOS and Linux.
 """
@@ -71,6 +74,7 @@ LAB_TARGETS = ("strategy_lab_replay", "strategy_lab_backtest")
 COMPOSE_FILE = ROOT / "docker-compose.kafka.yml"
 KAFKA_CONTAINER = "te-kafka"
 KAFKA_PORT = 9092
+GATEWAY_PORT = 8080
 CONSOLE_PORT = 5173
 LAB_PORT = 8765
 LOG_DIR = ROOT / "out" / "logs"
@@ -115,6 +119,32 @@ def port_free(port: int) -> bool:
     return not port_open(port)
 
 
+def port_bindable(port: int) -> bool:
+    # For fallback ports only: also rules out ports Windows reserves (Hyper-V/Docker) that nothing listens on.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def pick_port(default: int, requested: int | None = None, flag: str = "") -> int:
+    """The default port if nothing is listening on it, else the next free one of the 9 after it, else any free port."""
+    if requested is not None:
+        if not port_free(requested):
+            raise LaunchError(f"{flag} {requested} is already in use")
+        return requested
+    if port_free(default):
+        return default
+    for port in range(default + 1, default + 10):
+        if port_free(port) and port_bindable(port):
+            return port
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def wait_for(check, timeout: float, what: str, procs: "Processes | None" = None) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -126,10 +156,10 @@ def wait_for(check, timeout: float, what: str, procs: "Processes | None" = None)
     raise LaunchError(f"timed out after {timeout:.0f} s waiting for {what}")
 
 
-def kafka_ready() -> bool:
+def kafka_ready(port: int = KAFKA_PORT) -> bool:
     from confluent_kafka.admin import AdminClient       # installed by ensure_python_deps() before this runs
     try:
-        md = AdminClient({"bootstrap.servers": f"localhost:{KAFKA_PORT}", "log_level": 0}).list_topics(timeout=3)
+        md = AdminClient({"bootstrap.servers": f"localhost:{port}", "log_level": 0}).list_topics(timeout=3)
         return bool(md.brokers) and md.controller_id >= 0
     except Exception:
         return False
@@ -557,19 +587,6 @@ def find_pnpm() -> str:
     return pnpm
 
 
-def pick_gateway_port(requested: int | None) -> int:
-    if requested is not None:
-        if not port_free(requested):
-            raise LaunchError(f"--gateway-port {requested} is already in use")
-        return requested
-    for port in (8080, 18080, 8081, 18081):
-        if port_free(port):
-            return port
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 # -- main ---------------------------------------------------------------------------------------------------------
 
 
@@ -726,15 +743,21 @@ def main(argv: list[str] | None = None) -> int:
                   else prepare_engine(args.engine, args.config, build=not args.no_build))
         bars, download, year = choose_bars(args)
         pnpm = find_pnpm()
-        if not port_free(CONSOLE_PORT):
-            raise LaunchError(f"port {CONSOLE_PORT} is in use: is the console (or an earlier start.py) already running?")
+        # A taken default port moves that service to a free one; everything that connects to it is told the new one.
         run_lab = not args.no_lab
-        if run_lab and not port_free(LAB_PORT):
-            say("start", f"port {LAB_PORT} is in use, so the Strategy Lab gateway seems to be running already; not starting another")
-            run_lab = False
-        gateway_port = pick_gateway_port(args.gateway_port)
-        if gateway_port != 8080 and args.gateway_port is None:
-            say("start", f"port 8080 is taken (Apache?), so the engine gateway uses {gateway_port}")
+        console_port = pick_port(CONSOLE_PORT)
+        gateway_port = pick_port(GATEWAY_PORT, args.gateway_port, "--gateway-port")
+        lab_port = pick_port(LAB_PORT) if run_lab else LAB_PORT
+        for name, default, port in (("web console", CONSOLE_PORT, console_port),
+                                    ("engine gateway", GATEWAY_PORT, gateway_port),
+                                    ("Strategy Lab gateway", LAB_PORT, lab_port)):
+            if port != default and not (name == "engine gateway" and args.gateway_port is not None):
+                say("start", f"port {default} is in use, so the {name} uses {port}")
+        # The gateways only answer the console's own origins; tell them about a moved console.
+        origins = []
+        if console_port != CONSOLE_PORT:
+            for host in ("127.0.0.1", "localhost"):
+                origins += ["--allow-origin", f"http://{host}:{console_port}"]
         say("start", f"engine build: {engine.relative_to(ROOT) if engine.is_relative_to(ROOT) else engine}")
         if not args.no_kafka:
             ensure_docker()
@@ -761,41 +784,55 @@ def main(argv: list[str] | None = None) -> int:
 
         # 2. Kafka.
         compose = ["docker", "compose", "-f", str(COMPOSE_FILE)]
+        kafka_port = KAFKA_PORT
         if not args.no_kafka:
             if args.reset_kafka:
                 run_step("kafka", compose + ["down"])
-            if port_open(KAFKA_PORT) and not args.reset_kafka:
+            if (not args.reset_kafka and port_open(KAFKA_PORT)
+                    and any(kafka_ready(KAFKA_PORT) for _ in range(3))):
                 say("kafka", f"a broker is already listening on {KAFKA_PORT}; using it")
             else:
-                run_step("kafka", compose + ["up", "-d"])
+                kafka_port = pick_port(KAFKA_PORT)
+                if kafka_port != KAFKA_PORT:
+                    say("kafka", f"port {KAFKA_PORT} is in use by something that is not a Kafka broker, "
+                                 f"so Kafka uses {kafka_port}")
+                # docker-compose.kafka.yml publishes (and advertises) the broker on TE_KAFKA_PORT.
+                run_step("kafka", compose + ["up", "-d"], env={"TE_KAFKA_PORT": str(kafka_port)})
                 started_kafka = True
-        wait_for(lambda: port_open(KAFKA_PORT), 90, f"Kafka on localhost:{KAFKA_PORT}")
+        brokers = f"localhost:{kafka_port}"
+        wait_for(lambda: port_open(kafka_port), 90, f"Kafka on {brokers}")
         # The port opens seconds before the broker serves requests; the engine's CreateTopics fails until it does.
-        wait_for(kafka_ready, 90, f"the Kafka broker on localhost:{KAFKA_PORT} to answer")
-        say("kafka", f"broker up on localhost:{KAFKA_PORT}")
+        wait_for(lambda: kafka_ready(kafka_port), 90, f"the Kafka broker on {brokers} to answer")
+        say("kafka", f"broker up on {brokers}")
 
         # 3. Gateway, engine, lab, console.
-        procs.start("gateway", [sys.executable, "python/engine_gateway/serve.py", "--port", str(gateway_port)])
+        procs.start("gateway", [sys.executable, "python/engine_gateway/serve.py", "--port", str(gateway_port),
+                                "--brokers", brokers, *origins])
         engine_id = f"start-{os.getpid()}"
-        engine_cmd = [str(engine), "serve", "--pace-ms", str(args.pace_ms), "--engine-id", engine_id]
+        engine_cmd = [str(engine), "serve", "--pace-ms", str(args.pace_ms), "--engine-id", engine_id,
+                      "--brokers", brokers]
         for b in bars:
             engine_cmd += ["--bars", b]
         procs.start("engine", engine_cmd)
+        console_env = {"VITE_ENGINE_API": "/api", "ENGINE_GATEWAY": f"http://127.0.0.1:{gateway_port}"}
         if run_lab:
             lab = lab_exe(args.config) if not os.environ.get("STRATEGY_LAB_EXE") else None
-            procs.start("lab", [sys.executable, "python/strategy_lab/lab_gateway.py"],
+            procs.start("lab", [sys.executable, "python/strategy_lab/lab_gateway.py", "--port", str(lab_port), *origins],
                         env={"STRATEGY_LAB_EXE": str(lab)} if lab else None)
-        procs.start("console", [pnpm, "dev"], cwd=ROOT / "web",
-                    env={"VITE_ENGINE_API": "/api", "ENGINE_GATEWAY": f"http://127.0.0.1:{gateway_port}"})
+            console_env["LAB_GATEWAY"] = f"http://127.0.0.1:{lab_port}"
+        procs.start("console", [pnpm, "dev", "--port", str(console_port), "--strictPort"], cwd=ROOT / "web",
+                    env=console_env)
 
         wait_for(lambda: port_open(gateway_port), 60, "the engine gateway", procs)
         # Up means this engine's heartbeat reached the gateway: before that, New backtest answers "no engine".
         wait_for(lambda: engine_announced(gateway_port, engine_id), 60, "the engine's first heartbeat", procs)
-        url = f"http://127.0.0.1:{CONSOLE_PORT}/"
+        url = f"http://127.0.0.1:{console_port}/"
         wait_for(lambda: http_ok(url), 90, "the web console", procs)
 
         say("start", "")
         say("start", f"Everything is up. Console: {url}  (Backtests > New backtest, or New live run)")
+        say("start", f"Ports: console {console_port}, engine gateway {gateway_port}, "
+                     + (f"Strategy Lab {lab_port}, " if run_lab else "") + f"Kafka {kafka_port}")
         say("start", f"Engine gateway: http://127.0.0.1:{gateway_port}/v1/   Logs: out/logs/")
         say("start", "Press Ctrl+C to stop everything.")
         say("start", "")
