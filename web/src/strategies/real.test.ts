@@ -16,7 +16,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HttpLabClient, LabError } from "../api/lab";
+import { handoffBlocker, toCarried } from "./backtestHandoff";
+import { specOf } from "./catalog";
 import { buildModel, resultOf } from "./cursor";
+import { newDraft, withValue } from "./draft";
 import { diagnosticsCsv, signalsCsv } from "./exports";
 import { parseReplay } from "./replay";
 import { LabStore, activeCheck, resultStatus } from "./store";
@@ -194,6 +197,14 @@ describe.skipIf(!exe || !pythonOk)("end to end through the real gateway", () => 
     expect(state.catalog!.strategies.find((s) => s.kind === "ml_logistic")).toMatchObject({ available: true });
     expect(state.datasets).toHaveLength(17);
     expect(state.datasets.find((d) => d.key === "sma_crossover")).toMatchObject({ sha256: createHash("sha256").update(readFileSync(join(FIXTURES, "datasets", "sma_crossover.csv"))).digest("hex") });
+  });
+
+  it("carries the ML strategy to the backtest form with every one of its parameters", async () => {
+    const store = await connected();
+    const ml = specOf(store.getState().catalog, "ml_logistic")!;
+    const d = withValue(withValue(newDraft(ml), "symbols", "AAPL"), "horizon", "10");
+    expect(handoffBlocker(d, ml, 0, undefined, ["AAPL", "MSFT"])).toBeUndefined();
+    expect(toCarried(d)).toMatchObject({ kind: "ml_logistic", symbols: ["AAPL"], horizon: "10", min_samples: "50", probability: "0.6", rearm_band: "0.05" });
   });
 
   it("replays the documented fixture: Buy at event 5, Sell at event 8, and the tool's bytes are intact", async () => {

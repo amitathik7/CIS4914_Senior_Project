@@ -23,7 +23,7 @@ describe("carrying a draft to the backtest form", () => {
 
   it("says why not, at the control", () => {
     expect(handoffBlocker(ready, undefined, 0, undefined, COVERAGE)).toMatch(/Choose a strategy/);
-    expect(handoffBlocker({ kind: "ml", values: {} }, { ...sma, kind: "ml", title: "Custom ML strategy" }, 0, undefined, COVERAGE)).toMatch(/supports only/);
+    expect(handoffBlocker({ kind: "ml", values: {} }, { ...sma, kind: "ml", title: "Custom ML strategy" }, 0, undefined, COVERAGE)).toMatch(/does not support Custom ML strategy/);
     expect(handoffBlocker(ready, sma, 2, undefined, COVERAGE)).toMatch(/Fix the highlighted/);
     expect(handoffBlocker(ready, sma, 0, "long_window must be greater", COVERAGE)).toMatch(/engine rejected/);
     expect(handoffBlocker(withValue(ready, "symbols", "AAPL,NVDA,TSLA"), sma, 0, undefined, COVERAGE)).toMatch(/no recorded market data for NVDA, TSLA/);

@@ -53,7 +53,10 @@ function pnlBins(trades: Trade[]) {
 function strategyParams(s: StrategyConfig): [string, string][] {
   const rows: [string, number | undefined, string][] = s.kind === "sma_crossover"
     ? [["Short window", s.short_window, " bars"], ["Long window", s.long_window, " bars"]]
-    : [["Lookback", s.lookback, " bars"], ["Entry |z|", s.entry_threshold, ""], ["Rearm |z|", s.rearm_threshold, ""]];
+    : s.kind === "ml_logistic"
+      ? [["Horizon", s.horizon, " bars"], ["Min training samples", s.min_training_samples, ""], ["Entry probability", s.entry_probability, ""],
+         ["Re-arm band", s.rearm_band, ""], ["Learning rate", s.learning_rate, ""], ["L2 penalty", s.l2, ""], ["Label dead band", s.label_dead_band, ""]]
+      : [["Lookback", s.lookback, " bars"], ["Entry |z|", s.entry_threshold, ""], ["Rearm |z|", s.rearm_threshold, ""]];
   return rows.filter(([, v]) => v !== undefined).map(([k, v, unit]) => [k, `${v}${unit}`]);
 }
 
@@ -66,7 +69,7 @@ function Configuration({ run }: { run: RunDetail }) {
         {c.strategies.map((s) => (
           <div key={s.strategy_id}>
             <h3 style={{ fontSize: "var(--fs-base)", fontWeight: 600, marginBottom: 8 }}>
-              {s.strategy_id} <span className="faint" style={{ fontWeight: 400 }}>{s.kind === "sma_crossover" ? "Moving-average crossover" : "Mean reversion (z-score)"}</span>
+              {s.strategy_id} <span className="faint" style={{ fontWeight: 400 }}>{s.kind === "sma_crossover" ? "Moving-average crossover" : s.kind === "ml_logistic" ? "Machine learning (logistic regression)" : "Mean reversion (z-score)"}</span>
             </h3>
             <dl className="kv">
               <dt>Symbols</dt><dd>{s.symbols.join(", ")}</dd>

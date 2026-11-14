@@ -23,7 +23,7 @@ export interface EngineInfo {
 }
 
 export interface StrategyConfig {
-  kind: "sma_crossover" | "mean_reversion";
+  kind: "sma_crossover" | "mean_reversion" | "ml_logistic";
   strategy_id: string;
   symbols: string[];
   requested_quantity: Quantity;
@@ -34,6 +34,14 @@ export interface StrategyConfig {
   lookback?: number;
   entry_threshold?: number;
   rearm_threshold?: number;
+  // ml_logistic (online logistic regression; docs/strategies/logistic_regression.md)
+  horizon?: number;
+  label_dead_band?: number;
+  learning_rate?: number;
+  l2?: number;
+  min_training_samples?: number;
+  entry_probability?: number;
+  rearm_band?: number;
 }
 
 export interface RiskLimits {

@@ -151,6 +151,35 @@ TEST(ControlCodec, ReadsWhatTheConsoleSends) {
     EXPECT_NO_THROW(ctl::validate(*c.settings));
 }
 
+TEST(ControlCodec, AnMlStrategyRoundTripsAndBuilds) {
+    auto s = settings();
+    ctl::StrategySettings ml;
+    ml.kind                 = ctl::StrategyKind::MlLogistic;
+    ml.strategy_id          = "ml";
+    ml.symbols              = {"MSFT"};
+    ml.horizon              = 3;
+    ml.min_training_samples = 20;
+    ml.entry_probability    = 0.55;
+    s.strategies.push_back(ml);
+    const std::string json = ctl::settings_json(s);
+    EXPECT_NE(json.find(R"("kind":"ml_logistic")"), std::string::npos);
+    EXPECT_NE(json.find(R"("min_training_samples":20)"), std::string::npos);
+
+    ctl::Command c;
+    c.command_id = "cmd-ml";
+    c.run_id     = "te.bt-ml";
+    c.issued_at  = at("2026-10-30T10:00:00Z");
+    c.settings   = s;
+    const auto d = std::get<ctl::Command>(ctl::decode_control(ctl::encode({"gw", 1, at("2026-10-30T10:00:01Z"), c})).payload);
+    ASSERT_TRUE(d.settings.has_value()) << d.settings_error;
+    EXPECT_EQ(ctl::settings_json(*d.settings), json);
+    EXPECT_EQ(d.settings->strategies[2].kind, ctl::StrategyKind::MlLogistic);
+    EXPECT_EQ(d.settings->strategies[2].horizon, 3U);
+    EXPECT_EQ(d.settings->strategies[2].entry_probability, 0.55);
+    EXPECT_NO_THROW(ctl::validate(*d.settings));
+    EXPECT_EQ(ctl::make_strategies(*d.settings).size(), 3U);
+}
+
 TEST(ControlCodec, AnUnreadableSettingIsReportedWithItsPath) {
     const std::string text = R"({"schema":1,"origin":"gw","sequence":1,"type":"command",
       "enqueued_at":"2026-10-30T10:00:00Z","payload":{"command_id":"c1","action":"start_backtest",
@@ -249,6 +278,10 @@ TEST(RunSettingsValidation, NamesTheFieldTheFormShows) {
     expect_field(s, "feed");
     s.live_feed = "test";
     EXPECT_NO_THROW(ctl::validate(s));
+    s = settings();
+    s.strategies[1].kind              = ctl::StrategyKind::MlLogistic;
+    s.strategies[1].entry_probability = 0.4;   // must be above 0.5: the strategy refuses it
+    expect_field(s, "strategies.1");
 }
 
 // --- the kill switch, through a whole run ------------------------------------------------

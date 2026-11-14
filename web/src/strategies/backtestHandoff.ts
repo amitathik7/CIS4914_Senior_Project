@@ -13,7 +13,7 @@ import type { StrategySpec } from "./catalog";
 import { paramCopy } from "./copy";
 import { symbolEntries, type RequestSnapshot, type StrategyDraft } from "./draft";
 
-export type CarriedKind = "sma_crossover" | "mean_reversion";
+export type CarriedKind = "sma_crossover" | "mean_reversion" | "ml_logistic";
 
 export interface CarriedStrategy {
   kind: CarriedKind;
@@ -25,6 +25,13 @@ export interface CarriedStrategy {
   lookback?: string;
   entry?: string;
   rearm?: string;
+  horizon?: string;
+  min_samples?: string;
+  probability?: string;
+  rearm_band?: string;
+  learning_rate?: string;
+  l2?: string;
+  dead_band?: string;
 }
 
 /** The router state the New backtest page reads. */
@@ -38,24 +45,30 @@ export interface HandoffState {
   dataset?: string;
 }
 
-const KINDS: readonly string[] = ["sma_crossover", "mean_reversion"];
+const KINDS: readonly string[] = ["sma_crossover", "mean_reversion", "ml_logistic"];
 
 /** The strategy parameters the form has a field for, per kind. A parameter outside this list is refused, never dropped. */
 const FORM_PARAMS: Readonly<Record<CarriedKind, readonly string[]>> = {
   sma_crossover: ["strategy_id", "symbols", "requested_quantity", "short_window", "long_window"],
   mean_reversion: ["strategy_id", "symbols", "requested_quantity", "lookback", "entry_threshold", "rearm_threshold"],
+  ml_logistic: ["strategy_id", "symbols", "requested_quantity", "horizon", "min_training_samples", "entry_probability", "rearm_band", "learning_rate", "l2", "label_dead_band"],
 };
 
 /** Whole numbers the form reads with Number(...). */
 const WHOLE: Readonly<Record<CarriedKind, readonly string[]>> = {
   sma_crossover: ["requested_quantity", "short_window", "long_window"],
   mean_reversion: ["requested_quantity", "lookback"],
+  ml_logistic: ["requested_quantity", "horizon", "min_training_samples"],
 };
 
 /** Decimals the form accepts: the same pattern as its own reader (pages/NewBacktest.tsx uses this constant), so there is one definition. */
 export const PLAIN_DECIMAL = /^-?\d*\.?\d+$/;
 
-const DECIMALS: Readonly<Record<CarriedKind, readonly string[]>> = { sma_crossover: [], mean_reversion: ["entry_threshold", "rearm_threshold"] };
+const DECIMALS: Readonly<Record<CarriedKind, readonly string[]>> = {
+  sma_crossover: [],
+  mean_reversion: ["entry_threshold", "rearm_threshold"],
+  ml_logistic: ["entry_probability", "rearm_band", "learning_rate", "l2", "label_dead_band"],
+};
 
 export const isCarried = (value: unknown): value is HandoffState => {
   const s = (value as HandoffState | null | undefined)?.fromStrategies;
@@ -71,7 +84,14 @@ export function toCarried(draft: StrategyDraft): CarriedStrategy | undefined {
     strategy_id: v.strategy_id ?? draft.kind,
     symbols: symbolEntries(v.symbols ?? ""),
     quantity: text("requested_quantity"),
-    ...(draft.kind === "sma_crossover" ? { short_window: text("short_window"), long_window: text("long_window") } : { lookback: text("lookback"), entry: text("entry_threshold"), rearm: text("rearm_threshold") }),
+    ...(draft.kind === "sma_crossover"
+      ? { short_window: text("short_window"), long_window: text("long_window") }
+      : draft.kind === "ml_logistic"
+        ? {
+            horizon: text("horizon"), min_samples: text("min_training_samples"), probability: text("entry_probability"), rearm_band: text("rearm_band"),
+            learning_rate: text("learning_rate"), l2: text("l2"), dead_band: text("label_dead_band"),
+          }
+        : { lookback: text("lookback"), entry: text("entry_threshold"), rearm: text("rearm_threshold") }),
   };
 }
 
@@ -81,7 +101,7 @@ export const draftFromRequest = (request: RequestSnapshot): StrategyDraft => ({ 
 /** Why the draft cannot be carried to the backtest form, in a sentence; undefined when it can. */
 export function handoffBlocker(draft: StrategyDraft, spec: StrategySpec | undefined, issues: number, rejected: string | undefined, coverage: readonly string[] | undefined): string | undefined {
   if (!spec) return "Choose a strategy first.";
-  if (!KINDS.includes(draft.kind)) return `The demo backtest form supports only Moving-average crossover and Mean reversion, not ${spec.title}. Use “Backtest on the real engine” above, which supports every strategy.`;
+  if (!KINDS.includes(draft.kind)) return `The backtest form does not support ${spec.title}. Use “Backtest on the real engine” above, which supports every strategy.`;
   if (issues > 0) return "Fix the highlighted settings first.";
   if (rejected) return `The engine rejected this configuration: ${rejected}`;
   const kind = draft.kind as CarriedKind;
@@ -122,7 +142,11 @@ export const NOT_CARRIED_TEXT = "Not carried: the dataset and its time range, th
 /** A recorded Console run strategy as a draft (the reverse direction: always an explicit "Load as draft"). */
 export function draftFromRecorded(spec: StrategySpec, config: StrategyConfig, defaults: Record<string, string>): StrategyDraft {
   const values: Record<string, string> = { ...defaults, strategy_id: config.strategy_id, symbols: config.symbols.join(","), requested_quantity: String(config.requested_quantity) };
-  for (const [name, value] of [["short_window", config.short_window], ["long_window", config.long_window], ["lookback", config.lookback], ["entry_threshold", config.entry_threshold], ["rearm_threshold", config.rearm_threshold]] as const) {
+  for (const [name, value] of [
+    ["short_window", config.short_window], ["long_window", config.long_window], ["lookback", config.lookback], ["entry_threshold", config.entry_threshold],
+    ["rearm_threshold", config.rearm_threshold], ["horizon", config.horizon], ["label_dead_band", config.label_dead_band], ["learning_rate", config.learning_rate],
+    ["l2", config.l2], ["min_training_samples", config.min_training_samples], ["entry_probability", config.entry_probability], ["rearm_band", config.rearm_band],
+  ] as const) {
     if (value !== undefined && name in defaults) values[name] = String(value);
   }
   return { kind: spec.kind, values };
