@@ -574,16 +574,33 @@ def forget_keys() -> None:
     (key_dir() / "alpaca.skip").unlink(missing_ok=True)
 
 
+def key_problem(key: str, secret: str) -> str | None:
+    """Catches the usual paste mix-ups on Alpaca's API Keys panel, which lists Endpoint, Key and Secret together."""
+    for name, value in (("key ID", key), ("secret", secret)):
+        if "://" in value or ".alpaca.markets" in value:
+            return f"the {name} you entered is the Endpoint URL, not the {name}"
+    if secret[:2].upper() in ("PK", "AK") and key[:2].upper() not in ("PK", "AK"):
+        return "the secret you entered looks like a key ID (they start with PK or AK)"
+    return None
+
+
 def ask_keys() -> tuple[str, str] | None:
     say("start", "Your Alpaca keys download a year of real market data for backtests and run live trading (free paper")
     say("start", f"account: alpaca.markets, then API Keys). They are saved once, in {key_store()}, never in the project.")
+    say("start", "Enter the Key (starts with PK or AK) and the Secret; not the Endpoint URL shown beside them.")
     say("start", "Enter skips: backtests then replay 90 minutes of demo bars.")
-    try:
-        key = input("        Alpaca key ID: ").strip()
-        secret = getpass.getpass("        Alpaca secret (hidden): ").strip() if key else ""
-    except EOFError:
-        return None
-    return (key, secret) if key and secret else None
+    while True:
+        try:
+            key = input("        Alpaca key ID: ").strip()
+            secret = getpass.getpass("        Alpaca secret (hidden): ").strip() if key else ""
+        except EOFError:
+            return None
+        if not (key and secret):
+            return None
+        problem = key_problem(key, secret)
+        if problem is None:
+            return key, secret
+        say("start", f"{problem}; try again (Enter skips)")
 
 
 def ensure_alpaca_keys(set_keys: bool) -> None:
@@ -593,6 +610,9 @@ def ensure_alpaca_keys(set_keys: bool) -> None:
         say("start", "Alpaca keys: from the environment")
         return
     keys = None if set_keys else stored_keys()
+    if keys is not None and key_problem(*keys):
+        say("start", f"the saved Alpaca keys are mixed up ({key_problem(*keys)}); enter them again")
+        keys, set_keys = None, True
     if keys is not None:
         say("start", f"Alpaca keys: from {key_store()}")
     else:
